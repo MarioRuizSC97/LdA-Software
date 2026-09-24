@@ -3,3 +3,18 @@
 
 # macOS Finder metadata
 .DS_Store
+
+# Flutter and Dart tool state
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+build/
+coverage/
+flutter_*.log
+flutter_*.png
+
+# IDE metadata
+.idea/
+*.iml
