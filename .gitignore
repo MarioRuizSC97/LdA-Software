@@ -1,5 +1,6 @@
 # Local Pi runtime state
 .atl/
+.codegraph/
 
 # macOS Finder metadata
 .DS_Store
@@ -14,6 +15,14 @@ build/
 coverage/
 flutter_*.log
 flutter_*.png
+
+# Firebase emulator and rules-test state
+firebase-debug.log
+firestore-debug.log
+storage-debug.log
+ui-debug.log
+firebase/tests/node_modules/
+firebase/tests/.npm-cache/
 
 # IDE metadata
 .idea/

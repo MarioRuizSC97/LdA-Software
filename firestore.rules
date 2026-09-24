@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdministrator() {
+      return isSignedIn() &&
+        request.auth.token.role == 'administrator';
+    }
+
+    function isSellerFor(branchId) {
+      return isSignedIn() &&
+        request.auth.token.role == 'seller' &&
+        request.auth.token.branchId == branchId;
+    }
+
+    // Catalog documents deliberately exclude acquisition costs. Authenticated
+    // users can read the shared catalog, while trusted server code owns writes.
+    match /products/{productId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Stock is branch-scoped. Administrators can inspect every branch and a
+    // seller can inspect only the branch carried by their trusted auth claim.
+    match /branches/{branchId}/stock/{productId} {
+      allow read: if isAdministrator() || isSellerFor(branchId);
+      allow write: if false;
+    }
+
+    // Acquisition-cost references are isolated from seller-readable product
+    // documents and are visible only to administrators.
+    match /costs/{productId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
+    // Movement history is server-owned and immutable to all client SDKs.
+    match /inventoryMovements/{movementId} {
+      allow read: if isAdministrator() || isSellerFor(resource.data.branchId);
+      allow write: if false;
+    }
+
+    // New paths remain closed until their access contract has tests.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

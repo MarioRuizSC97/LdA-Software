@@ -1,0 +1,11 @@
+{
+  "name": "lda-inventory-firebase-local",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "test:rules": "node --test tests/rules.test.mjs"
+  },
+  "engines": {
+    "node": ">=26"
+  }
+}

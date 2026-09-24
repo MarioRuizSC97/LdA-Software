@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdministrator() {
+      return isSignedIn() &&
+        request.auth.token.role == 'administrator';
+    }
+
+    function isSellerFor(branchId) {
+      return isSignedIn() &&
+        request.auth.token.role == 'seller' &&
+        request.auth.token.branchId == branchId;
+    }
+
+    // Product files are branch-scoped for reads. Trusted server code owns all
+    // uploads, replacements, and deletes so clients cannot mutate inventory.
+    match /branches/{branchId}/products/{productId}/{fileName} {
+      allow read: if isAdministrator() || isSellerFor(branchId);
+      allow write: if false;
+    }
+
+    // Unknown object paths are private by default.
+    match /{object=**} {
+      allow read, write: if false;
+    }
+  }
+}
