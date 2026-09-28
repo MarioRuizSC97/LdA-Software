@@ -1,59 +1,118 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'firebase_options.dart';
+import 'catalog/catalog_page.dart';
+import 'catalog/catalog_product.dart';
+import 'catalog/catalog_repository.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const LdaInventoryApp());
+const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
+
+void main() {
+  runApp(const LdaInventoryBootstrap(demoEnabled: _demoCatalogEnabled));
+}
+
+class LdaInventoryBootstrap extends StatelessWidget {
+  const LdaInventoryBootstrap({required this.demoEnabled, super.key});
+
+  final bool demoEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!demoEnabled) return const CatalogSetupApp();
+
+    return const LdaInventoryApp(
+      catalogRepository: FixtureCatalogRepository(_catalogFixtures),
+      statusLabel: 'Demo data · Not connected',
+    );
+  }
 }
 
 class LdaInventoryApp extends StatelessWidget {
-  const LdaInventoryApp({super.key});
+  const LdaInventoryApp({
+    required this.catalogRepository,
+    this.statusLabel,
+    super.key,
+  });
+
+  final CatalogRepository catalogRepository;
+  final String? statusLabel;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'LDA Inventory',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+      theme: _theme(),
+      home: CatalogPage(
+        repository: catalogRepository,
+        statusLabel: statusLabel,
       ),
-      home: const InventoryPlaceholderPage(),
     );
   }
 }
 
-class InventoryPlaceholderPage extends StatelessWidget {
-  const InventoryPlaceholderPage({super.key});
+class CatalogSetupApp extends StatelessWidget {
+  const CatalogSetupApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('LDA Inventory')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Semantics(
-                header: true,
-                child: Text(
-                  'Inventory foundation ready',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
+    return MaterialApp(
+      title: 'LDA Inventory',
+      theme: _theme(),
+      home: Scaffold(
+        appBar: AppBar(title: const Text('LDA Inventory')),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Icon(Icons.cloud_off_outlined, size: 56),
+                  const SizedBox(height: 16),
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Catalog not connected',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No product data is loaded. Authenticated emulator access '
+                    'has not been configured.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'Inventory features are not configured yet.',
-                textAlign: TextAlign.center,
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 }
+
+ThemeData _theme() {
+  return ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue));
+}
+
+const List<CatalogProduct> _catalogFixtures = <CatalogProduct>[
+  CatalogProduct(
+    internalCode: 'PRD-COFFEE-001',
+    name: 'Coffee',
+    quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+    pricing: CatalogPricing(
+      listedPriceCentavos: 12900,
+      currency: 'MXN',
+      priceMode: 'iva-included',
+      ivaTreatment: 'taxable',
+      ivaRateBasisPoints: 1600,
+    ),
+  ),
+  CatalogProduct(
+    internalCode: 'PRD-TEA-002',
+    name: 'Tea',
+    quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+  ),
+];
