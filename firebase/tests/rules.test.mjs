@@ -46,6 +46,13 @@ async function seedFirestore() {
       internalCode: productId,
       name: 'Coffee',
       quantitySpec: { unit: 'piece', precision: 0 },
+      pricing: {
+        listedPriceCentavos: 99950,
+        currency: 'MXN',
+        priceMode: 'iva-included',
+        ivaTreatment: 'taxable',
+        ivaRateBasisPoints: 1600,
+      },
     });
     await setDoc(
       doc(firestore, 'branches', branchNorth, 'stock', productId),
@@ -71,6 +78,17 @@ async function seedFirestore() {
     await setDoc(doc(firestore, 'productCreationReceipts', 'create-coffee'), {
       fingerprint: 'catalog-request',
       result: { productId },
+    });
+    await setDoc(doc(firestore, 'productPriceAudits', 'price-coffee'), {
+      productId,
+      previousAuditId: null,
+      oldPricing: null,
+      newPricing: { listedPriceCentavos: 99950, currency: 'MXN' },
+      actorId: 'admin',
+    });
+    await setDoc(doc(firestore, 'productPriceUpdateReceipts', 'price-coffee'), {
+      fingerprint: 'pricing-request',
+      result: { productId, auditId: 'price-coffee' },
     });
     await setDoc(doc(firestore, 'inventoryMovements', 'movement-north'), {
       branchId: branchNorth,
@@ -153,7 +171,18 @@ describe('seller branch boundary', () => {
     const firestore = firestoreFor('seller-north', claims);
     const storage = storageFor('seller-north', claims);
 
-    await assertSucceeds(getDoc(doc(firestore, 'products', productId)));
+    const product = await assertSucceeds(
+      getDoc(doc(firestore, 'products', productId)),
+    );
+    if (product.data().pricing.listedPriceCentavos !== 99950) {
+      throw new Error('seller-readable product must expose the shared listed price');
+    }
+    if ('pricingUpdatedBy' in product.data()) {
+      throw new Error('seller-readable product must not expose pricing actor identity');
+    }
+    if ('unitCostCentavos' in product.data() || 'latestUnitCostCentavos' in product.data()) {
+      throw new Error('seller-readable product must not expose acquisition cost');
+    }
     await assertSucceeds(
       getDoc(doc(firestore, 'branches', branchNorth, 'stock', productId)),
     );
@@ -284,6 +313,8 @@ describe('protected server record boundary', () => {
       ['stockIntakeEntries', 'intake-north'],
       ['stockIntakeReceipts', 'intake-north'],
       ['productCreationReceipts', 'create-coffee'],
+      ['productPriceAudits', 'price-coffee'],
+      ['productPriceUpdateReceipts', 'price-coffee'],
     ];
 
     for (const path of protectedPaths) {
@@ -332,6 +363,30 @@ describe('server-owned inventory mutations', () => {
     await assertFails(
       setDoc(doc(administrator, 'productCreationReceipts', 'client-receipt'), {
         fingerprint: 'forged-catalog-request',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(administrator, 'products', productId), {
+        'pricing.listedPriceCentavos': 1,
+      }),
+    );
+    await assertFails(
+      setDoc(doc(administrator, 'productPriceAudits', 'client-audit'), {
+        productId,
+        actorId: 'admin',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(administrator, 'productPriceAudits', 'price-coffee'), {
+        actorId: 'rewritten-admin',
+      }),
+    );
+    await assertFails(
+      deleteDoc(doc(administrator, 'productPriceAudits', 'price-coffee')),
+    );
+    await assertFails(
+      setDoc(doc(administrator, 'productPriceUpdateReceipts', 'client-receipt'), {
+        fingerprint: 'forged-pricing-request',
       }),
     );
     await assertFails(deleteDoc(doc(seller, 'products', productId)));

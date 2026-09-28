@@ -12,6 +12,11 @@ import {
   assertLocalInventoryEmulator,
   createStockIntakeService,
 } from './inventory.js';
+import {
+  PricingError,
+  assertLocalPricingEmulator,
+  createProductPricingService,
+} from './pricing.js';
 
 const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
@@ -47,6 +52,36 @@ export const createProduct = onCall(
       throw new HttpsError(
         'internal',
         'product creation is temporarily unavailable',
+      );
+    }
+  },
+);
+
+export const setProductPrice = onCall(
+  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  async (request) => {
+    try {
+      assertLocalPricingEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'product pricing is restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      if (getApps().length === 0) {
+        initializeApp();
+      }
+      const setPrice = createProductPricingService({ firestore: getFirestore() });
+      return await setPrice(request);
+    } catch (error) {
+      if (error instanceof PricingError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      throw new HttpsError(
+        'internal',
+        'product pricing is temporarily unavailable',
       );
     }
   },

@@ -58,6 +58,19 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Price history keeps immutable old/new policy snapshots and actor identity.
+    // Only administrators may inspect it; no client SDK may mutate it.
+    match /productPriceAudits/{auditId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
+    // Pricing receipts enforce server-side retry idempotency and remain private.
+    match /productPriceUpdateReceipts/{receiptId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
     // Movement history deliberately excludes acquisition costs. It is
     // server-owned and immutable to all client SDKs.
     match /inventoryMovements/{movementId} {
