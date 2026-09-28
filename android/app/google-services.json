@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "726521416508",
+    "project_id": "lda-inventory-dev-mx",
+    "storage_bucket": "lda-inventory-dev-mx.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:726521416508:android:49a18df4b5a298f6e7ac39",
+        "android_client_info": {
+          "package_name": "com.ldasoftware.lda_inventory"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBjW8WAggVmfyyOf_ypbN9fjN3CehVis2A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
