@@ -2,7 +2,16 @@
   "name": "lda-inventory-functions",
   "private": true,
   "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/quantity.test.mjs test/inventory.test.mjs",
+    "test:emulator": "node --test test/inventory.emulator.test.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.4.0"
   }
 }

@@ -38,7 +38,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Movement history is server-owned and immutable to all client SDKs.
+    // Historical intake entries retain acquisition cost snapshots and are
+    // therefore restricted to administrators. Trusted server code owns writes.
+    match /stockIntakeEntries/{entryId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
+    // Idempotency receipts include a normalized acquisition-cost request.
+    match /stockIntakeReceipts/{receiptId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
+    // Movement history deliberately excludes acquisition costs. It is
+    // server-owned and immutable to all client SDKs.
     match /inventoryMovements/{movementId} {
       allow read: if isAdministrator() || isSellerFor(resource.data.branchId);
       allow write: if false;

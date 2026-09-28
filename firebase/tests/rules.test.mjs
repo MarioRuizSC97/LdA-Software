@@ -55,7 +55,17 @@ async function seedFirestore() {
       { available: 3 },
     );
     await setDoc(doc(firestore, 'costs', productId), {
-      latestEntryCost: 71,
+      latestUnitCostCentavos: 7100,
+      currency: 'MXN',
+    });
+    await setDoc(doc(firestore, 'stockIntakeEntries', 'intake-north'), {
+      branchId: branchNorth,
+      productId,
+      unitCostCentavos: 7100,
+      lineTotalCentavos: 56800,
+    });
+    await setDoc(doc(firestore, 'stockIntakeReceipts', 'intake-north'), {
+      fingerprint: 'cost-bearing-request',
     });
     await setDoc(doc(firestore, 'inventoryMovements', 'movement-north'), {
       branchId: branchNorth,
@@ -258,15 +268,22 @@ describe('unknown paths', () => {
 });
 
 describe('acquisition cost boundary', () => {
-  test('allows administrators and denies sellers', async () => {
+  test('allows administrators and denies sellers for every cost-bearing record', async () => {
     const administrator = firestoreFor('admin', { role: 'administrator' });
     const seller = firestoreFor('seller-north', {
       role: 'seller',
       branchId: branchNorth,
     });
+    const protectedPaths = [
+      ['costs', productId],
+      ['stockIntakeEntries', 'intake-north'],
+      ['stockIntakeReceipts', 'intake-north'],
+    ];
 
-    await assertSucceeds(getDoc(doc(administrator, 'costs', productId)));
-    await assertFails(getDoc(doc(seller, 'costs', productId)));
+    for (const path of protectedPaths) {
+      await assertSucceeds(getDoc(doc(administrator, ...path)));
+      await assertFails(getDoc(doc(seller, ...path)));
+    }
   });
 });
 
@@ -294,6 +311,16 @@ describe('server-owned inventory mutations', () => {
         branchId: branchNorth,
         productId,
         delta: -1,
+      }),
+    );
+    await assertFails(
+      setDoc(doc(administrator, 'stockIntakeEntries', 'client-intake'), {
+        unitCostCentavos: 1,
+      }),
+    );
+    await assertFails(
+      setDoc(doc(administrator, 'stockIntakeReceipts', 'client-receipt'), {
+        fingerprint: 'forged',
       }),
     );
     await assertFails(deleteDoc(doc(seller, 'products', productId)));

@@ -23,6 +23,8 @@ storage-debug.log
 ui-debug.log
 firebase/tests/node_modules/
 firebase/tests/.npm-cache/
+functions/node_modules/
+functions/.npm-cache/
 
 # IDE metadata
 .idea/
