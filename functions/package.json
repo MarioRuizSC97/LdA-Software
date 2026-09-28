@@ -1,0 +1,8 @@
+{
+  "name": "lda-inventory-functions",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
