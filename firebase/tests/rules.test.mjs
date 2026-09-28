@@ -43,8 +43,9 @@ async function seedFirestore() {
     const firestore = context.firestore();
 
     await setDoc(doc(firestore, 'products', productId), {
+      internalCode: productId,
       name: 'Coffee',
-      salePrice: 125,
+      quantitySpec: { unit: 'piece', precision: 0 },
     });
     await setDoc(
       doc(firestore, 'branches', branchNorth, 'stock', productId),
@@ -66,6 +67,10 @@ async function seedFirestore() {
     });
     await setDoc(doc(firestore, 'stockIntakeReceipts', 'intake-north'), {
       fingerprint: 'cost-bearing-request',
+    });
+    await setDoc(doc(firestore, 'productCreationReceipts', 'create-coffee'), {
+      fingerprint: 'catalog-request',
+      result: { productId },
     });
     await setDoc(doc(firestore, 'inventoryMovements', 'movement-north'), {
       branchId: branchNorth,
@@ -267,8 +272,8 @@ describe('unknown paths', () => {
   });
 });
 
-describe('acquisition cost boundary', () => {
-  test('allows administrators and denies sellers for every cost-bearing record', async () => {
+describe('protected server record boundary', () => {
+  test('allows administrators and denies sellers for protected server records', async () => {
     const administrator = firestoreFor('admin', { role: 'administrator' });
     const seller = firestoreFor('seller-north', {
       role: 'seller',
@@ -278,6 +283,7 @@ describe('acquisition cost boundary', () => {
       ['costs', productId],
       ['stockIntakeEntries', 'intake-north'],
       ['stockIntakeReceipts', 'intake-north'],
+      ['productCreationReceipts', 'create-coffee'],
     ];
 
     for (const path of protectedPaths) {
@@ -321,6 +327,11 @@ describe('server-owned inventory mutations', () => {
     await assertFails(
       setDoc(doc(administrator, 'stockIntakeReceipts', 'client-receipt'), {
         fingerprint: 'forged',
+      }),
+    );
+    await assertFails(
+      setDoc(doc(administrator, 'productCreationReceipts', 'client-receipt'), {
+        fingerprint: 'forged-catalog-request',
       }),
     );
     await assertFails(deleteDoc(doc(seller, 'products', productId)));

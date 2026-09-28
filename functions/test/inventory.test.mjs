@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
+
+import { HttpsError } from 'firebase-functions/v2/https';
 
 import {
   CALCULATION_POLICY_VERSION,
@@ -117,6 +120,48 @@ async function rejectsCode(operation, code) {
     assert.equal(error.code, code);
     return true;
   });
+}
+
+async function withEnvironment(values, operation) {
+  const previous = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, values);
+  try {
+    return await operation();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function preflightOrigins(callable, origins) {
+  const server = createServer(callable);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    return await Promise.all(origins.map(async (origin) => {
+      const response = await fetch(`http://127.0.0.1:${port}`, {
+        method: 'OPTIONS',
+        headers: {
+          origin,
+          'access-control-request-method': 'POST',
+        },
+      });
+      return response.headers.get('access-control-allow-origin');
+    }));
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve, reject) => server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    }));
+  }
 }
 
 test('requires an authenticated administrator before starting a transaction', async () => {
@@ -271,9 +316,64 @@ test('rejects safe-integer overflow in line totals and stock projections', async
   );
 });
 
-test('local executable exports the guarded callable without initializing Admin Firestore', async () => {
+test('local callable permits only localhost web origins', async () => {
   const { stockIntake } = await import('../src/index.js');
-  assert.equal(typeof stockIntake, 'function');
+  const allowed = [
+    'http://localhost',
+    'http://localhost:5000',
+    'https://127.0.0.1:7357',
+  ];
+  const denied = [
+    'https://example.com',
+    'http://localhost.example.com',
+    'http://127.0.0.2:5000',
+  ];
+
+  assert.deepEqual(await preflightOrigins(stockIntake, allowed), allowed);
+  assert.deepEqual(await preflightOrigins(stockIntake, denied), [null, null, null]);
+});
+
+test('local callable distinguishes its guard from unexpected infrastructure failures', async () => {
+  const { stockIntake } = await import('../src/index.js');
+
+  await withEnvironment({
+    GCLOUD_PROJECT: 'production',
+    FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+    FUNCTIONS_EMULATOR: 'true',
+  }, async () => {
+    await assert.rejects(() => stockIntake.run(request()), (error) => {
+      assert.ok(error instanceof HttpsError);
+      assert.equal(error.code, 'failed-precondition');
+      assert.match(error.message, /restricted to the local demo emulator/);
+      return true;
+    });
+  });
+
+  await withEnvironment({
+    GCLOUD_PROJECT: 'demo-lda-inventory',
+    FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+    FUNCTIONS_EMULATOR: 'true',
+  }, async () => {
+    await assert.rejects(
+      () => stockIntake.run({ ...request(), auth: null }),
+      (error) => error instanceof HttpsError && error.code === 'unauthenticated',
+    );
+    await assert.rejects(
+      () => stockIntake.run({
+        auth: ADMIN,
+        get data() {
+          throw new Error('private infrastructure detail');
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof HttpsError);
+        assert.equal(error.code, 'internal');
+        assert.equal(error.message, 'stock intake is temporarily unavailable');
+        assert.doesNotMatch(error.message, /private infrastructure detail/);
+        return true;
+      },
+    );
+  });
 });
 
 test('local execution guard requires the demo project and both emulator markers', () => {

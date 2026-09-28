@@ -51,6 +51,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Catalog idempotency receipts bind one request to one generated internal
+    // code. Only administrators may inspect them; trusted server code owns writes.
+    match /productCreationReceipts/{receiptId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
     // Movement history deliberately excludes acquisition costs. It is
     // server-owned and immutable to all client SDKs.
     match /inventoryMovements/{movementId} {

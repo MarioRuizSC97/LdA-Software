@@ -7,8 +7,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test test/quantity.test.mjs test/inventory.test.mjs",
-    "test:emulator": "node --test test/inventory.emulator.test.mjs"
+    "test": "node --test test/quantity.test.mjs test/inventory.test.mjs test/catalog.test.mjs",
+    "test:emulator": "node --test test/inventory.emulator.test.mjs test/catalog.emulator.test.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",
