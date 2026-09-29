@@ -1,3 +1,62 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+
+const Set<String> _productFields = <String>{
+  'internalCode',
+  'name',
+  'quantitySpec',
+  'pricing',
+  'createdAt',
+  'pricingUpdatedAt',
+  'lastPricingAuditId',
+};
+const Set<String> _quantitySpecFields = <String>{'unit', 'precision'};
+const Set<String> _pricingFields = <String>{
+  'listedPriceCentavos',
+  'currency',
+  'priceMode',
+  'ivaTreatment',
+  'ivaRateBasisPoints',
+};
+final RegExp _internalCodePattern = RegExp(r'^[A-Z][A-Z0-9-]{7,63}$');
+final RegExp _unitPattern = RegExp(r'^[a-z][a-z0-9_-]{0,31}$');
+final RegExp _auditIdPattern = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$');
+
+void _requireOnlyKeys(Map<Object?, Object?> value, Set<String> allowed) {
+  if (value.keys.any(
+    (Object? key) => key is! String || !allowed.contains(key),
+  )) {
+    throw const FormatException('document contains unsupported fields');
+  }
+}
+
+void _requireExactKeys(Map<Object?, Object?> value, Set<String> required) {
+  _requireOnlyKeys(value, required);
+  if (value.length != required.length ||
+      required.any((String key) => !value.containsKey(key))) {
+    throw const FormatException('document contains missing fields');
+  }
+}
+
+void _validateOptionalMetadata(Map<String, Object?> data) {
+  for (final String field in <String>['createdAt', 'pricingUpdatedAt']) {
+    if (data.containsKey(field) &&
+        data[field] != null &&
+        data[field] is! Timestamp) {
+      throw FormatException('$field must be a Firestore timestamp or null');
+    }
+  }
+
+  if (data.containsKey('lastPricingAuditId')) {
+    final Object? auditId = data['lastPricingAuditId'];
+    if (auditId != null &&
+        (auditId is! String || !_auditIdPattern.hasMatch(auditId))) {
+      throw const FormatException(
+        'lastPricingAuditId must be a valid identifier or null',
+      );
+    }
+  }
+}
+
 class QuantitySpec {
   const QuantitySpec({required this.unit, required this.precision});
 
@@ -5,9 +64,14 @@ class QuantitySpec {
     if (value is! Map) {
       throw const FormatException('quantitySpec must be a map');
     }
+    _requireOnlyKeys(value, _quantitySpecFields);
     final Object? unit = value['unit'];
     final Object? precision = value['precision'];
-    if (unit is! String || unit.isEmpty || precision is! int) {
+    if (unit is! String ||
+        !_unitPattern.hasMatch(unit) ||
+        precision is! int ||
+        precision < 0 ||
+        precision > 6) {
       throw const FormatException('quantitySpec is invalid');
     }
     return QuantitySpec(unit: unit, precision: precision);
@@ -35,6 +99,7 @@ class CatalogPricing {
     if (value is! Map) {
       throw const FormatException('pricing must be a map');
     }
+    _requireExactKeys(value, _pricingFields);
 
     final Object? listedPriceCentavos = value['listedPriceCentavos'];
     final Object? currency = value['currency'];
@@ -42,9 +107,11 @@ class CatalogPricing {
     final Object? ivaTreatment = value['ivaTreatment'];
     final Object? ivaRateBasisPoints = value['ivaRateBasisPoints'];
 
-    if (listedPriceCentavos is! int || listedPriceCentavos < 0) {
+    if (listedPriceCentavos is! int ||
+        listedPriceCentavos < 0 ||
+        listedPriceCentavos > 9007199254740991) {
       throw const FormatException(
-        'pricing.listedPriceCentavos must be a non-negative integer',
+        'pricing.listedPriceCentavos must be a non-negative safe integer',
       );
     }
     if (currency != 'MXN') {
@@ -111,13 +178,20 @@ class CatalogProduct {
   });
 
   factory CatalogProduct.fromFirestore(Map<String, Object?> data) {
+    _requireOnlyKeys(data, _productFields);
+    _validateOptionalMetadata(data);
     final Object? internalCode = data['internalCode'];
     final Object? name = data['name'];
-    if (internalCode is! String || internalCode.isEmpty) {
-      throw const FormatException('internalCode is required');
+    if (internalCode is! String ||
+        !_internalCodePattern.hasMatch(internalCode)) {
+      throw const FormatException('internalCode is invalid');
     }
-    if (name is! String || name.isEmpty) {
-      throw const FormatException('name is required');
+    if (name is! String ||
+        name.isEmpty ||
+        name.length > 120 ||
+        name.trim() != name ||
+        RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
+      throw const FormatException('name is invalid');
     }
 
     return CatalogProduct(

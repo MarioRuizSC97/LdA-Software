@@ -70,6 +70,36 @@ void main() {
       expect(connections, <String>['127.0.0.1:9099']);
     });
 
+    test('connects Firestore before constructing the catalog reader', () async {
+      final List<String> events = <String>[];
+
+      final String result = await DemoEmulatorBootstrap.startCatalog<String>(
+        platform: EmulatorClientPlatform.web,
+        initializeApp: (FirebaseOptions value) async {
+          expect(value.projectId, 'demo-lda-inventory');
+          events.add('initialize');
+        },
+        connectAuthEmulator: (String host, int port) async {
+          events.add('auth:$host:$port');
+        },
+        connectFirestoreEmulator: (String host, int port) async {
+          events.add('firestore:$host:$port');
+        },
+        createCatalog: () {
+          events.add('catalog');
+          return 'catalog';
+        },
+      );
+
+      expect(result, 'catalog');
+      expect(events, <String>[
+        'initialize',
+        'auth:127.0.0.1:9099',
+        'firestore:127.0.0.1:8080',
+        'catalog',
+      ]);
+    });
+
     test(
       'fails closed before initialization on unsupported platforms',
       () async {
@@ -141,5 +171,48 @@ void main() {
         expect(gatewayCreated, isFalse);
       },
     );
+
+    test(
+      'reused Firestore connection configures the emulator only once',
+      () async {
+        var connectionCalls = 0;
+        final FirestoreEmulatorConnection connection =
+            FirestoreEmulatorConnection((_, _) async => connectionCalls += 1);
+
+        await connection.ensureConnected('127.0.0.1', 8080);
+        await connection.ensureConnected('127.0.0.1', 8080);
+
+        expect(connectionCalls, 1);
+      },
+    );
+
+    test('failed Firestore connection remains retryable', () async {
+      var connectionCalls = 0;
+      final FirestoreEmulatorConnection connection =
+          FirestoreEmulatorConnection((_, _) async {
+            connectionCalls += 1;
+            if (connectionCalls == 1) throw StateError('host unavailable');
+          });
+
+      await expectLater(
+        connection.ensureConnected('127.0.0.1', 8080),
+        throwsStateError,
+      );
+      await connection.ensureConnected('127.0.0.1', 8080);
+
+      expect(connectionCalls, 2);
+    });
+
+    test('reused Firestore connection rejects an endpoint mismatch', () async {
+      final FirestoreEmulatorConnection connection =
+          FirestoreEmulatorConnection((_, _) async {});
+
+      await connection.ensureConnected('127.0.0.1', 8080);
+
+      await expectLater(
+        connection.ensureConnected('10.0.2.2', 8080),
+        throwsStateError,
+      );
+    });
   });
 }

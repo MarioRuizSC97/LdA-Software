@@ -14,6 +14,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  Timestamp,
   updateDoc,
 } from 'firebase/firestore';
 import {
@@ -26,14 +27,23 @@ import {
 const projectId = 'demo-lda-inventory';
 const branchNorth = 'branch-north';
 const branchSouth = 'branch-south';
-const productId = 'product-coffee';
-const zeroStockProductId = 'product-ribbon';
+const productId = 'DEMO-COFFEE';
+const zeroStockProductId = 'DEMO-RIBBON';
+const unheldProductId = 'DEMO-UNHELD';
+const southOnlyProductId = 'DEMO-SOUTH-ONLY';
 const sensitiveProductIds = {
   createdBy: 'product-created-by',
   pricingUpdatedBy: 'product-pricing-updated-by',
   unitCost: 'product-unit-cost',
   embeddedCost: 'product-embedded-cost',
   nestedSecret: 'product-nested-secret',
+};
+const malformedPublicProductIds = {
+  nestedUnitActor: 'MALFORMED-UNIT-ACTOR',
+  nestedPricingActor: 'MALFORMED-PRICING-ACTOR',
+  invalidNameType: 'MALFORMED-NAME-TYPE',
+  invalidCreatedAt: 'MALFORMED-CREATED-AT',
+  invalidPricingBounds: 'MALFORMED-PRICING-BOUNDS',
 };
 
 let testEnvironment;
@@ -54,6 +64,7 @@ async function seedFirestore() {
       internalCode: productId,
       name: 'Coffee',
       quantitySpec: { unit: 'piece', precision: 0 },
+      createdAt: Timestamp.fromMillis(1_700_000_000_000),
       pricing: {
         listedPriceCentavos: 99950,
         currency: 'MXN',
@@ -61,10 +72,25 @@ async function seedFirestore() {
         ivaTreatment: 'taxable',
         ivaRateBasisPoints: 1600,
       },
+      pricingUpdatedAt: Timestamp.fromMillis(1_700_000_100_000),
+      lastPricingAuditId: 'price-coffee-001',
     });
     await setDoc(doc(firestore, 'products', zeroStockProductId), {
       internalCode: zeroStockProductId,
       name: 'Ribbon',
+      quantitySpec: { unit: 'piece', precision: 0 },
+      createdAt: null,
+      pricingUpdatedAt: null,
+      lastPricingAuditId: null,
+    });
+    await setDoc(doc(firestore, 'products', unheldProductId), {
+      internalCode: unheldProductId,
+      name: 'Unheld product',
+      quantitySpec: { unit: 'piece', precision: 0 },
+    });
+    await setDoc(doc(firestore, 'products', southOnlyProductId), {
+      internalCode: southOnlyProductId,
+      name: 'South-only product',
       quantitySpec: { unit: 'piece', precision: 0 },
     });
     const baseSensitiveProduct = {
@@ -96,6 +122,49 @@ async function seedFirestore() {
       internalCode: sensitiveProductIds.nestedSecret,
       quantitySpec: { unit: 'piece', precision: 0, secret: 'private' },
     });
+    await setDoc(doc(firestore, 'products', malformedPublicProductIds.nestedUnitActor), {
+      internalCode: malformedPublicProductIds.nestedUnitActor,
+      name: 'Nested unit actor',
+      quantitySpec: {
+        unit: { value: 'piece', actorUid: 'administrator-secret-uid' },
+        precision: 0,
+      },
+    });
+    await setDoc(doc(firestore, 'products', malformedPublicProductIds.nestedPricingActor), {
+      internalCode: malformedPublicProductIds.nestedPricingActor,
+      name: 'Nested pricing actor',
+      quantitySpec: { unit: 'piece', precision: 0 },
+      pricing: {
+        listedPriceCentavos: 100,
+        currency: 'MXN',
+        priceMode: 'iva-included',
+        ivaTreatment: { value: 'taxable', actorUid: 'administrator-secret-uid' },
+        ivaRateBasisPoints: 1600,
+      },
+    });
+    await setDoc(doc(firestore, 'products', malformedPublicProductIds.invalidNameType), {
+      internalCode: malformedPublicProductIds.invalidNameType,
+      name: { value: 'Nested name', actorUid: 'administrator-secret-uid' },
+      quantitySpec: { unit: 'piece', precision: 0 },
+    });
+    await setDoc(doc(firestore, 'products', malformedPublicProductIds.invalidCreatedAt), {
+      internalCode: malformedPublicProductIds.invalidCreatedAt,
+      name: 'Invalid timestamp',
+      quantitySpec: { unit: 'piece', precision: 0 },
+      createdAt: { actorUid: 'administrator-secret-uid' },
+    });
+    await setDoc(doc(firestore, 'products', malformedPublicProductIds.invalidPricingBounds), {
+      internalCode: malformedPublicProductIds.invalidPricingBounds,
+      name: 'Invalid pricing bounds',
+      quantitySpec: { unit: 'piece', precision: 0 },
+      pricing: {
+        listedPriceCentavos: 9007199254740992,
+        currency: 'MXN',
+        priceMode: 'iva-additional-on-invoice',
+        ivaTreatment: 'taxable',
+        ivaRateBasisPoints: 10001,
+      },
+    });
     await setDoc(doc(firestore, 'branches', branchNorth), {
       name: 'North branch',
     });
@@ -113,6 +182,10 @@ async function seedFirestore() {
     await setDoc(
       doc(firestore, 'branches', branchNorth, 'stock', zeroStockProductId),
       { available: 0 },
+    );
+    await setDoc(
+      doc(firestore, 'branches', branchSouth, 'stock', southOnlyProductId),
+      { available: 5 },
     );
     await setDoc(doc(firestore, 'costs', productId), {
       latestUnitCostCentavos: 7100,
@@ -238,7 +311,10 @@ describe('seller branch boundary', () => {
     if ('unitCostCentavos' in product.data() || 'latestUnitCostCentavos' in product.data()) {
       throw new Error('seller-readable product must not expose acquisition cost');
     }
-    for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+    for (const sensitiveProductId of [
+      ...Object.values(sensitiveProductIds),
+      ...Object.values(malformedPublicProductIds),
+    ]) {
       await assertFails(
         getDoc(doc(firestore, 'products', sensitiveProductId)),
       );
@@ -291,6 +367,7 @@ describe('claim validation', () => {
       await assertFails(
         getDoc(doc(firestore, 'branches', branchNorth, 'stock', productId)),
       );
+      await assertFails(getDoc(doc(firestore, 'products', productId)));
       await assertFails(getDoc(doc(firestore, 'costs', productId)));
       await assertFails(
         getBytes(
@@ -302,6 +379,15 @@ describe('claim validation', () => {
       );
     });
   }
+
+  test('an arbitrary role cannot get a seller-safe product', async () => {
+    const firestore = firestoreFor('unknown-role', {
+      role: 'auditor',
+      branchId: branchNorth,
+    });
+
+    await assertFails(getDoc(doc(firestore, 'products', productId)));
+  });
 });
 
 describe('administrator reads', () => {
@@ -313,7 +399,7 @@ describe('administrator reads', () => {
     const stock = await assertSucceeds(
       getDocs(collectionGroup(firestore, 'stock')),
     );
-    if (stock.size !== 3) {
+    if (stock.size !== 4) {
       throw new Error('administrator stock query must include every branch');
     }
   });
@@ -323,7 +409,10 @@ describe('administrator reads', () => {
     const firestore = firestoreFor('admin', claims);
     const storage = storageFor('admin', claims);
 
-    for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+    for (const sensitiveProductId of [
+      ...Object.values(sensitiveProductIds),
+      ...Object.values(malformedPublicProductIds),
+    ]) {
       await assertSucceeds(
         getDoc(doc(firestore, 'products', sensitiveProductId)),
       );
@@ -361,7 +450,10 @@ describe('collection query boundaries', () => {
 
     await testEnvironment.withSecurityRulesDisabled(async (context) => {
       const firestore = context.firestore();
-      for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+      for (const sensitiveProductId of [
+        ...Object.values(sensitiveProductIds),
+        ...Object.values(malformedPublicProductIds),
+      ]) {
         await deleteDoc(doc(firestore, 'products', sensitiveProductId));
       }
     });
@@ -378,6 +470,8 @@ describe('collection query boundaries', () => {
 
     await assertSucceeds(getDoc(doc(firestore, 'products', productId)));
     await assertSucceeds(getDoc(doc(firestore, 'products', zeroStockProductId)));
+    await assertFails(getDoc(doc(firestore, 'products', unheldProductId)));
+    await assertFails(getDoc(doc(firestore, 'products', southOnlyProductId)));
     const assignedStock = await assertSucceeds(
       getDocs(collection(firestore, 'branches', branchNorth, 'stock')),
     );
@@ -388,6 +482,14 @@ describe('collection query boundaries', () => {
       getDocs(collection(firestore, 'branches', branchSouth, 'stock')),
     );
     await assertFails(getDocs(collectionGroup(firestore, 'stock')));
+  });
+
+  test('retains administrator product reads regardless of branch holdings', async () => {
+    const firestore = firestoreFor('admin', { role: 'administrator' });
+
+    await assertSucceeds(getDoc(doc(firestore, 'products', unheldProductId)));
+    await assertSucceeds(getDoc(doc(firestore, 'products', southOnlyProductId)));
+    await assertSucceeds(getDoc(doc(firestore, 'products', zeroStockProductId)));
   });
 
   test('denies seller branch metadata gets and lists', async () => {

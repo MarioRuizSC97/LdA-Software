@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
@@ -18,8 +19,6 @@ void main() {
             'ivaTreatment': 'taxable',
             'ivaRateBasisPoints': 1600,
           },
-          'acquisitionCostCentavos': 7700,
-          'createdBy': 'admin-1',
         },
       );
 
@@ -35,11 +34,24 @@ void main() {
           'ivaRateBasisPoints': 1600,
         },
       });
-      expect(
-        product.toSafeFields(),
-        isNot(contains('acquisitionCostCentavos')),
-      );
-      expect(product.toSafeFields(), isNot(contains('createdBy')));
+    });
+
+    test('rejects legacy actor and acquisition-cost fields', () {
+      for (final String field in <String>[
+        'createdBy',
+        'pricingUpdatedBy',
+        'acquisitionCostCentavos',
+      ]) {
+        expect(
+          () => CatalogProduct.fromFirestore(<String, Object?>{
+            'internalCode': 'PRD-TEA-002',
+            'name': 'Tea',
+            'quantitySpec': <String, Object?>{'unit': 'piece', 'precision': 0},
+            field: field.endsWith('Centavos') ? 100 : 'admin-1',
+          }),
+          throwsFormatException,
+        );
+      }
     });
 
     test('preserves absent pricing without inventing values', () {
@@ -86,6 +98,89 @@ void main() {
         );
 
         expect(product.toSafeFields()['pricing'], pricing);
+      }
+    });
+
+    test('requires every pricing field, including a null exempt rate', () {
+      final Map<String, Object?> baseProduct = <String, Object?>{
+        'internalCode': 'PRD-TEA-002',
+        'name': 'Tea',
+        'quantitySpec': <String, Object?>{'unit': 'piece', 'precision': 0},
+      };
+      final Map<String, Object?> completePricing = <String, Object?>{
+        'listedPriceCentavos': 5000,
+        'currency': 'MXN',
+        'priceMode': 'iva-included',
+        'ivaTreatment': 'exempt',
+        'ivaRateBasisPoints': null,
+      };
+
+      for (final String requiredField in completePricing.keys) {
+        final Map<String, Object?> incompletePricing =
+            Map<String, Object?>.of(completePricing)..remove(requiredField);
+        expect(
+          () => CatalogProduct.fromFirestore(<String, Object?>{
+            ...baseProduct,
+            'pricing': incompletePricing,
+          }),
+          throwsFormatException,
+          reason: 'missing pricing.$requiredField must fail closed',
+        );
+      }
+    });
+
+    test('accepts Firestore timestamps and nullable optional metadata', () {
+      final Timestamp timestamp = Timestamp.fromMillisecondsSinceEpoch(
+        1700000000000,
+      );
+
+      expect(
+        () => CatalogProduct.fromFirestore(<String, Object?>{
+          'internalCode': 'PRD-TEA-002',
+          'name': 'Tea',
+          'quantitySpec': <String, Object?>{'unit': 'piece', 'precision': 0},
+          'createdAt': timestamp,
+          'pricingUpdatedAt': timestamp,
+          'lastPricingAuditId': 'price_tea-002',
+        }),
+        returnsNormally,
+      );
+      expect(
+        () => CatalogProduct.fromFirestore(<String, Object?>{
+          'internalCode': 'PRD-TEA-002',
+          'name': 'Tea',
+          'quantitySpec': <String, Object?>{'unit': 'piece', 'precision': 0},
+          'createdAt': null,
+          'pricingUpdatedAt': null,
+          'lastPricingAuditId': null,
+        }),
+        returnsNormally,
+      );
+    });
+
+    test('rejects malformed optional metadata shapes', () {
+      final Map<String, Object?> base = <String, Object?>{
+        'internalCode': 'PRD-TEA-002',
+        'name': 'Tea',
+        'quantitySpec': <String, Object?>{'unit': 'piece', 'precision': 0},
+      };
+
+      for (final Map<String, Object?> malformedMetadata
+          in <Map<String, Object?>>[
+            <String, Object?>{'createdAt': '2026-09-24'},
+            <String, Object?>{
+              'pricingUpdatedAt': <String, Object?>{'seconds': 1},
+            },
+            <String, Object?>{'lastPricingAuditId': ''},
+            <String, Object?>{'lastPricingAuditId': 'invalid/audit'},
+          ]) {
+        expect(
+          () => CatalogProduct.fromFirestore(<String, Object?>{
+            ...base,
+            ...malformedMetadata,
+          }),
+          throwsFormatException,
+        );
       }
     });
 

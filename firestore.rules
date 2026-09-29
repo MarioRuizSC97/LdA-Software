@@ -11,13 +11,68 @@ service cloud.firestore {
         request.auth.token.role == 'administrator';
     }
 
-    function isSellerFor(branchId) {
+    function isSeller() {
       return isSignedIn() &&
         request.auth.token.role == 'seller' &&
-        request.auth.token.branchId == branchId;
+        request.auth.token.branchId is string &&
+        request.auth.token.branchId.matches(
+          '^branch-[a-z0-9]+(-[a-z0-9]+)*$'
+        );
     }
 
-    function isPublicProduct() {
+    function isSellerFor(branchId) {
+      return isSeller() && request.auth.token.branchId == branchId;
+    }
+
+    function hasValidQuantitySpec() {
+      return resource.data.quantitySpec is map &&
+        resource.data.quantitySpec.keys().hasOnly(['unit', 'precision']) &&
+        resource.data.quantitySpec.keys().hasAll(['unit', 'precision']) &&
+        resource.data.quantitySpec.unit is string &&
+        resource.data.quantitySpec.unit.matches(
+          '^[a-z][a-z0-9_-]{0,31}$'
+        ) &&
+        resource.data.quantitySpec.precision is int &&
+        resource.data.quantitySpec.precision >= 0 &&
+        resource.data.quantitySpec.precision <= 6;
+    }
+
+    function hasValidPricing() {
+      return resource.data.pricing is map &&
+        resource.data.pricing.keys().hasOnly([
+          'listedPriceCentavos',
+          'currency',
+          'priceMode',
+          'ivaTreatment',
+          'ivaRateBasisPoints'
+        ]) &&
+        resource.data.pricing.keys().hasAll([
+          'listedPriceCentavos',
+          'currency',
+          'priceMode',
+          'ivaTreatment',
+          'ivaRateBasisPoints'
+        ]) &&
+        resource.data.pricing.listedPriceCentavos is int &&
+        resource.data.pricing.listedPriceCentavos >= 0 &&
+        resource.data.pricing.listedPriceCentavos <= 9007199254740991 &&
+        resource.data.pricing.currency == 'MXN' &&
+        (resource.data.pricing.priceMode == 'iva-included' ||
+          resource.data.pricing.priceMode == 'iva-additional-on-invoice') &&
+        (resource.data.pricing.ivaTreatment == 'taxable' ||
+          resource.data.pricing.ivaTreatment == 'zero-rated' ||
+          resource.data.pricing.ivaTreatment == 'exempt') &&
+        ((resource.data.pricing.ivaTreatment == 'taxable' &&
+            resource.data.pricing.ivaRateBasisPoints is int &&
+            resource.data.pricing.ivaRateBasisPoints >= 1 &&
+            resource.data.pricing.ivaRateBasisPoints <= 10000) ||
+          (resource.data.pricing.ivaTreatment == 'zero-rated' &&
+            resource.data.pricing.ivaRateBasisPoints == 0) ||
+          (resource.data.pricing.ivaTreatment == 'exempt' &&
+            resource.data.pricing.ivaRateBasisPoints == null));
+    }
+
+    function isPublicProduct(productId) {
       return resource.data.keys().hasOnly([
           'internalCode',
           'name',
@@ -27,25 +82,40 @@ service cloud.firestore {
           'pricingUpdatedAt',
           'lastPricingAuditId'
         ]) &&
-        resource.data.quantitySpec is map &&
-        resource.data.quantitySpec.keys().hasOnly(['unit', 'precision']) &&
-        (!('pricing' in resource.data) ||
-          (resource.data.pricing is map &&
-            resource.data.pricing.keys().hasOnly([
-              'listedPriceCentavos',
-              'currency',
-              'priceMode',
-              'ivaTreatment',
-              'ivaRateBasisPoints'
-            ])));
+        resource.data.keys().hasAll(['internalCode', 'name', 'quantitySpec']) &&
+        resource.data.internalCode is string &&
+        resource.data.internalCode == productId &&
+        resource.data.internalCode.matches('^[A-Z][A-Z0-9-]{7,63}$') &&
+        resource.data.name is string &&
+        resource.data.name.size() >= 1 &&
+        resource.data.name.size() <= 120 &&
+        hasValidQuantitySpec() &&
+        (!('createdAt' in resource.data) ||
+          resource.data.createdAt == null ||
+          resource.data.createdAt is timestamp) &&
+        (!('pricing' in resource.data) || hasValidPricing()) &&
+        (!('pricingUpdatedAt' in resource.data) ||
+          resource.data.pricingUpdatedAt == null ||
+          resource.data.pricingUpdatedAt is timestamp) &&
+        (!('lastPricingAuditId' in resource.data) ||
+          resource.data.lastPricingAuditId == null ||
+          (resource.data.lastPricingAuditId is string &&
+            resource.data.lastPricingAuditId.matches(
+              '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$'
+            )));
     }
 
-    // Administrators may inspect legacy records. Other signed-in users may get
-    // only allowlisted public documents and cannot list the catalog because
-    // rules are not filters. Trusted server code owns all writes.
+    // Administrators may inspect legacy records. Sellers may get only strict
+    // public documents represented in their assigned branch stock, including
+    // zero-stock holdings, and cannot list the catalog because rules are not
+    // filters. Trusted server code owns all writes.
     match /products/{productId} {
       allow get: if isAdministrator() ||
-        (isSignedIn() && isPublicProduct());
+        (isSeller() &&
+          isPublicProduct(productId) &&
+          exists(
+            /databases/$(database)/documents/branches/$(request.auth.token.branchId)/stock/$(productId)
+          ));
       allow list: if isAdministrator();
       allow write: if false;
     }

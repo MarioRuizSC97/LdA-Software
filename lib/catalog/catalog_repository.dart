@@ -1,7 +1,14 @@
 import 'catalog_product.dart';
+import 'catalog_stock.dart';
+
+export 'catalog_stock.dart';
 
 abstract interface class CatalogRepository {
   Future<List<CatalogProduct>> fetchProducts();
+}
+
+abstract interface class RoleScopedCatalogRepository {
+  Future<CatalogSnapshot> fetchCatalog();
 }
 
 class FixtureCatalogRepository implements CatalogRepository {
