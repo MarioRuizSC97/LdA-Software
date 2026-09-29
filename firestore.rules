@@ -50,10 +50,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Branch metadata supports the administrator's global catalog only.
+    // Sellers do not need parent-document reads for assigned-branch stock.
+    match /branches/{branchId} {
+      allow read: if isAdministrator();
+      allow write: if false;
+    }
+
     // Stock is branch-scoped. Administrators can inspect every branch and a
     // seller can inspect only the branch carried by their trusted auth claim.
     match /branches/{branchId}/stock/{productId} {
       allow read: if isAdministrator() || isSellerFor(branchId);
+      allow write: if false;
+    }
+
+    // Collection-group queries use a recursive wildcard rule. Keep this
+    // administrator-only so it cannot bypass the seller's branch boundary.
+    match /{documentPath=**}/stock/{productId} {
+      allow read: if isAdministrator();
       allow write: if false;
     }
 

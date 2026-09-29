@@ -27,6 +27,7 @@ const projectId = 'demo-lda-inventory';
 const branchNorth = 'branch-north';
 const branchSouth = 'branch-south';
 const productId = 'product-coffee';
+const zeroStockProductId = 'product-ribbon';
 const sensitiveProductIds = {
   createdBy: 'product-created-by',
   pricingUpdatedBy: 'product-pricing-updated-by',
@@ -61,6 +62,11 @@ async function seedFirestore() {
         ivaRateBasisPoints: 1600,
       },
     });
+    await setDoc(doc(firestore, 'products', zeroStockProductId), {
+      internalCode: zeroStockProductId,
+      name: 'Ribbon',
+      quantitySpec: { unit: 'piece', precision: 0 },
+    });
     const baseSensitiveProduct = {
       name: 'Sensitive legacy product',
       quantitySpec: { unit: 'piece', precision: 0 },
@@ -90,6 +96,12 @@ async function seedFirestore() {
       internalCode: sensitiveProductIds.nestedSecret,
       quantitySpec: { unit: 'piece', precision: 0, secret: 'private' },
     });
+    await setDoc(doc(firestore, 'branches', branchNorth), {
+      name: 'North branch',
+    });
+    await setDoc(doc(firestore, 'branches', branchSouth), {
+      name: 'South branch',
+    });
     await setDoc(
       doc(firestore, 'branches', branchNorth, 'stock', productId),
       { available: 8 },
@@ -97,6 +109,10 @@ async function seedFirestore() {
     await setDoc(
       doc(firestore, 'branches', branchSouth, 'stock', productId),
       { available: 3 },
+    );
+    await setDoc(
+      doc(firestore, 'branches', branchNorth, 'stock', zeroStockProductId),
+      { available: 0 },
     );
     await setDoc(doc(firestore, 'costs', productId), {
       latestUnitCostCentavos: 7100,
@@ -190,6 +206,9 @@ describe('unauthenticated access', () => {
     const anonymousStorage = testEnvironment.unauthenticatedContext().storage();
 
     await assertFails(getDoc(doc(anonymousFirestore, 'products', productId)));
+    await assertFails(
+      getDoc(doc(anonymousFirestore, 'branches', branchNorth)),
+    );
     await assertFails(
       getBytes(
         ref(
@@ -286,6 +305,19 @@ describe('claim validation', () => {
 });
 
 describe('administrator reads', () => {
+  test('lists and gets branch metadata and reads stock across branches', async () => {
+    const firestore = firestoreFor('admin', { role: 'administrator' });
+
+    await assertSucceeds(getDoc(doc(firestore, 'branches', branchNorth)));
+    await assertSucceeds(getDocs(collection(firestore, 'branches')));
+    const stock = await assertSucceeds(
+      getDocs(collectionGroup(firestore, 'stock')),
+    );
+    if (stock.size !== 3) {
+      throw new Error('administrator stock query must include every branch');
+    }
+  });
+
   test('reads every modeled branch and its product files', async () => {
     const claims = { role: 'administrator' };
     const firestore = firestoreFor('admin', claims);
@@ -338,19 +370,34 @@ describe('collection query boundaries', () => {
     await assertSucceeds(getDocs(collection(administrator, 'products')));
   });
 
-  test('rejects seller queries outside the assigned branch', async () => {
+  test('allows only the seller assigned-stock query and product get', async () => {
     const firestore = firestoreFor('seller-north', {
       role: 'seller',
       branchId: branchNorth,
     });
 
-    await assertSucceeds(
+    await assertSucceeds(getDoc(doc(firestore, 'products', productId)));
+    await assertSucceeds(getDoc(doc(firestore, 'products', zeroStockProductId)));
+    const assignedStock = await assertSucceeds(
       getDocs(collection(firestore, 'branches', branchNorth, 'stock')),
     );
+    if (assignedStock.docs.find((stock) => stock.id === zeroStockProductId)?.data().available !== 0) {
+      throw new Error('seller assigned-stock query must retain zero quantity');
+    }
     await assertFails(
       getDocs(collection(firestore, 'branches', branchSouth, 'stock')),
     );
     await assertFails(getDocs(collectionGroup(firestore, 'stock')));
+  });
+
+  test('denies seller branch metadata gets and lists', async () => {
+    const firestore = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+
+    await assertFails(getDoc(doc(firestore, 'branches', branchNorth)));
+    await assertFails(getDocs(collection(firestore, 'branches')));
   });
 });
 
@@ -400,6 +447,11 @@ describe('server-owned inventory mutations', () => {
       branchId: branchNorth,
     });
 
+    await assertFails(
+      setDoc(doc(administrator, 'branches', 'branch-client'), {
+        name: 'Client-created branch',
+      }),
+    );
     await assertFails(
       setDoc(
         doc(administrator, 'branches', branchNorth, 'stock', 'new-product'),
