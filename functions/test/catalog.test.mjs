@@ -171,8 +171,11 @@ test('creates a seller-readable product without price or acquisition cost', asyn
     name: 'Coffee',
     quantitySpec: { unit: 'piece', precision: 0 },
     createdAt: FIXED_TIME,
-    createdBy: 'admin-1',
   });
+  assert.equal(
+    firestore.read('productCreationReceipts/create-coffee-001').actorId,
+    'admin-1',
+  );
   assert.equal(firestore.read('costs/PRD-COFFEE-001'), undefined);
   assert.equal('salePrice' in firestore.read('products/PRD-COFFEE-001'), false);
 });
@@ -197,6 +200,24 @@ test('replays the original stable identity and rejects key reuse with new input'
   await rejectsCode(
     () => createProduct(request({ name: 'Different coffee' })),
     'already-exists',
+  );
+});
+
+test('binds an idempotency key to the administrator who created the receipt', async () => {
+  const { firestore, createProduct } = setup();
+
+  await createProduct(request());
+  await rejectsCode(
+    () => createProduct({
+      ...request(),
+      auth: { uid: 'admin-2', token: { role: 'administrator' } },
+    }),
+    'already-exists',
+  );
+
+  assert.equal(
+    firestore.read('productCreationReceipts/create-coffee-001').actorId,
+    'admin-1',
   );
 });
 

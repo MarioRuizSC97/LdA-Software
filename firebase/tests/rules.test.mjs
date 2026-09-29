@@ -27,6 +27,13 @@ const projectId = 'demo-lda-inventory';
 const branchNorth = 'branch-north';
 const branchSouth = 'branch-south';
 const productId = 'product-coffee';
+const sensitiveProductIds = {
+  createdBy: 'product-created-by',
+  pricingUpdatedBy: 'product-pricing-updated-by',
+  unitCost: 'product-unit-cost',
+  embeddedCost: 'product-embedded-cost',
+  nestedSecret: 'product-nested-secret',
+};
 
 let testEnvironment;
 
@@ -53,6 +60,35 @@ async function seedFirestore() {
         ivaTreatment: 'taxable',
         ivaRateBasisPoints: 1600,
       },
+    });
+    const baseSensitiveProduct = {
+      name: 'Sensitive legacy product',
+      quantitySpec: { unit: 'piece', precision: 0 },
+    };
+    await setDoc(doc(firestore, 'products', sensitiveProductIds.createdBy), {
+      ...baseSensitiveProduct,
+      internalCode: sensitiveProductIds.createdBy,
+      createdBy: 'legacy-admin-uid',
+    });
+    await setDoc(doc(firestore, 'products', sensitiveProductIds.pricingUpdatedBy), {
+      ...baseSensitiveProduct,
+      internalCode: sensitiveProductIds.pricingUpdatedBy,
+      pricingUpdatedBy: 'legacy-admin-uid',
+    });
+    await setDoc(doc(firestore, 'products', sensitiveProductIds.unitCost), {
+      ...baseSensitiveProduct,
+      internalCode: sensitiveProductIds.unitCost,
+      unitCostCentavos: 7100,
+    });
+    await setDoc(doc(firestore, 'products', sensitiveProductIds.embeddedCost), {
+      ...baseSensitiveProduct,
+      internalCode: sensitiveProductIds.embeddedCost,
+      acquisition: { unitCostCentavos: 7100 },
+    });
+    await setDoc(doc(firestore, 'products', sensitiveProductIds.nestedSecret), {
+      ...baseSensitiveProduct,
+      internalCode: sensitiveProductIds.nestedSecret,
+      quantitySpec: { unit: 'piece', precision: 0, secret: 'private' },
     });
     await setDoc(
       doc(firestore, 'branches', branchNorth, 'stock', productId),
@@ -183,6 +219,12 @@ describe('seller branch boundary', () => {
     if ('unitCostCentavos' in product.data() || 'latestUnitCostCentavos' in product.data()) {
       throw new Error('seller-readable product must not expose acquisition cost');
     }
+    for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+      await assertFails(
+        getDoc(doc(firestore, 'products', sensitiveProductId)),
+      );
+    }
+    await assertFails(getDoc(doc(firestore, 'costs', productId)));
     await assertSucceeds(
       getDoc(doc(firestore, 'branches', branchNorth, 'stock', productId)),
     );
@@ -249,6 +291,11 @@ describe('administrator reads', () => {
     const firestore = firestoreFor('admin', claims);
     const storage = storageFor('admin', claims);
 
+    for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+      await assertSucceeds(
+        getDoc(doc(firestore, 'products', sensitiveProductId)),
+      );
+    }
     await assertSucceeds(
       getDoc(doc(firestore, 'branches', branchNorth, 'stock', productId)),
     );
@@ -270,6 +317,27 @@ describe('administrator reads', () => {
 });
 
 describe('collection query boundaries', () => {
+  test('denies seller catalog lists for mixed and all-public collections', async () => {
+    const seller = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+    const administrator = firestoreFor('admin', { role: 'administrator' });
+
+    await assertFails(getDocs(collection(seller, 'products')));
+    await assertSucceeds(getDocs(collection(administrator, 'products')));
+
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      const firestore = context.firestore();
+      for (const sensitiveProductId of Object.values(sensitiveProductIds)) {
+        await deleteDoc(doc(firestore, 'products', sensitiveProductId));
+      }
+    });
+
+    await assertFails(getDocs(collection(seller, 'products')));
+    await assertSucceeds(getDocs(collection(administrator, 'products')));
+  });
+
   test('rejects seller queries outside the assigned branch', async () => {
     const firestore = firestoreFor('seller-north', {
       role: 'seller',

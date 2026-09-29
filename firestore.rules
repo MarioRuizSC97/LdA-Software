@@ -17,10 +17,36 @@ service cloud.firestore {
         request.auth.token.branchId == branchId;
     }
 
-    // Catalog documents deliberately exclude acquisition costs. Authenticated
-    // users can read the shared catalog, while trusted server code owns writes.
+    function isPublicProduct() {
+      return resource.data.keys().hasOnly([
+          'internalCode',
+          'name',
+          'quantitySpec',
+          'createdAt',
+          'pricing',
+          'pricingUpdatedAt',
+          'lastPricingAuditId'
+        ]) &&
+        resource.data.quantitySpec is map &&
+        resource.data.quantitySpec.keys().hasOnly(['unit', 'precision']) &&
+        (!('pricing' in resource.data) ||
+          (resource.data.pricing is map &&
+            resource.data.pricing.keys().hasOnly([
+              'listedPriceCentavos',
+              'currency',
+              'priceMode',
+              'ivaTreatment',
+              'ivaRateBasisPoints'
+            ])));
+    }
+
+    // Administrators may inspect legacy records. Other signed-in users may get
+    // only allowlisted public documents and cannot list the catalog because
+    // rules are not filters. Trusted server code owns all writes.
     match /products/{productId} {
-      allow read: if isSignedIn();
+      allow get: if isAdministrator() ||
+        (isSignedIn() && isPublicProduct());
+      allow list: if isAdministrator();
       allow write: if false;
     }
 

@@ -80,6 +80,15 @@ export function createProductPricingService({ firestore, now = () => new Date() 
       }
 
       const product = productSnapshot.data();
+      if (
+        Object.hasOwn(product, 'createdBy')
+        || Object.hasOwn(product, 'pricingUpdatedBy')
+      ) {
+        throw new PricingError(
+          'failed-precondition',
+          'product contains legacy actor provenance',
+        );
+      }
       const oldPricing = product.pricing === undefined
         ? null
         : validStoredPricing(product.pricing);
@@ -91,10 +100,7 @@ export function createProductPricingService({ firestore, now = () => new Date() 
         pricing: input.pricing,
       };
 
-      const sellerReadableProduct = { ...product };
-      delete sellerReadableProduct.pricingUpdatedBy;
-      transaction.set(productReference, {
-        ...sellerReadableProduct,
+      transaction.update(productReference, {
         pricing: input.pricing,
         pricingUpdatedAt: timestamp,
         lastPricingAuditId: input.idempotencyKey,

@@ -66,6 +66,16 @@ async function rejectsCode(operation, code) {
 
 test('Admin Firestore atomically serializes price updates and immutable audits', async (t) => {
   const productReference = reference(`products/${productId}`);
+  const legacyCases = [
+    { provenanceKey: 'createdBy', provenanceValue: `${scope}-legacy-admin` },
+    { provenanceKey: 'createdBy', provenanceValue: null },
+    { provenanceKey: 'pricingUpdatedBy', provenanceValue: `${scope}-legacy-admin` },
+    { provenanceKey: 'pricingUpdatedBy', provenanceValue: null },
+  ].map((legacyCase, index) => ({
+    ...legacyCase,
+    productId: `${scope}-legacy-product-${index}`,
+    idempotencyKey: `${scope}-legacy-${index}`,
+  }));
   const keys = {
     initial: `${scope}-initial`,
     same: `${scope}-same-key`,
@@ -73,9 +83,15 @@ test('Admin Firestore atomically serializes price updates and immutable audits',
     second: `${scope}-concurrent-b`,
     conflicting: `${scope}-conflicting-key`,
   };
-  for (const key of Object.values(keys)) {
+  for (const key of [
+    ...Object.values(keys),
+    ...legacyCases.map(({ idempotencyKey }) => idempotencyKey),
+  ]) {
     reference(`productPriceAudits/${key}`);
     reference(`productPriceUpdateReceipts/${key}`);
+  }
+  for (const { productId: legacyProductId } of legacyCases) {
+    reference(`products/${legacyProductId}`);
   }
 
   t.after(async () => {
@@ -89,11 +105,42 @@ test('Admin Firestore atomically serializes price updates and immutable audits',
     internalCode: productId,
     name: 'Integration product',
     quantitySpec: { unit: 'piece', precision: 0 },
-    pricingUpdatedBy: `${scope}-legacy-admin`,
     testScope: scope,
   });
 
   const setPrice = createProductPricingService({ firestore });
+  for (const legacyCase of legacyCases) {
+    const legacyProductReference = firestore.doc(`products/${legacyCase.productId}`);
+    const legacyProduct = {
+      internalCode: legacyCase.productId,
+      name: 'Legacy integration product',
+      quantitySpec: { unit: 'piece', precision: 0 },
+      [legacyCase.provenanceKey]: legacyCase.provenanceValue,
+      testScope: scope,
+    };
+    await legacyProductReference.create(legacyProduct);
+
+    await rejectsCode(
+      () => setPrice(pricingRequest(legacyCase.idempotencyKey, {
+        productId: legacyCase.productId,
+      })),
+      'failed-precondition',
+    );
+    assert.deepEqual((await legacyProductReference.get()).data(), legacyProduct);
+    assert.equal(
+      (await firestore.doc(
+        `productPriceAudits/${legacyCase.idempotencyKey}`,
+      ).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await firestore.doc(
+        `productPriceUpdateReceipts/${legacyCase.idempotencyKey}`,
+      ).get()).exists,
+      false,
+    );
+  }
+
   const initial = await setPrice(pricingRequest(keys.initial));
   assert.equal(initial.pricing.listedPriceCentavos, 99_950);
   const initialProduct = (await productReference.get()).data();

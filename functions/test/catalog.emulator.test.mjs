@@ -105,12 +105,16 @@ test('Admin Firestore creates one stable product under retries and code collisio
 
   assert.equal(created.productId, uniqueCode);
   assert.equal((await collisionReference.get()).data().name, 'Existing product');
-  assert.deepEqual((await uniqueReference.get()).data().quantitySpec, {
+  const uniqueProduct = (await uniqueReference.get()).data();
+  assert.deepEqual(uniqueProduct.quantitySpec, {
     unit: 'kg',
     precision: 3,
   });
-  assert.equal((await uniqueReference.get()).data().salePrice, undefined);
-  assert.equal((await collisionReceipt.get()).data().result.productId, uniqueCode);
+  assert.equal(uniqueProduct.salePrice, undefined);
+  assert.equal('createdBy' in uniqueProduct, false);
+  const creationReceipt = (await collisionReceipt.get()).data();
+  assert.equal(creationReceipt.result.productId, uniqueCode);
+  assert.equal(creationReceipt.actorId, `${scope}-admin`);
 
   let concurrentIndex = 0;
   const createConcurrent = createProductCreationService({
@@ -130,7 +134,18 @@ test('Admin Firestore creates one stable product under retries and code collisio
     results.map(({ replayed }) => replayed).sort(),
     [false, true],
   );
-  assert.equal((await concurrentReceipt.get()).data().result.productId, results[0].productId);
+  const concurrentReceiptData = (await concurrentReceipt.get()).data();
+  assert.equal(concurrentReceiptData.result.productId, results[0].productId);
+  assert.equal(concurrentReceiptData.actorId, `${scope}-admin`);
+
+  await rejectsCode(
+    () => createConcurrent({
+      ...sameRequest,
+      auth: { uid: `${scope}-second-admin`, token: { role: 'administrator' } },
+    }),
+    'already-exists',
+  );
+  assert.equal((await concurrentReceipt.get()).data().actorId, `${scope}-admin`);
 
   await rejectsCode(
     () => createConcurrent(request(`${scope}-concurrent-request`, {

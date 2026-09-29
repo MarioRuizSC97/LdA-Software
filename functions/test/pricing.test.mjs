@@ -139,7 +139,7 @@ test('requires an authenticated administrator before opening a transaction', asy
 });
 
 test('sets seller-safe pricing while keeping actor identity in protected records', async () => {
-  const { firestore, setPrice } = setup({ pricingUpdatedBy: 'legacy-admin' });
+  const { firestore, setPrice } = setup();
 
   const result = await setPrice(request());
 
@@ -168,6 +168,24 @@ test('sets seller-safe pricing while keeping actor identity in protected records
     changedAt: FIXED_TIME,
     actorId: 'admin-1',
   });
+});
+
+test('rejects all legacy actor provenance without deleting or propagating it', async () => {
+  for (const provenanceKey of ['createdBy', 'pricingUpdatedBy']) {
+    for (const provenanceValue of ['legacy-admin', null]) {
+      const { firestore, setPrice } = setup({ [provenanceKey]: provenanceValue });
+      const originalProduct = firestore.read('products/product-coffee');
+
+      await rejectsCode(() => setPrice(request()), 'failed-precondition');
+
+      assert.deepEqual(firestore.read('products/product-coffee'), originalProduct);
+      assert.equal(firestore.read('productPriceAudits/price-coffee-001'), undefined);
+      assert.equal(
+        firestore.read('productPriceUpdateReceipts/price-coffee-001'),
+        undefined,
+      );
+    }
+  }
 });
 
 test('distinguishes additional-on-invoice, zero-rated, and exempt policies', async () => {

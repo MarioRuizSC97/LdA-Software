@@ -60,7 +60,7 @@ export function createProductCreationService({
 
   return async function createProduct(request = {}) {
     const actorId = authorizeAdministrator(request.auth);
-    const input = validateRequest(request.data);
+    const input = validateRequest(request.data, actorId);
     const receiptReference = firestore.doc(
       `productCreationReceipts/${input.idempotencyKey}`,
     );
@@ -97,7 +97,6 @@ export function createProductCreationService({
           name: input.name,
           quantitySpec: input.quantitySpec,
           createdAt: timestamp,
-          createdBy: actorId,
         });
         transaction.create(receiptReference, {
           fingerprint: input.fingerprint,
@@ -130,7 +129,7 @@ function authorizeAdministrator(auth) {
   return auth.uid;
 }
 
-function validateRequest(data) {
+function validateRequest(data, actorId) {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new CatalogError('invalid-argument', 'request data is required');
   }
@@ -139,7 +138,7 @@ function validateRequest(data) {
   const idempotencyKey = validIdempotencyKey(data.idempotencyKey);
   const name = validProductName(data.name);
   const quantitySpec = validQuantitySpec(data.quantitySpec);
-  const fingerprint = JSON.stringify({ name, quantitySpec });
+  const fingerprint = JSON.stringify({ actorId, name, quantitySpec });
 
   return { idempotencyKey, name, quantitySpec, fingerprint };
 }
