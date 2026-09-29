@@ -39,8 +39,17 @@
           "projectId": "lda-inventory-dev-mx",
           "configurations": {
             "android": "1:726521416508:android:49a18df4b5a298f6e7ac39",
-            "web": "1:726521416508:web:e7e00b80aeb27702e7ac39"
+            "web": "1:726521416508:web:e7e00b80aeb27702e7ac39",
+            "ios": "1:726521416508:ios:a480cb8e0866df1be7ac39"
           }
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "lda-inventory-dev-mx",
+          "appId": "1:726521416508:ios:a480cb8e0866df1be7ac39",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
         }
       }
     }

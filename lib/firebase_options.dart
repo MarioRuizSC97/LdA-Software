@@ -23,10 +23,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       case TargetPlatform.macOS:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for macos - '
@@ -64,5 +61,14 @@ class DefaultFirebaseOptions {
     messagingSenderId: '726521416508',
     projectId: 'lda-inventory-dev-mx',
     storageBucket: 'lda-inventory-dev-mx.firebasestorage.app',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyCWGRY02EPsH9S1UyQBvtwzPc85OfJi5wc',
+    appId: '1:726521416508:ios:a480cb8e0866df1be7ac39',
+    messagingSenderId: '726521416508',
+    projectId: 'lda-inventory-dev-mx',
+    storageBucket: 'lda-inventory-dev-mx.firebasestorage.app',
+    iosBundleId: 'com.ldasoftware.ldaInventory',
   );
 }
