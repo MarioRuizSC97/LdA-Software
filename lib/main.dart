@@ -1,29 +1,85 @@
 import 'package:flutter/material.dart';
 
+import 'auth/emulator_login.dart';
+import 'auth/emulator_session.dart';
 import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
+import 'firebase/emulator_bootstrap.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
+const bool _localEmulatorsEnabled = bool.fromEnvironment(
+  'LDA_LOCAL_EMULATORS',
+);
 
 void main() {
-  runApp(const LdaInventoryBootstrap(demoEnabled: _demoCatalogEnabled));
+  runApp(
+    const LdaInventoryBootstrap(
+      demoEnabled: _demoCatalogEnabled,
+      localEmulatorsEnabled: _localEmulatorsEnabled,
+    ),
+  );
 }
 
 class LdaInventoryBootstrap extends StatelessWidget {
-  const LdaInventoryBootstrap({required this.demoEnabled, super.key});
+  const LdaInventoryBootstrap({
+    required this.demoEnabled,
+    this.localEmulatorsEnabled = false,
+    this.emulatorLoader,
+    super.key,
+  });
 
   final bool demoEnabled;
+  final bool localEmulatorsEnabled;
+  final EmulatorSessionGatewayLoader? emulatorLoader;
 
   @override
   Widget build(BuildContext context) {
-    if (!demoEnabled) return const CatalogSetupApp();
-
-    return const LdaInventoryApp(
-      catalogRepository: FixtureCatalogRepository(_catalogFixtures),
-      statusLabel: 'Demo data · Not connected',
-    );
+    if (demoEnabled) {
+      return const LdaInventoryApp(
+        catalogRepository: FixtureCatalogRepository(_catalogFixtures),
+        statusLabel: 'Demo data · Not connected',
+      );
+    }
+    if (localEmulatorsEnabled) {
+      return LocalEmulatorAuthApp(
+        loader: emulatorLoader ?? DemoEmulatorBootstrap.initialize,
+      );
+    }
+    return const CatalogSetupApp();
   }
+}
+
+class LocalEmulatorAuthApp extends StatefulWidget {
+  const LocalEmulatorAuthApp({required this.loader, super.key});
+
+  final EmulatorSessionGatewayLoader loader;
+
+  @override
+  State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
+}
+
+class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
+  late Future<EmulatorSessionGateway> _gateway;
+
+  @override
+  void initState() {
+    super.initState();
+    _gateway = widget.loader();
+  }
+
+  Future<EmulatorSessionGateway> _retry() {
+    final Future<EmulatorSessionGateway> gateway = widget.loader();
+    _gateway = gateway;
+    return gateway;
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'LDA Inventory',
+    theme: _theme(),
+    home: EmulatorLoginShell(sessionGateway: _gateway, retryLoader: _retry),
+  );
 }
 
 class LdaInventoryApp extends StatelessWidget {

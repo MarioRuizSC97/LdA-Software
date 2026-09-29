@@ -1,8 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/main.dart';
+
+class _UnauthenticatedGateway implements EmulatorSessionGateway {
+  @override
+  Future<EmulatorSession?> restoreSession() async => null;
+
+  @override
+  Stream<EmulatorSession?> sessionChanges() => const Stream.empty();
+
+  @override
+  Future<EmulatorSession> login({
+    required String email,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> logout() async {}
+}
+
+Future<EmulatorSessionGateway> _loadUnauthenticatedGateway() async =>
+    _UnauthenticatedGateway();
+
+Future<EmulatorSessionGateway> _unexpectedEmulatorLoad() =>
+    throw StateError('fixture mode must remain disconnected');
 
 void main() {
   testWidgets('ordinary bootstrap fails closed without fixture products', (
@@ -26,6 +50,40 @@ void main() {
     expect(find.text('Demo data · Not connected'), findsOneWidget);
     expect(find.text('Coffee'), findsOneWidget);
     expect(find.text('Tea'), findsOneWidget);
+  });
+
+  testWidgets('explicit local-emulator mode shows login without catalog data', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        localEmulatorsEnabled: true,
+        emulatorLoader: _loadUnauthenticatedGateway,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Catalog data is not connected.'), findsOneWidget);
+    expect(find.text('Coffee'), findsNothing);
+  });
+
+  testWidgets('fixture mode stays disconnected when both flags are enabled', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: true,
+        localEmulatorsEnabled: true,
+        emulatorLoader: _unexpectedEmulatorLoad,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Demo data · Not connected'), findsOneWidget);
+    expect(find.text('Coffee'), findsOneWidget);
+    expect(find.text('Local emulator sign in'), findsNothing);
   });
 
   testWidgets('injected inventory catalog renders accessibly', (
