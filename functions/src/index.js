@@ -18,7 +18,7 @@ import {
   createProductPricingService,
 } from './pricing.js';
 
-const LOCAL_WEB_ORIGINS = [
+export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
   /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
 ];
