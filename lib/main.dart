@@ -26,12 +26,14 @@ class LdaInventoryBootstrap extends StatelessWidget {
     required this.demoEnabled,
     this.localEmulatorsEnabled = false,
     this.emulatorLoader,
+    this.emulatorCatalogLoader,
     super.key,
   });
 
   final bool demoEnabled;
   final bool localEmulatorsEnabled;
   final EmulatorSessionGatewayLoader? emulatorLoader;
+  final CatalogSnapshotLoader? emulatorCatalogLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +46,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     if (localEmulatorsEnabled) {
       return LocalEmulatorAuthApp(
         loader: emulatorLoader ?? DemoEmulatorBootstrap.initialize,
+        catalogLoader: emulatorCatalogLoader ?? _loadLiveCatalog,
       );
     }
     return const CatalogSetupApp();
@@ -51,9 +54,14 @@ class LdaInventoryBootstrap extends StatelessWidget {
 }
 
 class LocalEmulatorAuthApp extends StatefulWidget {
-  const LocalEmulatorAuthApp({required this.loader, super.key});
+  const LocalEmulatorAuthApp({
+    required this.loader,
+    required this.catalogLoader,
+    super.key,
+  });
 
   final EmulatorSessionGatewayLoader loader;
+  final CatalogSnapshotLoader catalogLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -78,8 +86,18 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
   Widget build(BuildContext context) => MaterialApp(
     title: 'LDA Inventory',
     theme: _theme(),
-    home: EmulatorLoginShell(sessionGateway: _gateway, retryLoader: _retry),
+    home: EmulatorLoginShell(
+      sessionGateway: _gateway,
+      retryLoader: _retry,
+      catalogLoader: widget.catalogLoader,
+    ),
   );
+}
+
+Future<CatalogSnapshot> _loadLiveCatalog(EmulatorSession session) async {
+  final RoleScopedCatalogRepository repository =
+      await DemoEmulatorBootstrap.initializeCatalogRepository(session);
+  return repository.fetchCatalog();
 }
 
 class LdaInventoryApp extends StatelessWidget {

@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
+import 'package:lda_inventory/catalog/catalog_page.dart';
+import 'package:lda_inventory/catalog/catalog_product.dart';
+import 'package:lda_inventory/catalog/catalog_repository.dart';
 
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
@@ -11,12 +14,16 @@ class _FakeGateway implements EmulatorSessionGateway {
     this.restoreError,
     this.loginResult,
     this.loginError,
+    this.loginCompleter,
+    this.logoutCompleter,
   });
 
   final EmulatorSession? restored;
   Object? restoreError;
   final EmulatorSession? loginResult;
   final Object? loginError;
+  Completer<EmulatorSession>? loginCompleter;
+  final Completer<void>? logoutCompleter;
   final StreamController<EmulatorSession?> sessions =
       StreamController<EmulatorSession?>.broadcast();
   var restoreCalls = 0;
@@ -42,12 +49,16 @@ class _FakeGateway implements EmulatorSessionGateway {
     submittedEmail = email;
     submittedPassword = password;
     if (loginError case final Object error) throw error;
+    if (loginCompleter case final Completer<EmulatorSession> completer) {
+      return completer.future;
+    }
     return loginResult!;
   }
 
   @override
   Future<void> logout() async {
     logoutCalls += 1;
+    await logoutCompleter?.future;
   }
 }
 
@@ -58,8 +69,18 @@ const EmulatorSession _seller = EmulatorSession(
   branchId: 'branch-north',
 );
 
-Widget _app(Future<EmulatorSessionGateway> gateway) =>
-    MaterialApp(home: EmulatorLoginShell(sessionGateway: gateway));
+Future<CatalogSnapshot> _emptyCatalog(EmulatorSession session) async =>
+    CatalogSnapshot(const <CatalogItem>[]);
+
+Widget _app(
+  Future<EmulatorSessionGateway> gateway, {
+  CatalogSnapshotLoader catalogLoader = _emptyCatalog,
+}) => MaterialApp(
+  home: EmulatorLoginShell(
+    sessionGateway: gateway,
+    catalogLoader: catalogLoader,
+  ),
+);
 
 void main() {
   testWidgets('shows a safe loading state while bootstrap is pending', (
@@ -85,7 +106,7 @@ void main() {
     expect(find.text('Catalog data is not connected.'), findsOneWidget);
   });
 
-  testWidgets('logs in and shows validated session without catalog claims', (
+  testWidgets('logs in and loads catalog for the validated session', (
     WidgetTester tester,
   ) async {
     final _FakeGateway gateway = _FakeGateway(loginResult: _seller);
@@ -108,7 +129,7 @@ void main() {
     expect(find.text('Authenticated locally'), findsOneWidget);
     expect(find.text('Role: seller'), findsOneWidget);
     expect(find.text('Branch: branch-north'), findsOneWidget);
-    expect(find.text('Catalog data not loaded.'), findsOneWidget);
+    expect(find.text('No products yet'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
 
@@ -255,7 +276,11 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: EmulatorLoginShell(sessionGateway: loader(), retryLoader: loader),
+        home: EmulatorLoginShell(
+          sessionGateway: loader(),
+          retryLoader: loader,
+          catalogLoader: _emptyCatalog,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -271,6 +296,430 @@ void main() {
     expect(find.text('Local emulator sign in'), findsOneWidget);
   });
 
+  testWidgets('authenticated catalog auto-loads once for harmless notices', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGateway gateway = _FakeGateway(restored: _seller);
+    var catalogCalls = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      catalogCalls += 1;
+      return CatalogSnapshot(<CatalogItem>[
+        CatalogItem(
+          product: const CatalogProduct(
+            internalCode: 'PRD-LIVE-001',
+            name: 'Live product',
+            quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+          ),
+          holdings: const <CatalogHolding>[
+            CatalogHolding(branchId: 'branch-north', quantityScaled: 1),
+          ],
+        ),
+      ]);
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Live product'), findsOneWidget);
+    expect(catalogCalls, 1);
+
+    gateway.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    expect(catalogCalls, 1);
+  });
+
+  testWidgets('user role and branch changes recreate and clear catalog', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGateway gateway = _FakeGateway(restored: _seller);
+    final List<EmulatorSession> requested = <EmulatorSession>[];
+    final List<Completer<CatalogSnapshot>> requests =
+        <Completer<CatalogSnapshot>>[];
+    Future<CatalogSnapshot> load(EmulatorSession session) {
+      requested.add(session);
+      final Completer<CatalogSnapshot> completer =
+          Completer<CatalogSnapshot>();
+      requests.add(completer);
+      return completer.future;
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pump();
+    expect(requested, hasLength(1));
+
+    const List<EmulatorSession> replacements = <EmulatorSession>[
+      EmulatorSession(
+        userId: 'seller-north',
+        email: 'seller@demo.invalid',
+        role: InventoryRole.seller,
+        branchId: 'branch-south',
+      ),
+      EmulatorSession(
+        userId: 'seller-north',
+        email: 'seller@demo.invalid',
+        role: InventoryRole.administrator,
+      ),
+      EmulatorSession(
+        userId: 'another-admin',
+        email: 'other@demo.invalid',
+        role: InventoryRole.administrator,
+      ),
+    ];
+    for (final EmulatorSession replacement in replacements) {
+      gateway.sessions.add(replacement);
+      await tester.pump();
+      expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+    }
+    expect(requested, hasLength(4));
+    expect(requested.last.userId, 'another-admin');
+  });
+
+  testWidgets('delayed logout rejects stale nonnull session events', (
+    WidgetTester tester,
+  ) async {
+    final Completer<void> signOut = Completer<void>();
+    final _FakeGateway gateway = _FakeGateway(
+      restored: _seller,
+      logoutCompleter: signOut,
+    );
+    var catalogCalls = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      catalogCalls += 1;
+      return CatalogSnapshot(<CatalogItem>[
+        CatalogItem(
+          product: const CatalogProduct(
+            internalCode: 'PRD-LIVE-001',
+            name: 'Live product',
+            quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+          ),
+          holdings: const <CatalogHolding>[
+            CatalogHolding(branchId: 'branch-north', quantityScaled: 1),
+          ],
+        ),
+      ]);
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Live product'), findsOneWidget);
+    expect(catalogCalls, 1);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pump();
+    gateway.sessions.add(_seller);
+    await tester.pump();
+
+    expect(gateway.logoutCalls, 1);
+    expect(find.text('Live product'), findsNothing);
+    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(catalogCalls, 1);
+    signOut.complete();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'remote null invalidates delayed login and a new login can succeed',
+    (WidgetTester tester) async {
+      final Completer<EmulatorSession> staleLogin =
+          Completer<EmulatorSession>();
+      final _FakeGateway gateway = _FakeGateway(loginCompleter: staleLogin);
+      var catalogCalls = 0;
+      Future<CatalogSnapshot> load(EmulatorSession session) async {
+        catalogCalls += 1;
+        return CatalogSnapshot(const <CatalogItem>[]);
+      }
+
+      await tester.pumpWidget(
+        _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-email')),
+        'seller.north@demo-lda-inventory.invalid',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-password')),
+        'Demo-Only-Seller-2026!',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.pump();
+
+      gateway.sessions.add(null);
+      await tester.pump();
+      staleLogin.complete(_seller);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(find.text('Authenticated locally'), findsNothing);
+      expect(catalogCalls, 0);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Sign in'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+
+      final Completer<EmulatorSession> newLogin =
+          Completer<EmulatorSession>();
+      gateway.loginCompleter = newLogin;
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.pump();
+      newLogin.complete(_seller);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Authenticated locally'), findsOneWidget);
+      expect(catalogCalls, 1);
+    },
+  );
+
+  testWidgets('stale login failure cannot cancel a newer attempt', (
+    WidgetTester tester,
+  ) async {
+    final Completer<EmulatorSession> staleLogin =
+        Completer<EmulatorSession>();
+    final _FakeGateway gateway = _FakeGateway(loginCompleter: staleLogin);
+    var catalogCalls = 0;
+
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(gateway),
+        catalogLoader: (EmulatorSession session) async {
+          catalogCalls += 1;
+          return CatalogSnapshot(const <CatalogItem>[]);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller.north@demo-lda-inventory.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'Demo-Only-Seller-2026!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    gateway.sessions.add(null);
+    await tester.pump();
+    final Completer<EmulatorSession> newLogin =
+        Completer<EmulatorSession>();
+    gateway.loginCompleter = newLogin;
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    staleLogin.completeError(StateError('stale login failure detail'));
+    await tester.pump();
+    expect(find.textContaining('stale login failure detail'), findsNothing);
+    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    newLogin.complete(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(catalogCalls, 1);
+  });
+
+  testWidgets('normal login notification does not duplicate catalog loading', (
+    WidgetTester tester,
+  ) async {
+    final Completer<EmulatorSession> login = Completer<EmulatorSession>();
+    final _FakeGateway gateway = _FakeGateway(loginCompleter: login);
+    var catalogCalls = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      catalogCalls += 1;
+      return CatalogSnapshot(const <CatalogItem>[]);
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller.north@demo-lda-inventory.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'Demo-Only-Seller-2026!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    gateway.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(catalogCalls, 1);
+
+    login.complete(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(catalogCalls, 1);
+  });
+
+  testWidgets('pending login is superseded by a newer lifecycle error', (
+    WidgetTester tester,
+  ) async {
+    final Completer<EmulatorSession> login = Completer<EmulatorSession>();
+    final _FakeGateway gateway = _FakeGateway(loginCompleter: login);
+    var catalogCalls = 0;
+
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(gateway),
+        catalogLoader: (EmulatorSession session) async {
+          catalogCalls += 1;
+          return CatalogSnapshot(const <CatalogItem>[]);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller.north@demo-lda-inventory.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'Demo-Only-Seller-2026!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    gateway.sessions.addError(const UntrustedSessionException());
+    await tester.pumpAndSettle();
+    expect(find.text('Session rejected'), findsOneWidget);
+
+    login.complete(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Session rejected'), findsOneWidget);
+    expect(find.text('Authenticated locally'), findsNothing);
+    expect(catalogCalls, 0);
+  });
+
+  testWidgets('stale pending login cannot override a newer logout', (
+    WidgetTester tester,
+  ) async {
+    final Completer<EmulatorSession> login = Completer<EmulatorSession>();
+    final _FakeGateway gateway = _FakeGateway(loginCompleter: login);
+    var catalogCalls = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      catalogCalls += 1;
+      return CatalogSnapshot(const <CatalogItem>[]);
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller.north@demo-lda-inventory.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'Demo-Only-Seller-2026!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+
+    gateway.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(catalogCalls, 1);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pumpAndSettle();
+    login.complete(_seller);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Authenticated locally'), findsNothing);
+    expect(catalogCalls, 1);
+  });
+
+  testWidgets('failed logout stays signed out until explicit login succeeds', (
+    WidgetTester tester,
+  ) async {
+    final Completer<void> signOut = Completer<void>();
+    final _FakeGateway gateway = _FakeGateway(
+      restored: _seller,
+      loginResult: _seller,
+      logoutCompleter: signOut,
+    );
+    var catalogCalls = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      catalogCalls += 1;
+      if (session.role == InventoryRole.administrator) {
+        return CatalogSnapshot(const <CatalogItem>[]);
+      }
+      return CatalogSnapshot(<CatalogItem>[
+        CatalogItem(
+          product: const CatalogProduct(
+            internalCode: 'PRD-LIVE-001',
+            name: 'Live product',
+            quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+          ),
+          holdings: const <CatalogHolding>[
+            CatalogHolding(branchId: 'branch-north', quantityScaled: 1),
+          ],
+        ),
+      ]);
+    }
+
+    await tester.pumpWidget(
+      _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pump();
+
+    signOut.completeError(StateError('sanitized logout failure'));
+    gateway.sessions.add(_seller);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Live product'), findsNothing);
+    expect(find.textContaining('sanitized logout failure'), findsNothing);
+    expect(catalogCalls, 1);
+
+    expect(
+      tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in')).onPressed,
+      isNotNull,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller.north@demo-lda-inventory.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'Demo-Only-Seller-2026!',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Live product'), findsOneWidget);
+    expect(catalogCalls, 2);
+
+    gateway.sessions.add(
+      const EmulatorSession(
+        userId: 'demo-local-administrator',
+        email: 'administrator@demo-lda-inventory.invalid',
+        role: InventoryRole.administrator,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Role: administrator'), findsOneWidget);
+    expect(catalogCalls, 3);
+  });
+
   testWidgets('bootstrap failure is fail-closed and retryable', (
     WidgetTester tester,
   ) async {
@@ -282,6 +731,7 @@ void main() {
         home: EmulatorLoginShell(
           sessionGateway: first.future,
           retryLoader: () async => retryGateway,
+          catalogLoader: _emptyCatalog,
         ),
       ),
     );

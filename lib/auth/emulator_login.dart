@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../catalog/catalog_page.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
@@ -10,11 +11,13 @@ typedef EmulatorSessionGatewayLoader =
 class EmulatorLoginShell extends StatefulWidget {
   const EmulatorLoginShell({
     required this.sessionGateway,
+    required this.catalogLoader,
     this.retryLoader,
     super.key,
   });
 
   final Future<EmulatorSessionGateway> sessionGateway;
+  final CatalogSnapshotLoader catalogLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -28,6 +31,9 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
   EmulatorSession? _session;
   StreamSubscription<EmulatorSession?>? _sessionSubscription;
   bool _loading = true;
+  bool _logoutIntent = false;
+  int _authGeneration = 0;
+  int _streamGeneration = 0;
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -38,11 +44,14 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
 
   @override
   void dispose() {
+    _authGeneration += 1;
+    _streamGeneration += 1;
     _sessionSubscription?.cancel();
     super.dispose();
   }
 
   Future<void> _load(Future<EmulatorSessionGateway> gatewayFuture) async {
+    final int generation = ++_authGeneration;
     setState(() {
       _loading = true;
       _failure = _SessionFailure.none;
@@ -51,7 +60,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     try {
       gateway = await gatewayFuture;
     } catch (_) {
-      if (!mounted) return;
+      if (!_isCurrentAuthOperation(generation)) return;
       setState(() {
         _gateway = null;
         _session = null;
@@ -60,12 +69,16 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
       });
       return;
     }
-    if (!mounted) return;
+    if (!_isCurrentAuthOperation(generation)) return;
     _gateway = gateway;
-    await _restore(gateway);
+    await _restore(gateway, generation: generation);
   }
 
-  Future<void> _restore(EmulatorSessionGateway gateway) async {
+  Future<void> _restore(
+    EmulatorSessionGateway gateway, {
+    int? generation,
+  }) async {
+    final int operation = generation ?? ++_authGeneration;
     setState(() {
       _loading = true;
       _failure = _SessionFailure.none;
@@ -73,28 +86,60 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     });
     try {
       final EmulatorSession? session = await gateway.restoreSession();
-      if (!mounted) return;
-      await _sessionSubscription?.cancel();
-      if (!mounted) return;
-      _sessionSubscription = gateway.sessionChanges().listen(
-        _sessionChanged,
-        onError: _sessionChangeFailed,
-      );
+      if (!_isCurrentAuthOperation(operation)) return;
+      await _replaceSessionSubscription(gateway);
+      if (!_isCurrentAuthOperation(operation)) return;
       setState(() {
         _session = session;
         _loading = false;
       });
     } on UntrustedSessionException {
-      _showFailure(_SessionFailure.rejected);
+      if (_isCurrentAuthOperation(operation)) {
+        _showFailure(_SessionFailure.rejected);
+      }
     } on EmulatorSessionConnectionException {
-      _showFailure(_SessionFailure.connection);
+      if (_isCurrentAuthOperation(operation)) {
+        _showFailure(_SessionFailure.connection);
+      }
     } catch (_) {
-      _showFailure(_SessionFailure.connection);
+      if (_isCurrentAuthOperation(operation)) {
+        _showFailure(_SessionFailure.connection);
+      }
     }
   }
 
-  void _sessionChanged(EmulatorSession? session) {
-    if (!mounted) return;
+  bool _isCurrentAuthOperation(int generation) =>
+      mounted && generation == _authGeneration && !_logoutIntent;
+
+  Future<void> _replaceSessionSubscription(
+    EmulatorSessionGateway gateway,
+  ) async {
+    await _detachSessionSubscription();
+    if (!mounted || _logoutIntent) return;
+    _listenToSessionChanges(gateway);
+  }
+
+  Future<void> _detachSessionSubscription() {
+    _streamGeneration += 1;
+    final StreamSubscription<EmulatorSession?>? subscription =
+        _sessionSubscription;
+    _sessionSubscription = null;
+    return subscription?.cancel() ?? Future<void>.value();
+  }
+
+  void _listenToSessionChanges(EmulatorSessionGateway gateway) {
+    final int generation = ++_streamGeneration;
+    _sessionSubscription = gateway.sessionChanges().listen(
+      (EmulatorSession? session) => _sessionChanged(session, generation),
+      onError: (Object error, StackTrace stackTrace) =>
+          _sessionChangeFailed(error, stackTrace, generation),
+    );
+  }
+
+  void _sessionChanged(EmulatorSession? session, int generation) {
+    if (!mounted || generation != _streamGeneration) return;
+    if (_logoutIntent && session != null) return;
+    _authGeneration += 1;
     setState(() {
       _session = session;
       _failure = _SessionFailure.none;
@@ -102,7 +147,13 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     });
   }
 
-  void _sessionChangeFailed(Object error, StackTrace stackTrace) {
+  void _sessionChangeFailed(
+    Object error,
+    StackTrace stackTrace,
+    int generation,
+  ) {
+    if (generation != _streamGeneration || _logoutIntent) return;
+    _authGeneration += 1;
     _showFailure(
       error is UntrustedSessionException
           ? _SessionFailure.rejected
@@ -136,17 +187,41 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     });
   }
 
-  void _authenticated(EmulatorSession session) {
+  int _startLoginAttempt() => ++_authGeneration;
+
+  bool _completeLoginAttempt(int generation, EmulatorSession session) {
+    final EmulatorSessionGateway? gateway = _gateway;
+    if (!mounted || gateway == null || generation != _authGeneration) {
+      return false;
+    }
+    _authGeneration += 1;
+    _logoutIntent = false;
+    if (_sessionSubscription == null) _listenToSessionChanges(gateway);
     setState(() => _session = session);
+    return true;
   }
+
+  bool _isLoginAttemptCurrent(int generation) =>
+      mounted && generation == _authGeneration;
 
   Future<void> _logout() async {
     final EmulatorSessionGateway? gateway = _gateway;
     if (gateway == null) return;
+    _authGeneration += 1;
+    _logoutIntent = true;
+    final Future<void> detach = _detachSessionSubscription();
+    final Future<void> signOut = Future<void>.sync(gateway.logout).then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {
+        // The local presentation remains signed out after cleanup failures.
+      },
+    );
+    setState(() => _session = null);
     try {
-      await gateway.logout();
-    } finally {
-      if (mounted) setState(() => _session = null);
+      await detach;
+      await signOut;
+    } catch (_) {
+      // Subscription cleanup failures also remain fail-closed and sanitized.
     }
   }
 
@@ -177,9 +252,22 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
         break;
     }
     if (_session case final EmulatorSession session) {
-      return _AuthenticatedView(session: session, onLogout: _logout);
+      return AuthenticatedCatalogPage(
+        key: ValueKey<String>(
+          '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
+        ),
+        session: session,
+        catalogLoader: widget.catalogLoader,
+        onLogout: _logout,
+      );
     }
-    return _LoginView(gateway: _gateway!, onAuthenticated: _authenticated);
+    return _LoginView(
+      gateway: _gateway!,
+      authGeneration: _authGeneration,
+      onLoginStarted: _startLoginAttempt,
+      onAuthenticated: _completeLoginAttempt,
+      isLoginAttemptCurrent: _isLoginAttemptCurrent,
+    );
   }
 }
 
@@ -244,10 +332,19 @@ class _SessionErrorView extends StatelessWidget {
 }
 
 class _LoginView extends StatefulWidget {
-  const _LoginView({required this.gateway, required this.onAuthenticated});
+  const _LoginView({
+    required this.gateway,
+    required this.authGeneration,
+    required this.onLoginStarted,
+    required this.onAuthenticated,
+    required this.isLoginAttemptCurrent,
+  });
 
   final EmulatorSessionGateway gateway;
-  final ValueChanged<EmulatorSession> onAuthenticated;
+  final int authGeneration;
+  final int Function() onLoginStarted;
+  final bool Function(int generation, EmulatorSession session) onAuthenticated;
+  final bool Function(int generation) isLoginAttemptCurrent;
 
   @override
   State<_LoginView> createState() => _LoginViewState();
@@ -258,6 +355,15 @@ class _LoginViewState extends State<_LoginView> {
   final TextEditingController _password = TextEditingController();
   bool _submitting = false;
   String? _error;
+
+  @override
+  void didUpdateWidget(_LoginView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.authGeneration != widget.authGeneration) {
+      _submitting = false;
+      _error = null;
+    }
+  }
 
   @override
   void dispose() {
@@ -274,6 +380,7 @@ class _LoginViewState extends State<_LoginView> {
       return;
     }
 
+    final int generation = widget.onLoginStarted();
     setState(() {
       _submitting = true;
       _error = null;
@@ -283,9 +390,9 @@ class _LoginViewState extends State<_LoginView> {
         email: email,
         password: password,
       );
-      if (mounted) widget.onAuthenticated(session);
+      if (mounted) widget.onAuthenticated(generation, session);
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || !widget.isLoginAttemptCurrent(generation)) return;
       setState(() {
         _submitting = false;
         _error = 'Unable to sign in to the local emulator.';
@@ -349,47 +456,6 @@ class _LoginViewState extends State<_LoginView> {
               ),
             ],
           ),
-        ),
-      ),
-    ),
-  );
-}
-
-class _AuthenticatedView extends StatelessWidget {
-  const _AuthenticatedView({required this.session, required this.onLogout});
-
-  final EmulatorSession session;
-  final Future<void> Function() onLogout;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('LDA Inventory'),
-      actions: <Widget>[
-        OutlinedButton(onPressed: onLogout, child: const Text('Log out')),
-        const SizedBox(width: 12),
-      ],
-    ),
-    body: Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Icon(Icons.verified_user_outlined, size: 56),
-            const SizedBox(height: 16),
-            Text(
-              'Authenticated locally',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 12),
-            Text(session.email),
-            Text('Role: ${session.role.label}'),
-            if (session.branchId case final String branchId)
-              Text('Branch: $branchId'),
-            const SizedBox(height: 16),
-            const Text('Catalog data not loaded.', textAlign: TextAlign.center),
-          ],
         ),
       ),
     ),
