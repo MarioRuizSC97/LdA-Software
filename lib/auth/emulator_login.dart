@@ -3,21 +3,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../catalog/catalog_page.dart';
+import '../catalog/product_creation.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
     Future<EmulatorSessionGateway> Function();
+typedef ProductCreationGatewayLoader = Future<ProductCreationGateway> Function(
+  EmulatorSession session,
+);
 
 class EmulatorLoginShell extends StatefulWidget {
   const EmulatorLoginShell({
     required this.sessionGateway,
     required this.catalogLoader,
+    this.productCreationGatewayLoader,
     this.retryLoader,
     super.key,
   });
 
   final Future<EmulatorSessionGateway> sessionGateway;
   final CatalogSnapshotLoader catalogLoader;
+  final ProductCreationGatewayLoader? productCreationGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -34,6 +40,8 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
   bool _logoutIntent = false;
   int _authGeneration = 0;
   int _streamGeneration = 0;
+  final ProductCreationDraftStore _productCreationDrafts =
+      ProductCreationDraftStore();
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -225,6 +233,57 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
   }
 
+  Future<ProductCreationResult> _createProduct(
+    ProductCreationDraft draft,
+  ) async {
+    final EmulatorSession? session = _session;
+    final ProductCreationGatewayLoader? loader =
+        widget.productCreationGatewayLoader;
+    if (!_isExactAdministrator(session) || loader == null) {
+      throw const ProductCreationSessionException();
+    }
+
+    final ProductCreationAttempt attempt = _productCreationDrafts.begin(
+      ownerUserId: session!.userId,
+      draft: draft,
+    );
+    try {
+      // Every attempt, including a retry, gets a gateway bound to the current
+      // freshly validated session rather than retaining one from a disposed page.
+      final ProductCreationGateway gateway = await loader(session);
+      final ProductCreationResult result = await gateway.create(draft);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const ProductCreationSessionException();
+      }
+      if (!_productCreationDrafts.resolve(attempt)) {
+        throw const ProductCreationStaleException();
+      }
+      return result;
+    } on ProductCreationRejectedException {
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const ProductCreationSessionException();
+      }
+      if (!_productCreationDrafts.resolve(attempt)) {
+        throw const ProductCreationStaleException();
+      }
+      rethrow;
+    } catch (_) {
+      _productCreationDrafts.retain(attempt);
+      rethrow;
+    }
+  }
+
+  bool _isExactAdministrator(EmulatorSession? session) =>
+      session != null &&
+      session.role == InventoryRole.administrator &&
+      session.branchId == null;
+
+  bool _isSameCurrentAdministrator(EmulatorSession originatingSession) {
+    final EmulatorSession? current = _session;
+    return _isExactAdministrator(current) &&
+        current!.userId == originatingSession.userId;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const _LoadingView();
@@ -258,6 +317,14 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
         ),
         session: session,
         catalogLoader: widget.catalogLoader,
+        createProduct:
+            _isExactAdministrator(session) &&
+                widget.productCreationGatewayLoader != null
+            ? _createProduct
+            : null,
+        unresolvedProductDraft: _isExactAdministrator(session)
+            ? _productCreationDrafts.unresolvedFor(session.userId)
+            : null,
         onLogout: _logout,
       );
     }

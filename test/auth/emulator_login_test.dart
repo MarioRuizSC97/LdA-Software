@@ -7,6 +7,8 @@ import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
+import 'package:lda_inventory/catalog/product_creation.dart';
+import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
 
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
@@ -62,6 +64,36 @@ class _FakeGateway implements EmulatorSessionGateway {
   }
 }
 
+class _FakeProductGateway implements ProductCreationGateway {
+  _FakeProductGateway([this.onCreate]);
+
+  final Future<ProductCreationResult> Function(ProductCreationDraft draft)?
+  onCreate;
+
+  @override
+  Future<ProductCreationResult> create(ProductCreationDraft draft) =>
+      onCreate?.call(draft) ??
+      Future<ProductCreationResult>.value(
+        const ProductCreationResult(
+          productId: 'PRD-TEST-0001',
+          internalCode: 'PRD-TEST-0001',
+          replayed: false,
+        ),
+      );
+}
+
+const EmulatorSession _administrator = EmulatorSession(
+  userId: 'demo-local-administrator',
+  email: 'administrator@demo-lda-inventory.invalid',
+  role: InventoryRole.administrator,
+);
+
+const EmulatorSession _otherAdministrator = EmulatorSession(
+  userId: 'demo-local-administrator-2',
+  email: 'administrator.2@demo-lda-inventory.invalid',
+  role: InventoryRole.administrator,
+);
+
 const EmulatorSession _seller = EmulatorSession(
   userId: 'demo-local-seller-north',
   email: 'seller.north@demo-lda-inventory.invalid',
@@ -75,12 +107,47 @@ Future<CatalogSnapshot> _emptyCatalog(EmulatorSession session) async =>
 Widget _app(
   Future<EmulatorSessionGateway> gateway, {
   CatalogSnapshotLoader catalogLoader = _emptyCatalog,
+  ProductCreationGatewayLoader? productCreationGatewayLoader,
 }) => MaterialApp(
   home: EmulatorLoginShell(
     sessionGateway: gateway,
     catalogLoader: catalogLoader,
+    productCreationGatewayLoader: productCreationGatewayLoader,
   ),
 );
+
+Future<void> _enterProduct(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(FilledButton, 'Create product'));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(const ValueKey<String>('create-product-name')),
+    'Coffee',
+  );
+  await tester.enterText(
+    find.byKey(const ValueKey<String>('create-product-unit')),
+    'piece',
+  );
+  await tester.enterText(
+    find.byKey(const ValueKey<String>('create-product-precision')),
+    '0',
+  );
+  final Finder create = find.widgetWithText(FilledButton, 'Create');
+  await tester.ensureVisible(create);
+  await tester.tap(create);
+}
+
+Future<void> _signIn(WidgetTester tester) async {
+  await tester.enterText(
+    find.byKey(const ValueKey<String>('login-email')),
+    'administrator@demo-lda-inventory.invalid',
+  );
+  await tester.enterText(
+    find.byKey(const ValueKey<String>('login-password')),
+    'Demo-Only-Administrator-2026!',
+  );
+  await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+  await tester.pumpAndSettle();
+}
 
 void main() {
   testWidgets('shows a safe loading state while bootstrap is pending', (
@@ -172,6 +239,292 @@ void main() {
     expect(gateway.logoutCalls, 1);
     expect(find.text('Local emulator sign in'), findsOneWidget);
   });
+
+  testWidgets('seller session never receives or initializes product creation', (
+    WidgetTester tester,
+  ) async {
+    var gatewayLoads = 0;
+    final _FakeGateway gateway = _FakeGateway(restored: _seller);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EmulatorLoginShell(
+          sessionGateway: Future<EmulatorSessionGateway>.value(gateway),
+          catalogLoader: _emptyCatalog,
+          productCreationGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            return _FakeProductGateway();
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create product'), findsNothing);
+    expect(gatewayLoads, 0);
+  });
+
+  testWidgets(
+    'unknown draft survives close and logout for exact same-admin replay',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _administrator,
+      );
+      final List<ProductCreationDraft> attempts = <ProductCreationDraft>[];
+      var gatewayLoads = 0;
+      Future<ProductCreationGateway> loadProductGateway(
+        EmulatorSession session,
+      ) async {
+        gatewayLoads += 1;
+        final int load = gatewayLoads;
+        return _FakeProductGateway((ProductCreationDraft draft) async {
+          attempts.add(draft);
+          if (load == 1) throw const ProductCreationUncertainException();
+          return const ProductCreationResult(
+            productId: 'PRD-COFFEE-001',
+            internalCode: 'PRD-COFFEE-001',
+            replayed: true,
+          );
+        });
+      }
+
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: loadProductGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+
+      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+      await _signIn(tester);
+
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .controller
+            ?.text,
+        'Coffee',
+      );
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], attempts[0]);
+      expect(attempts[1].idempotencyKey, attempts[0].idempotencyKey);
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'failed precondition keeps exact request locked for same-admin reentry',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _administrator,
+      );
+      final List<Map<String, Object?>> requests = <Map<String, Object?>>[];
+      var gatewayLoads = 0;
+      Future<ProductCreationGateway> loadProductGateway(
+        EmulatorSession session,
+      ) async {
+        gatewayLoads += 1;
+        final int load = gatewayLoads;
+        return EmulatorProductCreationGateway(
+          expectedSession: session,
+          sessionChecker: () async => session,
+          invoke: (Map<String, Object?> request) async {
+            requests.add(request);
+            if (load == 1) {
+              throw const ProductCreationCallableException(
+                code: 'failed-precondition',
+              );
+            }
+            return <String, Object?>{
+              'productId': 'PRD-COFFEE-001',
+              'internalCode': 'PRD-COFFEE-001',
+              'replayed': true,
+            };
+          },
+        );
+      }
+
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: loadProductGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('failed-precondition'), findsNothing);
+      final Map<String, Object?> originalRequest = requests.single;
+
+      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+      await _signIn(tester);
+
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .controller
+            ?.text,
+        'Coffee',
+      );
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(requests, hasLength(2));
+      expect(requests[1], originalRequest);
+      expect(requests[1]['idempotencyKey'], originalRequest['idempotencyKey']);
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'seller and another administrator cannot inspect or resolve stored draft',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      var gatewayLoads = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            return _FakeProductGateway(
+              (_) => throw const ProductCreationUncertainException(),
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pumpAndSettle();
+
+      auth.sessions.add(_seller);
+      await tester.pumpAndSettle();
+      expect(find.text('Create product'), findsNothing);
+      expect(find.text('Coffee'), findsNothing);
+
+      auth.sessions.add(_otherAdministrator);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Create product'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .controller
+            ?.text,
+        isEmpty,
+      );
+      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pump();
+
+      auth.sessions.add(_administrator);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .controller
+            ?.text,
+        'Coffee',
+      );
+      expect(gatewayLoads, 1);
+    },
+  );
+
+  testWidgets(
+    'logout during pending late failure retains exact request for fresh gateway',
+    (WidgetTester tester) async {
+      final Completer<ProductCreationResult> first =
+          Completer<ProductCreationResult>();
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _administrator,
+      );
+      final List<ProductCreationDraft> attempts = <ProductCreationDraft>[];
+      var gatewayLoads = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            final int load = gatewayLoads;
+            return _FakeProductGateway((ProductCreationDraft draft) {
+              attempts.add(draft);
+              if (load == 1) return first.future;
+              return Future<ProductCreationResult>.value(
+                const ProductCreationResult(
+                  productId: 'PRD-COFFEE-001',
+                  internalCode: 'PRD-COFFEE-001',
+                  replayed: true,
+                ),
+              );
+            });
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+
+      first.completeError(StateError('late transport detail'));
+      await tester.pump();
+      await _signIn(tester);
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], attempts[0]);
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.textContaining('late transport detail'), findsNothing);
+    },
+  );
 
   testWidgets('remote sign-out immediately clears authenticated content', (
     WidgetTester tester,
@@ -338,8 +691,7 @@ void main() {
         <Completer<CatalogSnapshot>>[];
     Future<CatalogSnapshot> load(EmulatorSession session) {
       requested.add(session);
-      final Completer<CatalogSnapshot> completer =
-          Completer<CatalogSnapshot>();
+      final Completer<CatalogSnapshot> completer = Completer<CatalogSnapshot>();
       requests.add(completer);
       return completer.future;
     }
@@ -435,7 +787,10 @@ void main() {
       }
 
       await tester.pumpWidget(
-        _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
+        _app(
+          Future<EmulatorSessionGateway>.value(gateway),
+          catalogLoader: load,
+        ),
       );
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -459,15 +814,12 @@ void main() {
       expect(catalogCalls, 0);
       expect(
         tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Sign in'),
-            )
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in'))
             .onPressed,
         isNotNull,
       );
 
-      final Completer<EmulatorSession> newLogin =
-          Completer<EmulatorSession>();
+      final Completer<EmulatorSession> newLogin = Completer<EmulatorSession>();
       gateway.loginCompleter = newLogin;
       await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
       await tester.pump();
@@ -482,8 +834,7 @@ void main() {
   testWidgets('stale login failure cannot cancel a newer attempt', (
     WidgetTester tester,
   ) async {
-    final Completer<EmulatorSession> staleLogin =
-        Completer<EmulatorSession>();
+    final Completer<EmulatorSession> staleLogin = Completer<EmulatorSession>();
     final _FakeGateway gateway = _FakeGateway(loginCompleter: staleLogin);
     var catalogCalls = 0;
 
@@ -510,8 +861,7 @@ void main() {
 
     gateway.sessions.add(null);
     await tester.pump();
-    final Completer<EmulatorSession> newLogin =
-        Completer<EmulatorSession>();
+    final Completer<EmulatorSession> newLogin = Completer<EmulatorSession>();
     gateway.loginCompleter = newLogin;
     await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
     await tester.pump();
@@ -691,7 +1041,9 @@ void main() {
     expect(catalogCalls, 1);
 
     expect(
-      tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in')).onPressed,
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in'))
+          .onPressed,
       isNotNull,
     );
     await tester.enterText(

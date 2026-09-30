@@ -8,9 +8,7 @@ import 'catalog/catalog_repository.dart';
 import 'firebase/emulator_bootstrap.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
-const bool _localEmulatorsEnabled = bool.fromEnvironment(
-  'LDA_LOCAL_EMULATORS',
-);
+const bool _localEmulatorsEnabled = bool.fromEnvironment('LDA_LOCAL_EMULATORS');
 
 void main() {
   runApp(
@@ -27,6 +25,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.localEmulatorsEnabled = false,
     this.emulatorLoader,
     this.emulatorCatalogLoader,
+    this.emulatorProductCreationLoader,
     super.key,
   });
 
@@ -34,6 +33,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final bool localEmulatorsEnabled;
   final EmulatorSessionGatewayLoader? emulatorLoader;
   final CatalogSnapshotLoader? emulatorCatalogLoader;
+  final ProductCreationGatewayLoader? emulatorProductCreationLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +47,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
       return LocalEmulatorAuthApp(
         loader: emulatorLoader ?? DemoEmulatorBootstrap.initialize,
         catalogLoader: emulatorCatalogLoader ?? _loadLiveCatalog,
+        productCreationGatewayLoader:
+            emulatorProductCreationLoader ??
+            DemoEmulatorBootstrap.initializeProductCreationGateway,
       );
     }
     return const CatalogSetupApp();
@@ -57,11 +60,13 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   const LocalEmulatorAuthApp({
     required this.loader,
     required this.catalogLoader,
+    required this.productCreationGatewayLoader,
     super.key,
   });
 
   final EmulatorSessionGatewayLoader loader;
   final CatalogSnapshotLoader catalogLoader;
+  final ProductCreationGatewayLoader productCreationGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -90,6 +95,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       sessionGateway: _gateway,
       retryLoader: _retry,
       catalogLoader: widget.catalogLoader,
+      productCreationGatewayLoader: widget.productCreationGatewayLoader,
     ),
   );
 }

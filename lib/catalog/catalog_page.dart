@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import '../auth/emulator_session.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
+import 'product_creation.dart';
 import 'product_qr.dart';
 
-typedef CatalogSnapshotLoader =
-    Future<CatalogSnapshot> Function(EmulatorSession session);
+typedef CatalogSnapshotLoader = Future<CatalogSnapshot> Function(
+  EmulatorSession session,
+);
 
 class CatalogPage extends StatefulWidget {
   const CatalogPage({required this.repository, this.statusLabel, super.key});
@@ -93,12 +95,18 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     required this.session,
     required this.catalogLoader,
     required this.onLogout,
+    this.createProduct,
+    this.createDraftId,
+    this.unresolvedProductDraft,
     super.key,
   });
 
   final EmulatorSession session;
   final CatalogSnapshotLoader catalogLoader;
   final Future<void> Function() onLogout;
+  final ProductCreationSubmit? createProduct;
+  final ProductDraftIdFactory? createDraftId;
+  final ProductCreationDraft? unresolvedProductDraft;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -106,29 +114,81 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 }
 
 class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
+  final TextEditingController _name = TextEditingController();
+  final TextEditingController _unit = TextEditingController();
+  final TextEditingController _precision = TextEditingController();
   CatalogSnapshot? _snapshot;
+  ProductCreationCoordinator? _creationCoordinator;
+  ProductCreationResult? _creationSuccess;
+  String? _creationError;
+  bool _creationVisible = false;
+  bool _creationPending = false;
+  bool _creationUncertain = false;
   bool _loading = true;
   bool _failed = false;
   int _generation = 0;
+  int _creationGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _configureCreation();
     _requestCatalog(initial: true);
   }
 
   @override
   void didUpdateWidget(AuthenticatedCatalogPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session)) {
-      _requestCatalog();
+    final bool sessionChanged =
+        _sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session);
+    if (sessionChanged ||
+        oldWidget.createProduct != widget.createProduct ||
+        oldWidget.unresolvedProductDraft != widget.unresolvedProductDraft) {
+      _creationGeneration += 1;
+      _creationVisible = false;
+      _creationPending = false;
+      _creationUncertain = false;
+      _creationError = null;
+      _creationSuccess = null;
+      _configureCreation();
     }
+    if (sessionChanged) _requestCatalog();
   }
 
   @override
   void dispose() {
     _generation += 1;
+    _creationGeneration += 1;
+    _name.dispose();
+    _unit.dispose();
+    _precision.dispose();
     super.dispose();
+  }
+
+  void _configureCreation() {
+    _name.clear();
+    _unit.clear();
+    _precision.clear();
+    final ProductCreationSubmit? submit = widget.createProduct;
+    if (widget.session.role != InventoryRole.administrator || submit == null) {
+      _creationCoordinator = null;
+      return;
+    }
+    final ProductCreationDraft? unresolved = widget.unresolvedProductDraft;
+    _creationCoordinator = ProductCreationCoordinator(
+      createIdempotencyKey: widget.createDraftId ?? createProductDraftUuidV4,
+      submitRequest: submit,
+      restoredDraft: unresolved,
+    );
+    if (unresolved != null) {
+      _name.text = unresolved.name;
+      _unit.text = unresolved.unit;
+      _precision.text = unresolved.precision.toString();
+      _creationVisible = true;
+      _creationUncertain = true;
+      _creationError =
+          'The outcome is unknown. Retry the same request before editing.';
+    }
   }
 
   Future<void> _requestCatalog({bool initial = false}) async {
@@ -146,7 +206,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
 
     try {
-      final CatalogSnapshot snapshot = await widget.catalogLoader(widget.session);
+      final CatalogSnapshot snapshot = await widget.catalogLoader(
+        widget.session,
+      );
       _validateCatalogSnapshot(snapshot, widget.session);
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -174,7 +236,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             onPressed: _loading ? null : _requestCatalog,
             icon: const Icon(Icons.refresh),
           ),
-          OutlinedButton(onPressed: widget.onLogout, child: const Text('Log out')),
+          OutlinedButton(
+            onPressed: widget.onLogout,
+            child: const Text('Log out'),
+          ),
           const SizedBox(width: 12),
         ],
       ),
@@ -182,8 +247,188 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         child: Column(
           children: <Widget>[
             _SessionStatus(session: widget.session),
-            Expanded(child: _catalogBody()),
+            if (_creationSuccess case final ProductCreationResult result)
+              _CreationSuccess(result: result),
+            if (_creationCoordinator != null)
+              _CreationToolbar(
+                onPressed: _creationPending ? null : _showCreation,
+              ),
+            Expanded(
+              child: _creationVisible ? _creationForm() : _catalogBody(),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showCreation() {
+    setState(() => _creationVisible = true);
+  }
+
+  void _closeCreation() {
+    _creationCoordinator?.closePresentation();
+    setState(() => _creationVisible = false);
+  }
+
+  Future<void> _submitCreation() async {
+    final ProductCreationCoordinator? coordinator = _creationCoordinator;
+    if (coordinator == null || _creationPending) return;
+    final int generation = ++_creationGeneration;
+    int? precision;
+    if (!_creationUncertain) {
+      precision = int.tryParse(_precision.text);
+      if (precision == null) {
+        setState(() {
+          _creationError = 'Precision must be an integer from 0 through 6.';
+        });
+        return;
+      }
+    }
+
+    setState(() {
+      _creationPending = true;
+      _creationError = null;
+    });
+    try {
+      final ProductCreationResult result = _creationUncertain
+          ? await coordinator.retry()
+          : await coordinator.submit(
+              name: _name.text,
+              unit: _unit.text,
+              precision: precision!,
+            );
+      if (!mounted || generation != _creationGeneration) return;
+      setState(() {
+        _creationPending = false;
+        _creationUncertain = false;
+        _creationVisible = false;
+        _creationSuccess = result;
+        _name.clear();
+        _unit.clear();
+        _precision.clear();
+      });
+      await _requestCatalog();
+    } on ProductCreationValidationException catch (error) {
+      if (!mounted || generation != _creationGeneration) return;
+      setState(() {
+        _creationPending = false;
+        _creationUncertain = false;
+        _creationError = error.message;
+      });
+    } on ProductCreationRejectedException catch (error) {
+      if (!mounted || generation != _creationGeneration) return;
+      setState(() {
+        _creationPending = false;
+        _creationUncertain = false;
+        _creationError = 'Product creation was rejected (${error.code}).';
+      });
+    } on ProductCreationStaleException {
+      // A newer attempt or session owns presentation authority.
+    } catch (_) {
+      if (!mounted || generation != _creationGeneration) return;
+      setState(() {
+        _creationPending = false;
+        _creationUncertain = true;
+        _creationError =
+            'The outcome is unknown. Retry the same request before editing.';
+      });
+    }
+  }
+
+  Widget _creationForm() {
+    final bool locked = _creationPending || _creationUncertain;
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        20,
+        20,
+        20 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Text(
+                  'Create product',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'The server assigns the stable internal code and QR identity.',
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                key: const ValueKey<String>('create-product-name'),
+                controller: _name,
+                enabled: !locked,
+                maxLength: maxProductNameLength,
+                decoration: const InputDecoration(labelText: 'Product name'),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                key: const ValueKey<String>('create-product-unit'),
+                controller: _unit,
+                enabled: !locked,
+                decoration: const InputDecoration(
+                  labelText: 'Unit identifier',
+                  helperText: 'Lowercase identifier, for example piece or kg.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                key: const ValueKey<String>('create-product-precision'),
+                controller: _precision,
+                enabled: !locked,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Quantity precision',
+                  helperText: 'Integer from 0 through 6.',
+                ),
+              ),
+              if (_creationError case final String error) ...<Widget>[
+                const SizedBox(height: 12),
+                Semantics(
+                  label: 'Product creation error',
+                  liveRegion: true,
+                  child: ExcludeSemantics(child: Text(error)),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: <Widget>[
+                  FilledButton(
+                    onPressed: _creationPending ? null : _submitCreation,
+                    child: _creationPending
+                        ? Semantics(
+                            label: 'Creating product',
+                            liveRegion: true,
+                            child: const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : Text(
+                            _creationUncertain
+                                ? 'Retry same request'
+                                : 'Create',
+                          ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _creationPending ? null : _closeCreation,
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -293,6 +538,52 @@ class _SessionStatus extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CreationToolbar extends StatelessWidget {
+  const _CreationToolbar({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerRight,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.add),
+        label: const Text('Create product'),
+      ),
+    ),
+  );
+}
+
+class _CreationSuccess extends StatelessWidget {
+  const _CreationSuccess({required this.result});
+
+  final ProductCreationResult result;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Product creation succeeded',
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Icon(Icons.check_circle_outline),
+            const SizedBox(width: 8),
+            Flexible(child: Text('Created product ${result.internalCode}')),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _CatalogLoading extends StatelessWidget {
@@ -486,29 +777,31 @@ class _ProductDetails extends StatelessWidget {
     if (role == InventoryRole.administrator && item.holdings.isEmpty) {
       return const <Widget>[Text('No branch holdings')];
     }
-    return item.holdings.map((CatalogHolding holding) {
-      final String quantity = _formatQuantity(
-        holding.quantityScaled,
-        product.quantitySpec.precision,
-      );
-      final String unit = product.quantitySpec.unit;
-      if (role == InventoryRole.administrator) {
-        final String branchName = holding.branchName!;
-        final String empty = holding.isOutOfStock ? ' · Agotado' : '';
-        return Text('$branchName: $quantity $unit$empty');
-      }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text('Stock: $quantity $unit'),
-          if (holding.isOutOfStock)
-            Text(
-              'Agotado',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-        ],
-      );
-    }).toList(growable: false);
+    return item.holdings
+        .map((CatalogHolding holding) {
+          final String quantity = _formatQuantity(
+            holding.quantityScaled,
+            product.quantitySpec.precision,
+          );
+          final String unit = product.quantitySpec.unit;
+          if (role == InventoryRole.administrator) {
+            final String branchName = holding.branchName!;
+            final String empty = holding.isOutOfStock ? ' · Agotado' : '';
+            return Text('$branchName: $quantity $unit$empty');
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('Stock: $quantity $unit'),
+              if (holding.isOutOfStock)
+                Text(
+                  'Agotado',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+            ],
+          );
+        })
+        .toList(growable: false);
   }
 
   String _formatCentavos(int centavos) {
@@ -521,7 +814,10 @@ class _ProductDetails extends StatelessWidget {
   String _formatQuantity(int scaled, int precision) {
     if (precision == 0) return scaled.toString();
     final int divisor = _powerOfTen(precision);
-    final String fraction = (scaled % divisor).toString().padLeft(precision, '0');
+    final String fraction = (scaled % divisor).toString().padLeft(
+      precision,
+      '0',
+    );
     return '${scaled ~/ divisor}.$fraction';
   }
 

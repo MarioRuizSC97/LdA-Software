@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
+import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/main.dart';
 
 class _UnauthenticatedGateway implements EmulatorSessionGateway {
@@ -28,11 +29,20 @@ Future<EmulatorSessionGateway> _loadUnauthenticatedGateway() async =>
 Future<EmulatorSessionGateway> _unexpectedEmulatorLoad() =>
     throw StateError('fixture mode must remain disconnected');
 
+Future<ProductCreationGateway> _unexpectedFunctionsLoad(
+  EmulatorSession session,
+) => throw StateError('fixture mode must never initialize Functions');
+
 void main() {
   testWidgets('ordinary bootstrap fails closed without fixture products', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const LdaInventoryBootstrap(demoEnabled: false));
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        emulatorProductCreationLoader: _unexpectedFunctionsLoad,
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Catalog not connected'), findsOneWidget);
@@ -77,6 +87,7 @@ void main() {
         demoEnabled: true,
         localEmulatorsEnabled: true,
         emulatorLoader: _unexpectedEmulatorLoad,
+        emulatorProductCreationLoader: _unexpectedFunctionsLoad,
       ),
     );
     await tester.pumpAndSettle();

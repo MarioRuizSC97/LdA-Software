@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
+import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/product_qr.dart';
@@ -53,10 +54,16 @@ CatalogSnapshot _snapshot(
 Widget _authenticatedApp({
   required EmulatorSession session,
   required CatalogSnapshotLoader loader,
+  ProductCreationSubmit? createProduct,
+  ProductDraftIdFactory? createDraftId,
+  ProductCreationDraft? unresolvedProductDraft,
 }) => MaterialApp(
   home: AuthenticatedCatalogPage(
     session: session,
     catalogLoader: loader,
+    createProduct: createProduct,
+    createDraftId: createDraftId,
+    unresolvedProductDraft: unresolvedProductDraft,
     onLogout: () async {},
   ),
 );
@@ -454,6 +461,458 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Tea'), findsOneWidget);
   });
+
+  testWidgets('seller has no product creation control or callback', (
+    WidgetTester tester,
+  ) async {
+    var creationCalls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _seller,
+        loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+        createProduct: (_) async {
+          creationCalls += 1;
+          return const ProductCreationResult(
+            productId: 'PRD-INVALID-001',
+            internalCode: 'PRD-INVALID-001',
+            replayed: false,
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create product'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      findsNothing,
+    );
+    expect(creationCalls, 0);
+  });
+
+  testWidgets(
+    'admin validation preserves exact name and reports accessible errors',
+    (WidgetTester tester) async {
+      final List<ProductCreationDraft> requests = <ProductCreationDraft>[];
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+          createDraftId: () => 'draft-key-1',
+          createProduct: (ProductCreationDraft draft) async {
+            requests.add(draft);
+            return const ProductCreationResult(
+              productId: 'PRD-COFFEE-001',
+              internalCode: 'PRD-COFFEE-001',
+              replayed: false,
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create product'));
+      await tester.pumpAndSettle();
+
+      expect(find.bySemanticsLabel('Product name'), findsOneWidget);
+      expect(find.bySemanticsLabel('Unit identifier'), findsOneWidget);
+      expect(find.bySemanticsLabel('Quantity precision'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-name')),
+        ' Coffee ',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-unit')),
+        'Piece',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-precision')),
+        '7',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pump();
+
+      expect(find.bySemanticsLabel('Product creation error'), findsOneWidget);
+      expect(find.textContaining('canonical'), findsOneWidget);
+      expect(requests, isEmpty);
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .controller
+            ?.text,
+        ' Coffee ',
+      );
+    },
+  );
+
+  testWidgets('uncertain retry locks fields and reuses identical request', (
+    WidgetTester tester,
+  ) async {
+    final List<ProductCreationDraft> requests = <ProductCreationDraft>[];
+    var calls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+        createDraftId: () => calls < 2 ? 'draft-key-1' : 'draft-key-2',
+        createProduct: (ProductCreationDraft draft) async {
+          requests.add(draft);
+          calls += 1;
+          if (calls == 1) throw const ProductCreationUncertainException();
+          return const ProductCreationResult(
+            productId: 'PRD-COFFEE-001',
+            internalCode: 'PRD-COFFEE-001',
+            replayed: true,
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create product'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      'Coffee',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-unit')),
+      'piece',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-precision')),
+      '0',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('create-product-name')),
+          )
+          .enabled,
+      isFalse,
+    );
+    final Finder retry = find.widgetWithText(
+      FilledButton,
+      'Retry same request',
+    );
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(requests, hasLength(2));
+    expect(requests[1], same(requests[0]));
+    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+  });
+
+  testWidgets('restored same-admin uncertainty is prefilled and must resolve', (
+    WidgetTester tester,
+  ) async {
+    const ProductCreationDraft unresolved = ProductCreationDraft(
+      idempotencyKey: 'draft-key-1',
+      name: 'Coffee',
+      unit: 'piece',
+      precision: 0,
+    );
+    final List<ProductCreationDraft> attempts = <ProductCreationDraft>[];
+    var keyCalls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+        unresolvedProductDraft: unresolved,
+        createDraftId: () {
+          keyCalls += 1;
+          return 'draft-key-2';
+        },
+        createProduct: (ProductCreationDraft draft) async {
+          attempts.add(draft);
+          return const ProductCreationResult(
+            productId: 'PRD-COFFEE-001',
+            internalCode: 'PRD-COFFEE-001',
+            replayed: true,
+          );
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('create-product-name')),
+          )
+          .controller
+          ?.text,
+      'Coffee',
+    );
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('create-product-name')),
+          )
+          .enabled,
+      isFalse,
+    );
+    expect(keyCalls, 0);
+    final Finder retry = find.widgetWithText(
+      FilledButton,
+      'Retry same request',
+    );
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(attempts, <ProductCreationDraft>[unresolved]);
+    expect(keyCalls, 1);
+    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+  });
+
+  testWidgets('duplicate taps invoke once and progress is accessible', (
+    WidgetTester tester,
+  ) async {
+    final Completer<ProductCreationResult> pending =
+        Completer<ProductCreationResult>();
+    var calls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+        createDraftId: () => 'draft-key-1',
+        createProduct: (_) {
+          calls += 1;
+          return pending.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create product'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      'Coffee',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-unit')),
+      'piece',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-precision')),
+      '0',
+    );
+    final Finder create = find.widgetWithText(FilledButton, 'Create');
+    await tester.tap(create);
+    await tester.tap(create, warnIfMissed: false);
+    await tester.pump();
+
+    expect(calls, 1);
+    expect(find.bySemanticsLabel('Creating product'), findsOneWidget);
+    pending.complete(
+      const ProductCreationResult(
+        productId: 'PRD-COFFEE-001',
+        internalCode: 'PRD-COFFEE-001',
+        replayed: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('success refreshes catalog and renders the server QR code', (
+    WidgetTester tester,
+  ) async {
+    var loads = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      loads += 1;
+      if (loads == 1) return CatalogSnapshot(const <CatalogItem>[]);
+      return _snapshot(
+        const CatalogProduct(
+          internalCode: 'PRD-NEW-0001',
+          name: 'New product',
+          quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: load,
+        createDraftId: () => loads == 1 ? 'draft-key-1' : 'draft-key-2',
+        createProduct: (_) async => const ProductCreationResult(
+          productId: 'PRD-NEW-0001',
+          internalCode: 'PRD-NEW-0001',
+          replayed: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create product'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      'New product',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-unit')),
+      'piece',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-product-precision')),
+      '0',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(loads, 2);
+    expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('product-qr-PRD-NEW-0001')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'refresh failure keeps creation success and never resubmits mutation',
+    (WidgetTester tester) async {
+      var loads = 0;
+      var creates = 0;
+      Future<CatalogSnapshot> load(EmulatorSession session) async {
+        loads += 1;
+        if (loads > 1) throw StateError('refresh detail');
+        return CatalogSnapshot(const <CatalogItem>[]);
+      }
+
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: load,
+          createDraftId: () => 'draft-key-$loads',
+          createProduct: (_) async {
+            creates += 1;
+            return const ProductCreationResult(
+              productId: 'PRD-NEW-0001',
+              internalCode: 'PRD-NEW-0001',
+              replayed: false,
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create product'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-name')),
+        'New product',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-unit')),
+        'piece',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('create-product-precision')),
+        '0',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+
+      expect(creates, 1);
+      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Catalog unavailable'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'creation form remains usable with keyboard on a narrow viewport',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 480));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 220);
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+          createDraftId: () => 'draft-key-1',
+          createProduct: (_) async => const ProductCreationResult(
+            productId: 'PRD-NEW-0001',
+            internalCode: 'PRD-NEW-0001',
+            replayed: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create product'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Product name'), findsOneWidget);
+      expect(find.text('Create'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      tester.view.resetViewInsets();
+      await tester.binding.setSurfaceSize(null);
+    },
+  );
+
+  testWidgets(
+    'late creation completion is discarded after role change and disposal',
+    (WidgetTester tester) async {
+      for (final bool dispose in <bool>[false, true]) {
+        final Completer<ProductCreationResult> pending =
+            Completer<ProductCreationResult>();
+        await tester.pumpWidget(
+          _authenticatedApp(
+            session: _administrator,
+            loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+            createDraftId: () => 'draft-key-1',
+            createProduct: (_) => pending.future,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Create product'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('create-product-name')),
+          'Coffee',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('create-product-unit')),
+          'piece',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('create-product-precision')),
+          '0',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+        await tester.pump();
+
+        if (dispose) {
+          await tester.pumpWidget(const SizedBox.shrink());
+        } else {
+          await tester.pumpWidget(
+            _authenticatedApp(
+              session: _seller,
+              loader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
+            ),
+          );
+        }
+        pending.complete(
+          const ProductCreationResult(
+            productId: 'PRD-COFFEE-001',
+            internalCode: 'PRD-COFFEE-001',
+            replayed: false,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 
   testWidgets('stale error and disposed completion are discarded', (
     WidgetTester tester,
