@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
+import '../catalog/product_pricing.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
     Future<EmulatorSessionGateway> Function();
 typedef ProductCreationGatewayLoader = Future<ProductCreationGateway> Function(
+  EmulatorSession session,
+);
+typedef ProductPricingGatewayLoader = Future<ProductPricingGateway> Function(
   EmulatorSession session,
 );
 
@@ -17,6 +21,7 @@ class EmulatorLoginShell extends StatefulWidget {
     required this.sessionGateway,
     required this.catalogLoader,
     this.productCreationGatewayLoader,
+    this.productPricingGatewayLoader,
     this.retryLoader,
     super.key,
   });
@@ -24,6 +29,7 @@ class EmulatorLoginShell extends StatefulWidget {
   final Future<EmulatorSessionGateway> sessionGateway;
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader? productCreationGatewayLoader;
+  final ProductPricingGatewayLoader? productPricingGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -42,6 +48,8 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
   int _streamGeneration = 0;
   final ProductCreationDraftStore _productCreationDrafts =
       ProductCreationDraftStore();
+  final ProductPricingDraftStore _productPricingDrafts =
+      ProductPricingDraftStore();
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -273,6 +281,47 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
   }
 
+  Future<ProductPricingResult> _setProductPrice(
+    ProductPricingDraft draft,
+  ) async {
+    final EmulatorSession? session = _session;
+    final ProductPricingGatewayLoader? loader =
+        widget.productPricingGatewayLoader;
+    if (!_isExactAdministrator(session) || loader == null) {
+      throw const ProductPricingSessionException();
+    }
+
+    // Freeze ownership and the exact payload before gateway initialization or
+    // any network operation. Initialization failure therefore remains retryable.
+    final ProductPricingAttempt attempt = _productPricingDrafts.begin(
+      ownerUserId: session!.userId,
+      draft: draft,
+    );
+    try {
+      final ProductPricingGateway gateway = await loader(session);
+      final ProductPricingResult result = await gateway.setPrice(draft);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const ProductPricingUncertainException();
+      }
+      if (!_productPricingDrafts.resolve(attempt)) {
+        throw const ProductPricingStaleException();
+      }
+      return result;
+    } on ProductPricingRejectedException {
+      if (!_isSameCurrentAdministrator(session)) {
+        _productPricingDrafts.retain(attempt);
+        throw const ProductPricingUncertainException();
+      }
+      if (!_productPricingDrafts.resolve(attempt)) {
+        throw const ProductPricingStaleException();
+      }
+      rethrow;
+    } catch (_) {
+      _productPricingDrafts.retain(attempt);
+      rethrow;
+    }
+  }
+
   bool _isExactAdministrator(EmulatorSession? session) =>
       session != null &&
       session.role == InventoryRole.administrator &&
@@ -282,6 +331,17 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     final EmulatorSession? current = _session;
     return _isExactAdministrator(current) &&
         current!.userId == originatingSession.userId;
+  }
+
+  ProductPricingDraft? _unresolvedPricingDraftFor(
+    EmulatorSession originatingSession,
+    String productId,
+  ) {
+    if (!_isSameCurrentAdministrator(originatingSession)) return null;
+    return _productPricingDrafts.unresolvedFor(
+      originatingSession.userId,
+      productId,
+    );
   }
 
   @override
@@ -324,6 +384,15 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
             : null,
         unresolvedProductDraft: _isExactAdministrator(session)
             ? _productCreationDrafts.unresolvedFor(session.userId)
+            : null,
+        setProductPrice:
+            _isExactAdministrator(session) &&
+                widget.productPricingGatewayLoader != null
+            ? _setProductPrice
+            : null,
+        unresolvedPricingDraftForProduct: _isExactAdministrator(session)
+            ? (String productId) =>
+                  _unresolvedPricingDraftFor(session, productId)
             : null,
         onLogout: _logout,
       );

@@ -291,6 +291,81 @@ void main() {
     );
 
     test(
+      'product pricing connects trusted Auth, Firestore, and Functions first',
+      () async {
+        final List<String> events = <String>[];
+
+        final String result =
+            await DemoEmulatorBootstrap.startProductPricing<String>(
+              platform: EmulatorClientPlatform.web,
+              initializeApp: (_) async => events.add('initialize'),
+              connectAuthEmulator: (String host, int port) async {
+                events.add('auth:$host:$port');
+              },
+              connectFirestoreEmulator: (String host, int port) async {
+                events.add('firestore:$host:$port');
+              },
+              connectFunctionsEmulator: (String host, int port) async {
+                events.add('functions:$host:$port');
+              },
+              createGateway: () {
+                events.add('pricing');
+                return 'pricing';
+              },
+            );
+
+        expect(result, 'pricing');
+        expect(events, <String>[
+          'initialize',
+          'auth:127.0.0.1:9099',
+          'firestore:127.0.0.1:8080',
+          'functions:127.0.0.1:5001',
+          'pricing',
+        ]);
+      },
+    );
+
+    test(
+      'product pricing uses Android host and rejects unsupported platforms',
+      () async {
+        final List<String> endpoints = <String>[];
+        await DemoEmulatorBootstrap.startProductPricing<String>(
+          platform: EmulatorClientPlatform.android,
+          initializeApp: (_) async {},
+          connectAuthEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFirestoreEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFunctionsEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          createGateway: () => 'pricing',
+        );
+        expect(endpoints, <String>[
+          '10.0.2.2:9099',
+          '10.0.2.2:8080',
+          '10.0.2.2:5001',
+        ]);
+
+        var initialized = false;
+        await expectLater(
+          DemoEmulatorBootstrap.startProductPricing<String>(
+            platform: EmulatorClientPlatform.unsupported,
+            initializeApp: (_) async => initialized = true,
+            connectAuthEmulator: (_, _) async {},
+            connectFirestoreEmulator: (_, _) async {},
+            connectFunctionsEmulator: (_, _) async {},
+            createGateway: () => 'pricing',
+          ),
+          throwsA(isA<UnsupportedError>()),
+        );
+        expect(initialized, isFalse);
+      },
+    );
+
+    test(
       'Functions connection is idempotent, retryable, and rejects mismatch',
       () async {
         var calls = 0;

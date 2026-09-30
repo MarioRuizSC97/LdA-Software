@@ -4,10 +4,14 @@ import '../auth/emulator_session.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
+import 'product_pricing.dart';
 import 'product_qr.dart';
 
 typedef CatalogSnapshotLoader = Future<CatalogSnapshot> Function(
   EmulatorSession session,
+);
+typedef ProductPricingDraftLookup = ProductPricingDraft? Function(
+  String productId,
 );
 
 class CatalogPage extends StatefulWidget {
@@ -98,6 +102,10 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createProduct,
     this.createDraftId,
     this.unresolvedProductDraft,
+    this.setProductPrice,
+    this.createPricingId,
+    this.unresolvedPricingDrafts = const <ProductPricingDraft>[],
+    this.unresolvedPricingDraftForProduct,
     super.key,
   });
 
@@ -107,6 +115,10 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final ProductCreationSubmit? createProduct;
   final ProductDraftIdFactory? createDraftId;
   final ProductCreationDraft? unresolvedProductDraft;
+  final ProductPricingSubmit? setProductPrice;
+  final ProductPricingIdFactory? createPricingId;
+  final List<ProductPricingDraft> unresolvedPricingDrafts;
+  final ProductPricingDraftLookup? unresolvedPricingDraftForProduct;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -117,6 +129,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _unit = TextEditingController();
   final TextEditingController _precision = TextEditingController();
+  final TextEditingController _listedPrice = TextEditingController();
+  final TextEditingController _ivaRate = TextEditingController();
   CatalogSnapshot? _snapshot;
   ProductCreationCoordinator? _creationCoordinator;
   ProductCreationResult? _creationSuccess;
@@ -124,10 +138,21 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _creationVisible = false;
   bool _creationPending = false;
   bool _creationUncertain = false;
+  CatalogProduct? _pricingProduct;
+  ProductPricingDraft? _lockedPricingDraft;
+  ProductPricingResult? _pricingSuccess;
+  String? _pricingError;
+  String? _listedPriceError;
+  String? _ivaRateError;
+  String? _priceMode;
+  String? _ivaTreatment;
+  bool _pricingPending = false;
+  bool _pricingUncertain = false;
   bool _loading = true;
   bool _failed = false;
   int _generation = 0;
   int _creationGeneration = 0;
+  int _pricingGeneration = 0;
 
   @override
   void initState() {
@@ -152,6 +177,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _creationSuccess = null;
       _configureCreation();
     }
+    if (sessionChanged || oldWidget.setProductPrice != widget.setProductPrice) {
+      _pricingGeneration += 1;
+      _clearPricingPresentation();
+    }
     if (sessionChanged) _requestCatalog();
   }
 
@@ -159,9 +188,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   void dispose() {
     _generation += 1;
     _creationGeneration += 1;
+    _pricingGeneration += 1;
     _name.dispose();
     _unit.dispose();
     _precision.dispose();
+    _listedPrice.dispose();
+    _ivaRate.dispose();
     super.dispose();
   }
 
@@ -191,6 +223,61 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
   }
 
+  void _clearPricingPresentation() {
+    _pricingProduct = null;
+    _lockedPricingDraft = null;
+    _pricingError = null;
+    _listedPriceError = null;
+    _ivaRateError = null;
+    _priceMode = null;
+    _ivaTreatment = null;
+    _pricingPending = false;
+    _pricingUncertain = false;
+    _listedPrice.clear();
+    _ivaRate.clear();
+  }
+
+  void _restorePricingDraft(CatalogSnapshot snapshot) {
+    if (widget.session.role != InventoryRole.administrator ||
+        widget.setProductPrice == null ||
+        _pricingProduct != null ||
+        _pricingSuccess != null) {
+      return;
+    }
+    for (final CatalogItem item in snapshot.items) {
+      final ProductPricingDraft? draft = _unresolvedPricingDraftFor(
+        item.product.internalCode,
+      );
+      if (draft == null) continue;
+      _pricingProduct = item.product;
+      _lockPricingDraft(draft);
+      break;
+    }
+  }
+
+  ProductPricingDraft? _unresolvedPricingDraftFor(String productId) {
+    final ProductPricingDraftLookup? liveLookup =
+        widget.unresolvedPricingDraftForProduct;
+    if (liveLookup != null) return liveLookup(productId);
+    for (final ProductPricingDraft draft in widget.unresolvedPricingDrafts) {
+      if (draft.productId == productId) return draft;
+    }
+    return null;
+  }
+
+  void _lockPricingDraft(ProductPricingDraft draft) {
+    _listedPriceError = null;
+    _ivaRateError = null;
+    _lockedPricingDraft = draft;
+    _listedPrice.text = draft.listedPriceMxn;
+    _priceMode = draft.priceMode;
+    _ivaTreatment = draft.ivaTreatment;
+    _ivaRate.text = draft.ivaRatePercent ?? '';
+    _pricingUncertain = true;
+    _pricingError =
+        'The outcome is unknown. Retry the same request before editing.';
+  }
+
   Future<void> _requestCatalog({bool initial = false}) async {
     final int generation = ++_generation;
     if (initial) {
@@ -212,6 +299,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _validateCatalogSnapshot(snapshot, widget.session);
       if (!mounted || generation != _generation) return;
       setState(() {
+        _restorePricingDraft(snapshot);
         _snapshot = snapshot;
         _loading = false;
       });
@@ -249,12 +337,18 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             _SessionStatus(session: widget.session),
             if (_creationSuccess case final ProductCreationResult result)
               _CreationSuccess(result: result),
+            if (_pricingSuccess case final ProductPricingResult result)
+              _PricingSuccess(result: result),
             if (_creationCoordinator != null)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: _creationVisible ? _creationForm() : _catalogBody(),
+              child: _creationVisible
+                  ? _creationForm()
+                  : _pricingProduct != null
+                  ? _pricingForm()
+                  : _catalogBody(),
             ),
           ],
         ),
@@ -434,12 +528,363 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     );
   }
 
+  void _showPricing(CatalogProduct product) {
+    final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
+      product.internalCode,
+    );
+    final CatalogPricing? pricing = product.pricing;
+    setState(() {
+      _pricingProduct = product;
+      _pricingSuccess = null;
+      _pricingError = null;
+      _listedPriceError = null;
+      _ivaRateError = null;
+      _pricingUncertain = unresolved != null;
+      _lockedPricingDraft = unresolved;
+      if (unresolved != null) {
+        _lockPricingDraft(unresolved);
+      } else if (pricing != null) {
+        _listedPrice.text = _formatPricingCentavos(pricing.listedPriceCentavos);
+        _priceMode = pricing.priceMode;
+        _ivaTreatment = pricing.ivaTreatment;
+        _ivaRate.text = pricing.ivaRateBasisPoints == null
+            ? ''
+            : _formatBasisPoints(pricing.ivaRateBasisPoints!);
+      } else {
+        _listedPrice.clear();
+        _priceMode = null;
+        _ivaTreatment = null;
+        _ivaRate.clear();
+      }
+    });
+  }
+
+  void _closePricing() {
+    if (_pricingPending) return;
+    setState(() {
+      _pricingProduct = null;
+      _listedPriceError = null;
+      _ivaRateError = null;
+    });
+  }
+
+  void _changeIvaTreatment(String? value) {
+    setState(() {
+      _ivaTreatment = value;
+      _ivaRateError = null;
+      if (value == 'zero-rated') {
+        _ivaRate.text = '0';
+      } else if (value == 'exempt') {
+        _ivaRate.clear();
+      } else {
+        _ivaRate.clear();
+      }
+    });
+  }
+
+  Future<void> _submitPricing() async {
+    final CatalogProduct? product = _pricingProduct;
+    final ProductPricingSubmit? submit = widget.setProductPrice;
+    if (product == null || submit == null || _pricingPending) return;
+    if (!_pricingUncertain) {
+      final bool missingPrice = _listedPrice.text.trim().isEmpty;
+      final bool missingRate =
+          _ivaTreatment == 'taxable' && _ivaRate.text.trim().isEmpty;
+      if (missingPrice || missingRate) {
+        setState(() {
+          _pricingError = null;
+          _listedPriceError = missingPrice ? 'Listed price is required.' : null;
+          _ivaRateError = missingRate
+              ? 'IVA rate is required for taxable products.'
+              : null;
+        });
+        return;
+      }
+    }
+    ProductPricingDraft draft;
+    try {
+      final ProductPricingDraft? authoritative = _unresolvedPricingDraftFor(
+        product.internalCode,
+      );
+      if (authoritative != null) _lockPricingDraft(authoritative);
+      draft =
+          authoritative ??
+          (_pricingUncertain
+              ? _lockedPricingDraft!
+              : ProductPricingDraft(
+                  idempotencyKey:
+                      (widget.createPricingId ?? createProductPricingUuidV4)(),
+                  productId: product.internalCode,
+                  listedPriceMxn: _listedPrice.text,
+                  priceMode: _priceMode ?? '',
+                  ivaTreatment: _ivaTreatment ?? '',
+                  ivaRatePercent: switch (_ivaTreatment) {
+                    'zero-rated' => '0',
+                    'exempt' => null,
+                    _ => _ivaRate.text,
+                  },
+                ));
+      draft.validate();
+    } on ProductPricingValidationException catch (error) {
+      setState(() => _pricingError = error.message);
+      return;
+    }
+
+    final int generation = ++_pricingGeneration;
+    _lockedPricingDraft ??= draft;
+    setState(() {
+      _pricingPending = true;
+      _pricingError = null;
+    });
+    try {
+      final ProductPricingResult result = await submit(draft);
+      if (!mounted || generation != _pricingGeneration) return;
+      setState(() {
+        _pricingPending = false;
+        _pricingUncertain = false;
+        _lockedPricingDraft = null;
+        _pricingProduct = null;
+        _pricingSuccess = result;
+      });
+      await _requestCatalog();
+    } on ProductPricingValidationException catch (error) {
+      if (!mounted || generation != _pricingGeneration) return;
+      setState(() {
+        _pricingPending = false;
+        _pricingUncertain = false;
+        _lockedPricingDraft = null;
+        _pricingError = error.message;
+      });
+    } on ProductPricingRejectedException catch (error) {
+      if (!mounted || generation != _pricingGeneration) return;
+      setState(() {
+        _pricingPending = false;
+        _pricingUncertain = false;
+        _lockedPricingDraft = null;
+        _pricingError = 'Product pricing was rejected (${error.code}).';
+      });
+    } on ProductPricingUnresolvedException {
+      if (!mounted || generation != _pricingGeneration) return;
+      final ProductPricingDraft? authoritative = _unresolvedPricingDraftFor(
+        product.internalCode,
+      );
+      setState(() {
+        _pricingPending = false;
+        if (authoritative != null) {
+          _lockPricingDraft(authoritative);
+        } else {
+          _pricingProduct = null;
+          _lockedPricingDraft = null;
+          _pricingUncertain = false;
+          _pricingError = null;
+          _snapshot = null;
+          _failed = true;
+        }
+      });
+    } on ProductPricingStaleException {
+      // A newer attempt or session owns presentation authority.
+    } catch (_) {
+      if (!mounted || generation != _pricingGeneration) return;
+      final ProductPricingDraft? authoritative = _unresolvedPricingDraftFor(
+        product.internalCode,
+      );
+      setState(() {
+        _pricingPending = false;
+        if (authoritative != null) {
+          _lockPricingDraft(authoritative);
+        } else {
+          _pricingUncertain = true;
+          _lockedPricingDraft = draft;
+          _pricingError =
+              'The outcome is unknown. Retry the same request before editing.';
+        }
+      });
+    }
+  }
+
+  Widget _pricingForm() {
+    final CatalogProduct product = _pricingProduct!;
+    final bool locked = _pricingPending || _pricingUncertain;
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        20,
+        20,
+        20 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Text(
+                  'Configure price / IVA',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(product.name),
+              SelectableText(product.internalCode),
+              const SizedBox(height: 16),
+              Semantics(
+                container: true,
+                liveRegion: _listedPriceError != null,
+                label: _listedPriceError == null
+                    ? null
+                    : 'Listed price error: $_listedPriceError',
+                child: TextFormField(
+                  key: const ValueKey<String>('pricing-listed-price'),
+                  controller: _listedPrice,
+                  enabled: !locked,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (_) {
+                    if (_listedPriceError == null) return;
+                    setState(() => _listedPriceError = null);
+                  },
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Listed price (MXN)',
+                      helperText: 'Exact MXN amount with at most two decimals.',
+                      border: _pricingFieldBorder,
+                    ),
+                    _listedPriceError,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: const ValueKey<String>('pricing-mode'),
+                isExpanded: true,
+                initialValue: _priceMode,
+                decoration: const InputDecoration(labelText: 'Price mode'),
+                hint: const Text('Select price mode'),
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem(
+                    value: 'iva-included',
+                    child: Text('IVA included'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'iva-additional-on-invoice',
+                    child: Text('IVA additional on invoice'),
+                  ),
+                ],
+                onChanged: locked
+                    ? null
+                    : (String? value) => setState(() => _priceMode = value),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: const ValueKey<String>('pricing-treatment'),
+                isExpanded: true,
+                initialValue: _ivaTreatment,
+                decoration: const InputDecoration(labelText: 'IVA treatment'),
+                hint: const Text('Select IVA treatment'),
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem(value: 'taxable', child: Text('Taxable')),
+                  DropdownMenuItem(
+                    value: 'zero-rated',
+                    child: Text('Zero-rated'),
+                  ),
+                  DropdownMenuItem(value: 'exempt', child: Text('Exempt')),
+                ],
+                onChanged: locked ? null : _changeIvaTreatment,
+              ),
+              const SizedBox(height: 12),
+              if (_ivaTreatment == 'exempt')
+                const Text('IVA rate: Not required')
+              else
+                Semantics(
+                  container: true,
+                  liveRegion: _ivaRateError != null,
+                  label: _ivaRateError == null
+                      ? null
+                      : 'IVA rate error: $_ivaRateError',
+                  child: TextFormField(
+                    key: const ValueKey<String>('pricing-iva-rate'),
+                    controller: _ivaRate,
+                    enabled: !locked && _ivaTreatment != 'zero-rated',
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) {
+                      if (_ivaRateError == null) return;
+                      setState(() => _ivaRateError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(
+                        labelText: 'IVA rate (%)',
+                        helperText:
+                            'Taxable rate must be greater than 0 through 100.',
+                        border: _pricingFieldBorder,
+                      ),
+                      _ivaRateError,
+                    ),
+                  ),
+                ),
+              if (_pricingError case final String error) ...<Widget>[
+                const SizedBox(height: 12),
+                Semantics(
+                  label: 'Product pricing error',
+                  liveRegion: true,
+                  child: ExcludeSemantics(child: Text(error)),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: <Widget>[
+                  FilledButton(
+                    onPressed: _pricingPending ? null : _submitPricing,
+                    child: _pricingPending
+                        ? Semantics(
+                            label: 'Saving product pricing',
+                            liveRegion: true,
+                            child: const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : Text(
+                            _pricingUncertain
+                                ? 'Retry same request'
+                                : 'Save price / IVA',
+                          ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _pricingPending ? null : _closePricing,
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _catalogBody() {
     if (_loading) return const _CatalogLoading();
     if (_failed) return _CatalogError(onRetry: _requestCatalog);
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
     if (items.isEmpty) return const _EmptyCatalog();
-    return _CatalogList(items: items, role: widget.session.role);
+    return _CatalogList(
+      items: items,
+      role: widget.session.role,
+      onConfigurePricing:
+          widget.session.role == InventoryRole.administrator &&
+              widget.setProductPrice != null
+          ? _showPricing
+          : null,
+    );
   }
 }
 
@@ -499,6 +944,96 @@ void _validateHolding(
   }
 }
 
+/// Width of the required-error border, stronger than the 1.0 normal border.
+const double _errorBorderWidth = 2.0;
+
+/// Stable outlined shape shared by the pricing form fields in normal and error
+/// states, so an error never switches the field's border shape.
+const OutlineInputBorder _pricingFieldBorder = OutlineInputBorder();
+
+/// Resolves the stable outlined shape for [decoration]: the field's own border
+/// first, then the theme's input decoration border, then the default outline.
+OutlineInputBorder _resolvedOutlineBorder(
+  InputDecoration decoration,
+  BuildContext context,
+) {
+  final InputBorder? decorationBorder = decoration.border;
+  if (decorationBorder is OutlineInputBorder) {
+    return OutlineInputBorder(
+      borderRadius: decorationBorder.borderRadius,
+      gapPadding: decorationBorder.gapPadding,
+    );
+  }
+  final InputBorder? themeBorder = Theme.of(context)
+      .inputDecorationTheme
+      .border;
+  if (themeBorder is OutlineInputBorder) {
+    return OutlineInputBorder(
+      borderRadius: themeBorder.borderRadius,
+      gapPadding: themeBorder.gapPadding,
+    );
+  }
+  return const OutlineInputBorder();
+}
+
+/// Returns [decoration] with a strong required-error presentation: the field
+/// message plus a decorative themed error icon and explicit error/focused-error
+/// borders in the theme error color, keeping the field's own outlined shape.
+/// Decorative-only: the icon is excluded from semantics so the existing live
+/// error label remains the announcement.
+InputDecoration _requiredErrorDecoration(
+  BuildContext context,
+  InputDecoration decoration,
+  String? errorText,
+) {
+  if (errorText == null) return decoration;
+  final ThemeData theme = Theme.of(context);
+  final OutlineInputBorder outline = _resolvedOutlineBorder(
+    decoration,
+    context,
+  );
+  final BorderSide errorSide = BorderSide(
+    color: theme.colorScheme.error,
+    width: _errorBorderWidth,
+  );
+  return decoration.copyWith(
+    errorText: errorText,
+    suffixIcon: ExcludeSemantics(
+      child: Icon(Icons.error_outline, color: theme.colorScheme.error),
+    ),
+    errorBorder: outline.copyWith(borderSide: errorSide),
+    focusedErrorBorder: outline.copyWith(borderSide: errorSide),
+  );
+}
+
+String _formatPricingCentavos(int centavos) {
+  final int absolute = centavos.abs();
+  final String sign = centavos < 0 ? '-' : '';
+  final String fraction = (absolute % 100).toString().padLeft(2, '0');
+  return '$sign${absolute ~/ 100}.$fraction';
+}
+
+String _formatBasisPoints(int basisPoints) {
+  final int whole = basisPoints ~/ 100;
+  final int fraction = basisPoints % 100;
+  if (fraction == 0) return whole.toString();
+  if (fraction % 10 == 0) return '$whole.${fraction ~/ 10}';
+  return '$whole.${fraction.toString().padLeft(2, '0')}';
+}
+
+String _priceModeLabel(String value) => switch (value) {
+  'iva-included' => 'IVA included',
+  'iva-additional-on-invoice' => 'IVA additional on invoice',
+  _ => throw StateError('validated price mode became invalid'),
+};
+
+String _ivaTreatmentLabel(String value) => switch (value) {
+  'taxable' => 'Taxable',
+  'zero-rated' => 'Zero-rated',
+  'exempt' => 'Exempt',
+  _ => throw StateError('validated IVA treatment became invalid'),
+};
+
 bool _validBranchId(String value) =>
     RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$').hasMatch(value);
 
@@ -554,6 +1089,33 @@ class _CreationToolbar extends StatelessWidget {
         onPressed: onPressed,
         icon: const Icon(Icons.add),
         label: const Text('Create product'),
+      ),
+    ),
+  );
+}
+
+class _PricingSuccess extends StatelessWidget {
+  const _PricingSuccess({required this.result});
+
+  final ProductPricingResult result;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Product pricing succeeded',
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Icon(Icons.check_circle_outline),
+            const SizedBox(width: 8),
+            Flexible(child: Text('Pricing saved. Audit ${result.auditId}')),
+          ],
+        ),
       ),
     ),
   );
@@ -639,10 +1201,11 @@ class _ConnectionStatus extends StatelessWidget {
 }
 
 class _CatalogList extends StatelessWidget {
-  const _CatalogList({required this.items, this.role});
+  const _CatalogList({required this.items, this.role, this.onConfigurePricing});
 
   final List<CatalogItem> items;
   final InventoryRole? role;
+  final void Function(CatalogProduct product)? onConfigurePricing;
 
   @override
   Widget build(BuildContext context) {
@@ -672,7 +1235,11 @@ class _CatalogList extends StatelessWidget {
             itemBuilder: (BuildContext context, int index) => Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 920),
-                child: _ProductCard(item: items[index], role: role),
+                child: _ProductCard(
+                  item: items[index],
+                  role: role,
+                  onConfigurePricing: onConfigurePricing,
+                ),
               ),
             ),
             separatorBuilder: (_, _) => const SizedBox(height: 12),
@@ -684,14 +1251,23 @@ class _CatalogList extends StatelessWidget {
 }
 
 class _ProductCard extends StatelessWidget {
-  const _ProductCard({required this.item, required this.role});
+  const _ProductCard({
+    required this.item,
+    required this.role,
+    required this.onConfigurePricing,
+  });
 
   final CatalogItem item;
   final InventoryRole? role;
+  final void Function(CatalogProduct product)? onConfigurePricing;
 
   @override
   Widget build(BuildContext context) {
-    final Widget details = _ProductDetails(item: item, role: role);
+    final Widget details = _ProductDetails(
+      item: item,
+      role: role,
+      onConfigurePricing: onConfigurePricing,
+    );
     final Widget qr = ProductQrView(product: item.product);
 
     return Card(
@@ -726,10 +1302,15 @@ class _ProductCard extends StatelessWidget {
 }
 
 class _ProductDetails extends StatelessWidget {
-  const _ProductDetails({required this.item, required this.role});
+  const _ProductDetails({
+    required this.item,
+    required this.role,
+    required this.onConfigurePricing,
+  });
 
   final CatalogItem item;
   final InventoryRole? role;
+  final void Function(CatalogProduct product)? onConfigurePricing;
 
   CatalogProduct get product => item.product;
 
@@ -759,15 +1340,30 @@ class _ProductDetails extends StatelessWidget {
         if (product.pricing case final CatalogPricing pricing) ...<Widget>[
           const SizedBox(height: 4),
           Text(
-            'Listed price: ${_formatCentavos(pricing.listedPriceCentavos)} '
+            'Listed price: ${_formatPricingCentavos(pricing.listedPriceCentavos)} '
             '${pricing.currency}',
           ),
           const SizedBox(height: 4),
-          Text('IVA treatment: ${pricing.ivaTreatment}'),
+          Text('Price mode: ${_priceModeLabel(pricing.priceMode)}'),
+          const SizedBox(height: 4),
+          Text('IVA treatment: ${_ivaTreatmentLabel(pricing.ivaTreatment)}'),
+          const SizedBox(height: 4),
+          Text(
+            'IVA rate: ${pricing.ivaRateBasisPoints == null ? 'Not required' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
+          ),
         ],
         if (role != null) ...<Widget>[
           const SizedBox(height: 12),
           ..._holdingRows(),
+        ],
+        if (onConfigurePricing != null) ...<Widget>[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: ValueKey<String>('configure-price-${product.internalCode}'),
+            onPressed: () => onConfigurePricing!(product),
+            icon: const Icon(Icons.price_change_outlined),
+            label: const Text('Configure price / IVA'),
+          ),
         ],
       ],
     );
@@ -802,13 +1398,6 @@ class _ProductDetails extends StatelessWidget {
           );
         })
         .toList(growable: false);
-  }
-
-  String _formatCentavos(int centavos) {
-    final int absolute = centavos.abs();
-    final String sign = centavos < 0 ? '-' : '';
-    final String fraction = (absolute % 100).toString().padLeft(2, '0');
-    return '$sign${absolute ~/ 100}.$fraction';
   }
 
   String _formatQuantity(int scaled, int precision) {

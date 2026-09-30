@@ -8,6 +8,7 @@ import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
+import 'package:lda_inventory/catalog/product_pricing.dart';
 import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
 
 class _FakeGateway implements EmulatorSessionGateway {
@@ -64,6 +65,17 @@ class _FakeGateway implements EmulatorSessionGateway {
   }
 }
 
+class _FakePricingGateway implements ProductPricingGateway {
+  _FakePricingGateway(this.onSetPrice);
+
+  final Future<ProductPricingResult> Function(ProductPricingDraft draft)
+  onSetPrice;
+
+  @override
+  Future<ProductPricingResult> setPrice(ProductPricingDraft draft) =>
+      onSetPrice(draft);
+}
+
 class _FakeProductGateway implements ProductCreationGateway {
   _FakeProductGateway([this.onCreate]);
 
@@ -108,11 +120,13 @@ Widget _app(
   Future<EmulatorSessionGateway> gateway, {
   CatalogSnapshotLoader catalogLoader = _emptyCatalog,
   ProductCreationGatewayLoader? productCreationGatewayLoader,
+  ProductPricingGatewayLoader? productPricingGatewayLoader,
 }) => MaterialApp(
   home: EmulatorLoginShell(
     sessionGateway: gateway,
     catalogLoader: catalogLoader,
     productCreationGatewayLoader: productCreationGatewayLoader,
+    productPricingGatewayLoader: productPricingGatewayLoader,
   ),
 );
 
@@ -134,6 +148,34 @@ Future<void> _enterProduct(WidgetTester tester) async {
   final Finder create = find.widgetWithText(FilledButton, 'Create');
   await tester.ensureVisible(create);
   await tester.tap(create);
+}
+
+const CatalogProduct _pricedCoffee = CatalogProduct(
+  internalCode: 'PRD-COFFEE-001',
+  name: 'Coffee',
+  quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+  pricing: CatalogPricing(
+    listedPriceCentavos: 12900,
+    currency: 'MXN',
+    priceMode: 'iva-included',
+    ivaTreatment: 'taxable',
+    ivaRateBasisPoints: 1600,
+  ),
+);
+
+Future<CatalogSnapshot> _coffeeCatalog(EmulatorSession session) async =>
+    CatalogSnapshot(<CatalogItem>[
+      CatalogItem(product: _pricedCoffee, holdings: const <CatalogHolding>[]),
+    ]);
+
+Future<void> _submitExistingPricing(WidgetTester tester) async {
+  await tester.tap(
+    find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+  );
+  await tester.pumpAndSettle();
+  final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+  await tester.ensureVisible(save);
+  await tester.tap(save);
 }
 
 Future<void> _signIn(WidgetTester tester) async {
@@ -1070,6 +1112,393 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Role: administrator'), findsOneWidget);
     expect(catalogCalls, 3);
+  });
+
+  testWidgets('late old pricing success cannot clear a newer same-UUID retry', (
+    WidgetTester tester,
+  ) async {
+    final Completer<ProductPricingResult> first =
+        Completer<ProductPricingResult>();
+    final _FakeGateway auth = _FakeGateway(
+      restored: _administrator,
+      loginResult: _administrator,
+    );
+    final List<ProductPricingDraft> attempts = <ProductPricingDraft>[];
+    var gatewayLoads = 0;
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(auth),
+        catalogLoader: _coffeeCatalog,
+        productPricingGatewayLoader: (EmulatorSession session) async {
+          gatewayLoads += 1;
+          final int load = gatewayLoads;
+          return _FakePricingGateway((ProductPricingDraft draft) {
+            attempts.add(draft);
+            if (load == 1) return first.future;
+            return Future<ProductPricingResult>.value(
+              ProductPricingResult.fromCallable(<String, Object?>{
+                'auditId': draft.idempotencyKey,
+                'productId': draft.productId,
+                'pricing': <String, Object?>{
+                  'listedPriceCentavos': draft.listedPriceCentavos,
+                  'currency': 'MXN',
+                  'priceMode': draft.priceMode,
+                  'ivaTreatment': draft.ivaTreatment,
+                  'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+                },
+                'replayed': true,
+              }, request: draft),
+            );
+          });
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _submitExistingPricing(tester);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pumpAndSettle();
+    await _signIn(tester);
+
+    final Finder retry = find.widgetWithText(
+      FilledButton,
+      'Retry same request',
+    );
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+    expect(attempts, hasLength(2));
+    expect(attempts[1], attempts[0]);
+
+    final ProductPricingDraft oldDraft = attempts.first;
+    first.complete(
+      ProductPricingResult.fromCallable(<String, Object?>{
+        'auditId': oldDraft.idempotencyKey,
+        'productId': oldDraft.productId,
+        'pricing': <String, Object?>{
+          'listedPriceCentavos': oldDraft.listedPriceCentavos,
+          'currency': 'MXN',
+          'priceMode': oldDraft.priceMode,
+          'ivaTreatment': oldDraft.ivaTreatment,
+          'ivaRateBasisPoints': oldDraft.ivaRateBasisPoints,
+        },
+        'replayed': false,
+      }, request: oldDraft),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('outcome is unknown'), findsNothing);
+    expect(
+      find.textContaining('Audit ${oldDraft.idempotencyKey}'),
+      findsOneWidget,
+    );
+    expect(gatewayLoads, 2);
+  });
+
+  testWidgets('gateway initialization failure freezes request before retry', (
+    WidgetTester tester,
+  ) async {
+    var loads = 0;
+    ProductPricingDraft? retried;
+    final _FakeGateway auth = _FakeGateway(restored: _administrator);
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(auth),
+        catalogLoader: _coffeeCatalog,
+        productPricingGatewayLoader: (EmulatorSession session) async {
+          loads += 1;
+          if (loads == 1) throw StateError('functions unavailable');
+          return _FakePricingGateway((ProductPricingDraft draft) async {
+            retried = draft;
+            return ProductPricingResult.fromCallable(<String, Object?>{
+              'auditId': draft.idempotencyKey,
+              'productId': draft.productId,
+              'pricing': <String, Object?>{
+                'listedPriceCentavos': draft.listedPriceCentavos,
+                'currency': 'MXN',
+                'priceMode': draft.priceMode,
+                'ivaTreatment': draft.ivaTreatment,
+                'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+              },
+              'replayed': true,
+            }, request: draft);
+          });
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _submitExistingPricing(tester);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+
+    final String frozenPrice = tester
+        .widget<TextFormField>(
+          find.byKey(const ValueKey<String>('pricing-listed-price')),
+        )
+        .controller!
+        .text;
+    final Finder retry = find.widgetWithText(
+      FilledButton,
+      'Retry same request',
+    );
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(loads, 2);
+    expect(retried?.listedPriceMxn, frozenPrice);
+    expect(find.textContaining('Pricing saved. Audit'), findsOneWidget);
+  });
+
+  testWidgets('seller never receives or initializes product pricing', (
+    WidgetTester tester,
+  ) async {
+    var pricingGatewayLoads = 0;
+    final _FakeGateway gateway = _FakeGateway(restored: _seller);
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(gateway),
+        catalogLoader: (EmulatorSession session) async =>
+            CatalogSnapshot(<CatalogItem>[
+              CatalogItem(
+                product: _pricedCoffee,
+                holdings: const <CatalogHolding>[
+                  CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
+                ],
+              ),
+            ]),
+        productPricingGatewayLoader: (EmulatorSession session) async {
+          pricingGatewayLoads += 1;
+          return _FakePricingGateway((_) => throw StateError('not allowed'));
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Configure price / IVA'), findsNothing);
+    expect(find.text('Agotado'), findsOneWidget);
+    expect(pricingGatewayLoads, 0);
+  });
+
+  testWidgets(
+    'pricing uncertainty survives other product views and retries exact draft',
+    (WidgetTester tester) async {
+      const CatalogProduct tea = CatalogProduct(
+        internalCode: 'PRD-TEA-002',
+        name: 'Tea',
+        quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+        pricing: CatalogPricing(
+          listedPriceCentavos: 7500,
+          currency: 'MXN',
+          priceMode: 'iva-additional-on-invoice',
+          ivaTreatment: 'exempt',
+          ivaRateBasisPoints: null,
+        ),
+      );
+      Future<CatalogSnapshot> catalog(EmulatorSession session) async =>
+          CatalogSnapshot(<CatalogItem>[
+            CatalogItem(
+              product: _pricedCoffee,
+              holdings: const <CatalogHolding>[],
+            ),
+            CatalogItem(product: tea, holdings: const <CatalogHolding>[]),
+          ]);
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final List<ProductPricingDraft> attempts = <ProductPricingDraft>[];
+      var gatewayLoads = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          catalogLoader: catalog,
+          productPricingGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            final int load = gatewayLoads;
+            return _FakePricingGateway((ProductPricingDraft draft) async {
+              attempts.add(draft);
+              if (load == 1) throw const ProductPricingUncertainException();
+              return ProductPricingResult.fromCallable(<String, Object?>{
+                'auditId': draft.idempotencyKey,
+                'productId': draft.productId,
+                'pricing': <String, Object?>{
+                  'listedPriceCentavos': draft.listedPriceCentavos,
+                  'currency': 'MXN',
+                  'priceMode': draft.priceMode,
+                  'ivaTreatment': draft.ivaTreatment,
+                  'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+                },
+                'replayed': true,
+              }, request: draft);
+            });
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _submitExistingPricing(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      final ProductPricingDraft original = attempts.single;
+
+      Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      final Finder configureTea = find.byKey(
+        const ValueKey<String>('configure-price-PRD-TEA-002'),
+      );
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      await tester.tap(configureTea);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('pricing-listed-price')),
+            )
+            .controller
+            ?.text,
+        '75.00',
+      );
+      expect(find.text('IVA rate: Not required'), findsOneWidget);
+
+      close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      final Finder configureCoffee = find.byKey(
+        const ValueKey<String>('configure-price-PRD-COFFEE-001'),
+      );
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
+      await tester.pumpAndSettle();
+      await tester.tap(configureCoffee);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('pricing-listed-price')),
+            )
+            .controller
+            ?.text,
+        original.listedPriceMxn,
+      );
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], same(original));
+      expect(attempts[1].idempotencyKey, original.idempotencyKey);
+      expect(attempts[1].productId, 'PRD-COFFEE-001');
+      expect(
+        find.textContaining('Audit ${original.idempotencyKey}'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'pricing uncertainty survives logout only for same uid with fresh gateway',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _administrator,
+      );
+      final List<ProductPricingDraft> attempts = <ProductPricingDraft>[];
+      var gatewayLoads = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          catalogLoader: _coffeeCatalog,
+          productPricingGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            final int load = gatewayLoads;
+            return _FakePricingGateway((ProductPricingDraft draft) async {
+              attempts.add(draft);
+              if (load == 1) throw const ProductPricingUncertainException();
+              return ProductPricingResult.fromCallable(<String, Object?>{
+                'auditId': draft.idempotencyKey,
+                'productId': draft.productId,
+                'pricing': <String, Object?>{
+                  'listedPriceCentavos': 12900,
+                  'currency': 'MXN',
+                  'priceMode': 'iva-included',
+                  'ivaTreatment': 'taxable',
+                  'ivaRateBasisPoints': 1600,
+                },
+                'replayed': true,
+              }, request: draft);
+            });
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _submitExistingPricing(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+
+      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      await tester.ensureVisible(close);
+      await tester.tap(close);
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+      await _signIn(tester);
+
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], same(attempts[0]));
+      expect(
+        find.textContaining('Audit ${attempts[0].idempotencyKey}'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('other actors cannot observe or resolve pricing uncertainty', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGateway auth = _FakeGateway(
+      restored: _administrator,
+      loginResult: _otherAdministrator,
+    );
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(auth),
+        catalogLoader: _coffeeCatalog,
+        productPricingGatewayLoader: (EmulatorSession session) async =>
+            _FakePricingGateway(
+              (_) => throw const ProductPricingUncertainException(),
+            ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _submitExistingPricing(tester);
+    await tester.pumpAndSettle();
+    final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+    await tester.ensureVisible(close);
+    await tester.tap(close);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pumpAndSettle();
+    await _signIn(tester);
+
+    expect(find.textContaining('outcome is unknown'), findsNothing);
+    expect(find.text('Retry same request'), findsNothing);
   });
 
   testWidgets('bootstrap failure is fail-closed and retryable', (

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
+import 'package:lda_inventory/catalog/product_pricing.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/product_qr.dart';
@@ -57,6 +58,11 @@ Widget _authenticatedApp({
   ProductCreationSubmit? createProduct,
   ProductDraftIdFactory? createDraftId,
   ProductCreationDraft? unresolvedProductDraft,
+  ProductPricingSubmit? setProductPrice,
+  ProductPricingIdFactory? createPricingId,
+  List<ProductPricingDraft> unresolvedPricingDrafts =
+      const <ProductPricingDraft>[],
+  ProductPricingDraftLookup? unresolvedPricingDraftForProduct,
 }) => MaterialApp(
   home: AuthenticatedCatalogPage(
     session: session,
@@ -64,6 +70,10 @@ Widget _authenticatedApp({
     createProduct: createProduct,
     createDraftId: createDraftId,
     unresolvedProductDraft: unresolvedProductDraft,
+    setProductPrice: setProductPrice,
+    createPricingId: createPricingId,
+    unresolvedPricingDrafts: unresolvedPricingDrafts,
+    unresolvedPricingDraftForProduct: unresolvedPricingDraftForProduct,
     onLogout: () async {},
   ),
 );
@@ -149,7 +159,9 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
-    expect(find.text('IVA treatment: taxable'), findsOneWidget);
+    expect(find.text('Price mode: IVA included'), findsOneWidget);
+    expect(find.text('IVA treatment: Taxable'), findsOneWidget);
+    expect(find.text('IVA rate: 16%'), findsOneWidget);
     expect(find.textContaining('acquisition'), findsNothing);
     expect(find.textContaining('admin'), findsNothing);
   });
@@ -913,6 +925,1055 @@ void main() {
       }
     },
   );
+
+  testWidgets('seller sees safe pricing details and no pricing controls', (
+    WidgetTester tester,
+  ) async {
+    var pricingCalls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _seller,
+        loader: (_) async => _snapshot(
+          _coffee,
+          holdings: const <CatalogHolding>[
+            CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
+          ],
+        ),
+        setProductPrice: (_) async {
+          pricingCalls += 1;
+          throw StateError('seller callback must not run');
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
+    expect(find.text('Price mode: IVA included'), findsOneWidget);
+    expect(find.text('IVA treatment: Taxable'), findsOneWidget);
+    expect(find.text('IVA rate: 16%'), findsOneWidget);
+    expect(find.text('Agotado'), findsOneWidget);
+    expect(find.text('Configure price / IVA'), findsNothing);
+    expect(find.textContaining('audit'), findsNothing);
+    expect(pricingCalls, 0);
+  });
+
+  testWidgets('admin form pre-fills actual pricing and submits exact values', (
+    WidgetTester tester,
+  ) async {
+    final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+    var loads = 0;
+    Future<CatalogSnapshot> load(EmulatorSession session) async {
+      loads += 1;
+      return _snapshot(_coffee);
+    }
+
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: load,
+        createPricingId: () => 'pricing-key-1',
+        setProductPrice: (ProductPricingDraft draft) async {
+          requests.add(draft);
+          return ProductPricingResult.fromCallable(<String, Object?>{
+            'auditId': draft.idempotencyKey,
+            'productId': draft.productId,
+            'pricing': <String, Object?>{
+              'listedPriceCentavos': 12900,
+              'currency': 'MXN',
+              'priceMode': 'iva-included',
+              'ivaTreatment': 'taxable',
+              'ivaRateBasisPoints': 1600,
+            },
+            'replayed': false,
+          }, request: draft);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coffee'), findsOneWidget);
+    expect(find.text('PRD-COFFEE-001'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-listed-price')),
+          )
+          .controller
+          ?.text,
+      '129.00',
+    );
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-iva-rate')),
+          )
+          .controller
+          ?.text,
+      '16',
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.pumpAndSettle();
+
+    expect(requests, hasLength(1));
+    expect(requests.single.toRequest(), <String, Object?>{
+      'idempotencyKey': 'pricing-key-1',
+      'productId': 'PRD-COFFEE-001',
+      'listedPriceMxn': '129.00',
+      'priceMode': 'iva-included',
+      'ivaTreatment': 'taxable',
+      'ivaRatePercent': '16',
+    });
+    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+    expect(loads, 2);
+  });
+
+  testWidgets(
+    'blank taxable IVA rate stays local and shows field-associated feedback',
+    (WidgetTester tester) async {
+      final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-key-1',
+          setProductPrice: (ProductPricingDraft draft) async {
+            requests.add(draft);
+            throw StateError('blank rate must not submit');
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+
+      final Finder rateField = find.byKey(
+        const ValueKey<String>('pricing-iva-rate'),
+      );
+      await tester.enterText(rateField, '');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+
+      expect(requests, isEmpty);
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(of: rateField, matching: find.byType(TextField)),
+            )
+            .decoration
+            ?.errorText,
+        'IVA rate is required for taxable products.',
+      );
+      expect(
+        find.bySemanticsLabel(
+          RegExp(
+            'IVA rate.*required for taxable products',
+            caseSensitive: false,
+          ),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(rateField, '16');
+      await tester.pump();
+      expect(
+        find.text('IVA rate is required for taxable products.'),
+        findsNothing,
+      );
+
+      await tester.enterText(rateField, '');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey<String>('pricing-treatment')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Zero-rated').last);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('IVA rate is required for taxable products.'),
+        findsNothing,
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Close'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('IVA rate is required for taxable products.'),
+        findsNothing,
+      );
+      expect(requests, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'blank listed price stays local and shows field-associated feedback',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const CatalogProduct tea = CatalogProduct(
+        internalCode: 'PRD-TEA-002',
+        name: 'Tea',
+        quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+        pricing: CatalogPricing(
+          listedPriceCentavos: 4500,
+          currency: 'MXN',
+          priceMode: 'iva-included',
+          ivaTreatment: 'taxable',
+          ivaRateBasisPoints: 1600,
+        ),
+      );
+      const ProductPricingDraft restored = ProductPricingDraft(
+        idempotencyKey: 'pricing-restored',
+        productId: 'PRD-COFFEE-001',
+        listedPriceMxn: '129.00',
+        priceMode: 'iva-included',
+        ivaTreatment: 'taxable',
+        ivaRatePercent: '16',
+      );
+      ProductPricingDraft? authoritative;
+      final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+      var pricingIds = 0;
+
+      Future<CatalogSnapshot> load(EmulatorSession _) async =>
+          CatalogSnapshot(<CatalogItem>[
+            CatalogItem(product: _coffee, holdings: const <CatalogHolding>[]),
+            CatalogItem(product: tea, holdings: const <CatalogHolding>[]),
+          ]);
+
+      String createPricingId() {
+        pricingIds += 1;
+        return 'pricing-key-$pricingIds';
+      }
+
+      Future<ProductPricingResult> submit(ProductPricingDraft draft) async {
+        requests.add(draft);
+        throw StateError('invalid listed price must not submit');
+      }
+
+      Widget app(EmulatorSession session) => _authenticatedApp(
+        session: session,
+        loader: load,
+        createPricingId: createPricingId,
+        unresolvedPricingDraftForProduct: (String productId) =>
+            productId == restored.productId ? authoritative : null,
+        setProductPrice: submit,
+      );
+
+      Future<void> openPricing(String productId) async {
+        final Finder configure = find.byKey(
+          ValueKey<String>('configure-price-$productId'),
+        );
+        await tester.ensureVisible(configure);
+        await tester.tap(configure);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> tapPricingButton(Type type, String label) async {
+        final Finder button = find.widgetWithText(type, label);
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pump();
+      }
+
+      await tester.pumpWidget(app(_administrator));
+      await tester.pumpAndSettle();
+      await openPricing(_coffee.internalCode);
+
+      final Finder priceField = find.byKey(
+        const ValueKey<String>('pricing-listed-price'),
+      );
+      await tester.enterText(priceField, '');
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+
+      expect(requests, isEmpty);
+      expect(pricingIds, 0);
+      expect(find.text('Configure price / IVA'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(of: priceField, matching: find.byType(TextField)),
+            )
+            .decoration
+            ?.errorText,
+        'Listed price is required.',
+      );
+      expect(
+        find.bySemanticsLabel(
+          RegExp('listed price.*required', caseSensitive: false),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(priceField, 'invalid');
+      await tester.pump();
+      expect(find.text('Listed price is required.'), findsNothing);
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+      expect(requests, isEmpty);
+      expect(pricingIds, 1);
+      expect(find.bySemanticsLabel('Product pricing error'), findsOneWidget);
+
+      await tester.enterText(priceField, '');
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(OutlinedButton, 'Close');
+      await tester.pumpAndSettle();
+      await openPricing(_coffee.internalCode);
+      expect(find.text('Listed price is required.'), findsNothing);
+
+      await tester.enterText(priceField, '');
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(OutlinedButton, 'Close');
+      await tester.pumpAndSettle();
+      await openPricing(tea.internalCode);
+      expect(find.text('Listed price is required.'), findsNothing);
+
+      await tester.enterText(priceField, '');
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tester.pumpWidget(
+        app(
+          const EmulatorSession(
+            userId: 'administrator-two',
+            email: 'admin-two@demo.invalid',
+            role: InventoryRole.administrator,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Listed price is required.'), findsNothing);
+      await openPricing(_coffee.internalCode);
+
+      await tester.enterText(priceField, '');
+      await tapPricingButton(FilledButton, 'Save price / IVA');
+      authoritative = restored;
+      await tapPricingButton(OutlinedButton, 'Close');
+      await tester.pumpAndSettle();
+      await openPricing(_coffee.internalCode);
+      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('Retry same request'), findsOneWidget);
+      expect(requests, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'one save reports both missing pricing fields and allows correction',
+    (WidgetTester tester) async {
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+      var pricingIds = 0;
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-key-${++pricingIds}',
+          setProductPrice: (ProductPricingDraft draft) async {
+            requests.add(draft);
+            return ProductPricingResult.fromCallable(<String, Object?>{
+              'auditId': draft.idempotencyKey,
+              'productId': draft.productId,
+              'pricing': <String, Object?>{
+                'listedPriceCentavos': 12900,
+                'currency': 'MXN',
+                'priceMode': 'iva-included',
+                'ivaTreatment': 'taxable',
+                'ivaRateBasisPoints': 1600,
+              },
+              'replayed': false,
+            }, request: draft);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      final Finder priceField = find.byKey(
+        const ValueKey<String>('pricing-listed-price'),
+      );
+      final Finder rateField = find.byKey(
+        const ValueKey<String>('pricing-iva-rate'),
+      );
+      await tester.enterText(priceField, '');
+      await tester.enterText(rateField, '');
+      await tester.pump();
+      expect(find.byIcon(Icons.error_outline), findsNothing);
+      expect(find.text('Listed price is required.'), findsNothing);
+      expect(
+        find.text('IVA rate is required for taxable products.'),
+        findsNothing,
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+      expect(pricingIds, 0);
+      expect(requests, isEmpty);
+      void expectRequiredFeedback(Finder field, String message, RegExp label) {
+        expect(
+          tester
+              .widget<TextField>(
+                find.descendant(of: field, matching: find.byType(TextField)),
+              )
+              .decoration
+              ?.errorText,
+          message,
+        );
+        expect(find.text(message), findsOneWidget);
+        final Finder icon = find.descendant(
+          of: field,
+          matching: find.byIcon(Icons.error_outline),
+        );
+        expect(icon, findsOneWidget);
+        expect(tester.renderObject(icon).debugSemantics, isNull);
+        final Finder announcement = find.bySemanticsLabel(label);
+        expect(announcement, findsOneWidget);
+        expect(
+          tester
+              .getSemantics(announcement)
+              .getSemanticsData()
+              .flagsCollection
+              .isLiveRegion,
+          isTrue,
+        );
+      }
+
+      expectRequiredFeedback(
+        priceField,
+        'Listed price is required.',
+        RegExp('listed price.*required', caseSensitive: false),
+      );
+      expectRequiredFeedback(
+        rateField,
+        'IVA rate is required for taxable products.',
+        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+      );
+      await tester.enterText(priceField, '129.00');
+      await tester.pump();
+      expect(find.text('Listed price is required.'), findsNothing);
+      expectRequiredFeedback(
+        rateField,
+        'IVA rate is required for taxable products.',
+        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+      expect(pricingIds, 0);
+      expect(requests, isEmpty);
+      await tester.enterText(rateField, '16');
+      await tester.pump();
+      expect(find.byIcon(Icons.error_outline), findsNothing);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pumpAndSettle();
+      expect(pricingIds, 1);
+      expect(requests, hasLength(1));
+      expect(requests.single.listedPriceMxn, '129.00');
+      expect(requests.single.ivaRatePercent, '16');
+      expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'required-field errors show a strong themed border, icon, and message',
+    (WidgetTester tester) async {
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-key-1',
+          setProductPrice: (_) async =>
+              throw StateError('invalid form must not submit'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+
+      final ThemeData theme = Theme.of(
+        tester.element(
+          find.byKey(const ValueKey<String>('pricing-listed-price')),
+        ),
+      );
+      final InputBorder? themeBorder = theme.inputDecorationTheme.border;
+      final double normalBorderWidth = themeBorder is OutlineInputBorder
+          ? themeBorder.borderSide.width
+          : 1.0;
+
+      InputDecoration decorationOf(String fieldKey) => tester
+          .widget<TextField>(
+            find.descendant(
+              of: find.byKey(ValueKey<String>(fieldKey)),
+              matching: find.byType(TextField),
+            ),
+          )
+          .decoration!;
+
+      void expectStrongErrorPresentation(
+        String fieldKey,
+        String message,
+        RegExp announcedLabel,
+      ) {
+        final Finder field = find.byKey(ValueKey<String>(fieldKey));
+        final InputDecoration decoration = decorationOf(fieldKey);
+        expect(decoration.errorText, message);
+
+        final Finder errorIcon = find.descendant(
+          of: field,
+          matching: find.byIcon(Icons.error_outline),
+        );
+        expect(errorIcon, findsOneWidget);
+        expect(tester.widget<Icon>(errorIcon).color, theme.colorScheme.error);
+
+        final OutlineInputBorder errorBorder =
+            decoration.errorBorder! as OutlineInputBorder;
+        expect(errorBorder.borderSide.color, theme.colorScheme.error);
+        expect(errorBorder.borderSide.width, greaterThan(normalBorderWidth));
+        final OutlineInputBorder focusedErrorBorder =
+            decoration.focusedErrorBorder! as OutlineInputBorder;
+        expect(focusedErrorBorder.borderSide.color, theme.colorScheme.error);
+        expect(
+          focusedErrorBorder.borderSide.width,
+          greaterThan(normalBorderWidth),
+        );
+
+        // The error state keeps the field's own stable outlined shape.
+        final OutlineInputBorder normalOutline =
+            decoration.border! as OutlineInputBorder;
+        expect(errorBorder.borderRadius, normalOutline.borderRadius);
+        expect(focusedErrorBorder.borderRadius, normalOutline.borderRadius);
+
+        // The icon is decorative only: its render object contributes no
+        // semantics node, so the live region keeps announcing the message.
+        expect(tester.renderObject(errorIcon).debugSemantics, isNull);
+        expect(find.bySemanticsLabel(announcedLabel), findsOneWidget);
+      }
+
+      // Both pricing fields declare one stable outlined shape in normal state.
+      expect(
+        decorationOf('pricing-listed-price').border,
+        isA<OutlineInputBorder>(),
+      );
+      expect(
+        decorationOf('pricing-iva-rate').border,
+        isA<OutlineInputBorder>(),
+      );
+
+      // Blank listed price: strong local error presentation.
+      final Finder priceField = find.byKey(
+        const ValueKey<String>('pricing-listed-price'),
+      );
+      await tester.enterText(priceField, '');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+      expectStrongErrorPresentation(
+        'pricing-listed-price',
+        'Listed price is required.',
+        RegExp('listed price.*required', caseSensitive: false),
+      );
+
+      // Entering a price clears the visual error along with the message.
+      await tester.enterText(priceField, '129.00');
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: priceField,
+          matching: find.byIcon(Icons.error_outline),
+        ),
+        findsNothing,
+      );
+
+      // Blank taxable IVA rate: the same strong local error presentation.
+      final Finder rateField = find.byKey(
+        const ValueKey<String>('pricing-iva-rate'),
+      );
+      await tester.enterText(rateField, '');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pump();
+      expectStrongErrorPresentation(
+        'pricing-iva-rate',
+        'IVA rate is required for taxable products.',
+        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+      );
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('unpriced form guesses neither tax policy nor rate', (
+    WidgetTester tester,
+  ) async {
+    const CatalogProduct unpriced = CatalogProduct(
+      internalCode: 'PRD-TEA-0002',
+      name: 'Tea',
+      quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+    );
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => _snapshot(unpriced),
+        createPricingId: () => 'pricing-key-1',
+        setProductPrice: (_) => throw StateError('invalid form must not call'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-TEA-0002')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-listed-price')),
+          )
+          .controller
+          ?.text,
+      isEmpty,
+    );
+    expect(find.text('Select price mode'), findsOneWidget);
+    expect(find.text('Select IVA treatment'), findsOneWidget);
+    expect(find.text('16'), findsNothing);
+    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.pump();
+    expect(find.text('Listed price is required.'), findsOneWidget);
+    expect(find.bySemanticsLabel('Product pricing error'), findsNothing);
+  });
+
+  testWidgets('uncertain pricing locks payload and retries the same UUID', (
+    WidgetTester tester,
+  ) async {
+    final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+    var calls = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => _snapshot(_coffee),
+        createPricingId: () => calls == 0 ? 'pricing-key-1' : 'pricing-key-2',
+        setProductPrice: (ProductPricingDraft draft) async {
+          requests.add(draft);
+          calls += 1;
+          if (calls == 1) throw const ProductPricingUncertainException();
+          return ProductPricingResult.fromCallable(<String, Object?>{
+            'auditId': draft.idempotencyKey,
+            'productId': draft.productId,
+            'pricing': <String, Object?>{
+              'listedPriceCentavos': 12900,
+              'currency': 'MXN',
+              'priceMode': 'iva-included',
+              'ivaTreatment': 'taxable',
+              'ivaRateBasisPoints': 1600,
+            },
+            'replayed': true,
+          }, request: draft);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-listed-price')),
+          )
+          .enabled,
+      isFalse,
+    );
+    final Finder retry = find.widgetWithText(
+      FilledButton,
+      'Retry same request',
+    );
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(requests, hasLength(2));
+    expect(requests[1], same(requests[0]));
+    expect(requests[1].idempotencyKey, 'pricing-key-1');
+  });
+
+  testWidgets(
+    'unresolved conflict recovers authoritative draft instead of faux request',
+    (WidgetTester tester) async {
+      const ProductPricingDraft stored = ProductPricingDraft(
+        idempotencyKey: 'pricing-original-a',
+        productId: 'PRD-COFFEE-001',
+        listedPriceMxn: '88.88',
+        priceMode: 'iva-additional-on-invoice',
+        ivaTreatment: 'exempt',
+        ivaRatePercent: null,
+      );
+      ProductPricingDraft? authoritative;
+      final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-new-faux',
+          unresolvedPricingDraftForProduct: (String productId) =>
+              productId == stored.productId ? authoritative : null,
+          setProductPrice: (ProductPricingDraft draft) async {
+            requests.add(draft);
+            if (requests.length == 1) {
+              authoritative = stored;
+              throw const ProductPricingUnresolvedException();
+            }
+            return ProductPricingResult.fromCallable(<String, Object?>{
+              'auditId': draft.idempotencyKey,
+              'productId': draft.productId,
+              'pricing': <String, Object?>{
+                'listedPriceCentavos': draft.listedPriceCentavos,
+                'currency': 'MXN',
+                'priceMode': draft.priceMode,
+                'ivaTreatment': draft.ivaTreatment,
+                'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+              },
+              'replayed': true,
+            }, request: draft);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pumpAndSettle();
+
+      expect(requests.single.idempotencyKey, 'pricing-new-faux');
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('pricing-listed-price')),
+            )
+            .controller
+            ?.text,
+        stored.listedPriceMxn,
+      );
+      expect(find.text('IVA rate: Not required'), findsOneWidget);
+
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(requests, hasLength(2));
+      expect(requests[1], same(stored));
+      expect(requests[1].idempotencyKey, 'pricing-original-a');
+      expect(
+        find.text('Pricing saved. Audit pricing-original-a'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'unresolved conflict without authorized draft fails closed without retry',
+    (WidgetTester tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-not-stored',
+          unresolvedPricingDraftForProduct: (_) => null,
+          setProductPrice: (_) async {
+            calls += 1;
+            throw const ProductPricingUnresolvedException();
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.pumpAndSettle();
+
+      expect(calls, 1);
+      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Retry same request'), findsNothing);
+      expect(find.textContaining('pricing-not-stored'), findsNothing);
+    },
+  );
+
+  testWidgets('zero-rated is read-only zero and exempt sends null', (
+    WidgetTester tester,
+  ) async {
+    for (final String treatment in <String>['zero-rated', 'exempt']) {
+      final List<ProductPricingDraft> requests = <ProductPricingDraft>[];
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: (_) async => _snapshot(_coffee),
+          createPricingId: () => 'pricing-$treatment',
+          setProductPrice: (ProductPricingDraft draft) async {
+            requests.add(draft);
+            return ProductPricingResult.fromCallable(<String, Object?>{
+              'auditId': draft.idempotencyKey,
+              'productId': draft.productId,
+              'pricing': <String, Object?>{
+                'listedPriceCentavos': draft.listedPriceCentavos,
+                'currency': 'MXN',
+                'priceMode': draft.priceMode,
+                'ivaTreatment': draft.ivaTreatment,
+                'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+              },
+              'replayed': false,
+            }, request: draft);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('pricing-treatment')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.text(treatment == 'zero-rated' ? 'Zero-rated' : 'Exempt').last,
+      );
+      await tester.pumpAndSettle();
+
+      if (treatment == 'zero-rated') {
+        final TextFormField rate = tester.widget<TextFormField>(
+          find.byKey(const ValueKey<String>('pricing-iva-rate')),
+        );
+        expect(rate.enabled, isFalse);
+        expect(rate.controller?.text, '0');
+      } else {
+        expect(find.text('IVA rate: Not required'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey<String>('pricing-iva-rate')),
+          findsNothing,
+        );
+      }
+      final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+
+      expect(requests, hasLength(1));
+      expect(requests.single.ivaTreatment, treatment);
+      expect(
+        requests.single.ivaRatePercent,
+        treatment == 'zero-rated' ? '0' : isNull,
+      );
+    }
+  });
+
+  testWidgets('pending pricing blocks double tap and exposes progress', (
+    WidgetTester tester,
+  ) async {
+    final Completer<ProductPricingResult> pending =
+        Completer<ProductPricingResult>();
+    var calls = 0;
+    ProductPricingDraft? submitted;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => _snapshot(_coffee),
+        createPricingId: () => 'pricing-key-1',
+        setProductPrice: (ProductPricingDraft draft) {
+          calls += 1;
+          submitted = draft;
+          return pending.future;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.tap(save, warnIfMissed: false);
+    await tester.pump();
+
+    expect(calls, 1);
+    expect(find.bySemanticsLabel('Saving product pricing'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-listed-price')),
+          )
+          .enabled,
+      isFalse,
+    );
+    final ProductPricingDraft draft = submitted!;
+    pending.complete(
+      ProductPricingResult.fromCallable(<String, Object?>{
+        'auditId': draft.idempotencyKey,
+        'productId': draft.productId,
+        'pricing': <String, Object?>{
+          'listedPriceCentavos': draft.listedPriceCentavos,
+          'currency': 'MXN',
+          'priceMode': draft.priceMode,
+          'ivaTreatment': draft.ivaTreatment,
+          'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+        },
+        'replayed': false,
+      }, request: draft),
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('success is final before refresh and external pricing wins', (
+    WidgetTester tester,
+  ) async {
+    var loads = 0;
+    var mutations = 0;
+    const CatalogProduct external = CatalogProduct(
+      internalCode: 'PRD-COFFEE-001',
+      name: 'Coffee',
+      quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+      pricing: CatalogPricing(
+        listedPriceCentavos: 20000,
+        currency: 'MXN',
+        priceMode: 'iva-additional-on-invoice',
+        ivaTreatment: 'exempt',
+        ivaRateBasisPoints: null,
+      ),
+    );
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => _snapshot(loads++ == 0 ? _coffee : external),
+        createPricingId: () => 'pricing-key-1',
+        setProductPrice: (ProductPricingDraft draft) async {
+          mutations += 1;
+          return ProductPricingResult.fromCallable(<String, Object?>{
+            'auditId': draft.idempotencyKey,
+            'productId': draft.productId,
+            'pricing': <String, Object?>{
+              'listedPriceCentavos': draft.listedPriceCentavos,
+              'currency': 'MXN',
+              'priceMode': draft.priceMode,
+              'ivaTreatment': draft.ivaTreatment,
+              'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+            },
+            'replayed': false,
+          }, request: draft);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(mutations, 1);
+    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+    expect(find.text('Listed price: 200.00 MXN'), findsOneWidget);
+    expect(find.text('Price mode: IVA additional on invoice'), findsOneWidget);
+    expect(find.text('IVA treatment: Exempt'), findsOneWidget);
+    expect(find.text('IVA rate: Not required'), findsOneWidget);
+  });
+
+  testWidgets('pricing refresh failure keeps success without resubmission', (
+    WidgetTester tester,
+  ) async {
+    var loads = 0;
+    var mutations = 0;
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async {
+          loads += 1;
+          if (loads > 1) throw StateError('refresh failed');
+          return _snapshot(_coffee);
+        },
+        createPricingId: () => 'pricing-key-1',
+        setProductPrice: (ProductPricingDraft draft) async {
+          mutations += 1;
+          return ProductPricingResult.fromCallable(<String, Object?>{
+            'auditId': draft.idempotencyKey,
+            'productId': draft.productId,
+            'pricing': <String, Object?>{
+              'listedPriceCentavos': draft.listedPriceCentavos,
+              'currency': 'MXN',
+              'priceMode': draft.priceMode,
+              'ivaTreatment': draft.ivaTreatment,
+              'ivaRateBasisPoints': draft.ivaRateBasisPoints,
+            },
+            'replayed': false,
+          }, request: draft);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(mutations, 1);
+  });
+
+  testWidgets('pricing form remains usable with a narrow keyboard viewport', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      _authenticatedApp(
+        session: _administrator,
+        loader: (_) async => _snapshot(_coffee),
+        setProductPrice: (_) => throw const ProductPricingUncertainException(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final Finder configure = find.byKey(
+      const ValueKey<String>('configure-price-PRD-COFFEE-001'),
+    );
+    await tester.tap(configure);
+    await tester.pumpAndSettle();
+    await tester.binding.setSurfaceSize(const Size(320, 480));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 220);
+    await tester.pump();
+
+    expect(find.text('Listed price (MXN)'), findsOneWidget);
+    expect(find.text('Save price / IVA'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    tester.view.resetViewInsets();
+    await tester.binding.setSurfaceSize(null);
+  });
 
   testWidgets('stale error and disposed completion are discarded', (
     WidgetTester tester,

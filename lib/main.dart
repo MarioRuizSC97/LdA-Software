@@ -26,6 +26,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorLoader,
     this.emulatorCatalogLoader,
     this.emulatorProductCreationLoader,
+    this.emulatorProductPricingLoader,
     super.key,
   });
 
@@ -34,6 +35,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final EmulatorSessionGatewayLoader? emulatorLoader;
   final CatalogSnapshotLoader? emulatorCatalogLoader;
   final ProductCreationGatewayLoader? emulatorProductCreationLoader;
+  final ProductPricingGatewayLoader? emulatorProductPricingLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +52,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         productCreationGatewayLoader:
             emulatorProductCreationLoader ??
             DemoEmulatorBootstrap.initializeProductCreationGateway,
+        productPricingGatewayLoader:
+            emulatorProductPricingLoader ??
+            DemoEmulatorBootstrap.initializeProductPricingGateway,
       );
     }
     return const CatalogSetupApp();
@@ -61,12 +66,14 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     required this.loader,
     required this.catalogLoader,
     required this.productCreationGatewayLoader,
+    required this.productPricingGatewayLoader,
     super.key,
   });
 
   final EmulatorSessionGatewayLoader loader;
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader productCreationGatewayLoader;
+  final ProductPricingGatewayLoader productPricingGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -96,6 +103,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       retryLoader: _retry,
       catalogLoader: widget.catalogLoader,
       productCreationGatewayLoader: widget.productCreationGatewayLoader,
+      productPricingGatewayLoader: widget.productPricingGatewayLoader,
     ),
   );
 }

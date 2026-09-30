@@ -8,7 +8,9 @@ import '../auth/emulator_session.dart';
 import '../catalog/catalog_repository.dart';
 import '../catalog/firestore_catalog_repository.dart';
 import '../catalog/product_creation.dart';
+import '../catalog/product_pricing.dart';
 import 'emulator_product_creation_gateway.dart';
+import 'emulator_product_pricing_gateway.dart';
 
 enum EmulatorClientPlatform { android, web, unsupported }
 
@@ -192,6 +194,24 @@ class DemoEmulatorBootstrap {
     return createGateway();
   }
 
+  static Future<T> startProductPricing<T>({
+    required EmulatorClientPlatform platform,
+    required Future<void> Function(FirebaseOptions options) initializeApp,
+    required Future<void> Function(String host, int port) connectAuthEmulator,
+    required Future<void> Function(String host, int port)
+    connectFirestoreEmulator,
+    required Future<void> Function(String host, int port)
+    connectFunctionsEmulator,
+    required T Function() createGateway,
+  }) async {
+    final String host = _hostFor(platform);
+    await initializeApp(options);
+    await connectAuthEmulator(host, 9099);
+    await connectFirestoreEmulator(host, 8080);
+    await connectFunctionsEmulator(host, 5001);
+    return createGateway();
+  }
+
   static Future<EmulatorSessionGateway> initialize() async {
     late FirebaseApp app;
     late FirebaseAuth auth;
@@ -336,6 +356,70 @@ class DemoEmulatorBootstrap {
         expectedSession: session,
         sessionChecker: _firebaseActiveSessionChecker(auth),
         invoke: firebaseProductCreationCallable(functions),
+      ),
+    );
+  }
+
+  static Future<ProductPricingGateway> initializeProductPricingGateway(
+    EmulatorSession session,
+  ) async {
+    late FirebaseApp app;
+    late FirebaseAuth auth;
+    late FirebaseFirestore firestore;
+    late FirebaseFunctions functions;
+    return startProductPricing<ProductPricingGateway>(
+      platform: currentPlatform,
+      initializeApp: (FirebaseOptions explicitOptions) async {
+        app = await _initializeTrustedApp(explicitOptions);
+        auth = FirebaseAuth.instanceFor(app: app);
+        firestore = FirebaseFirestore.instanceFor(app: app);
+        functions = FirebaseFunctions.instanceFor(
+          app: app,
+          region: 'us-south1',
+        );
+      },
+      connectAuthEmulator: (String host, int port) {
+        final AuthEmulatorConnection connection = _authConnections.putIfAbsent(
+          app.name,
+          () => AuthEmulatorConnection(
+            (String emulatorHost, int emulatorPort) => auth.useAuthEmulator(
+              emulatorHost,
+              emulatorPort,
+              automaticHostMapping: false,
+            ),
+          ),
+        );
+        return connection.ensureConnected(host, port);
+      },
+      connectFirestoreEmulator: (String host, int port) {
+        final FirestoreEmulatorConnection connection = _firestoreConnections
+            .putIfAbsent(
+              app.name,
+              () => FirestoreEmulatorConnection((String host, int port) async {
+                firestore.useFirestoreEmulator(host, port);
+              }),
+            );
+        return connection.ensureConnected(host, port);
+      },
+      connectFunctionsEmulator: (String host, int port) {
+        final String key = '${app.name}|us-south1';
+        final FunctionsEmulatorConnection connection = _functionsConnections
+            .putIfAbsent(
+              key,
+              () => FunctionsEmulatorConnection((String host, int port) async {
+                functions.useFunctionsEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
+              }),
+            );
+        return connection.ensureConnected(host, port);
+      },
+      createGateway: () => EmulatorProductPricingGateway(
+        expectedSession: session,
+        sessionChecker: _firebaseActiveSessionChecker(auth),
+        invoke: firebaseProductPricingCallable(functions),
       ),
     );
   }
