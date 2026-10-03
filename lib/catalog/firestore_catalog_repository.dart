@@ -192,14 +192,27 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
     }
 
     final Map<String, String> branches = <String, String>{};
+    final Set<String> branchNames = <String>{};
     for (final CatalogDocument document in branchDocuments) {
       final String branchId = _parseBranchPath(document.path);
       final String branchName = _parseBranch(document.data);
-      if (branches[branchId] != null) {
+      if (branches[branchId] != null || !branchNames.add(branchName)) {
         throw const FormatException('duplicate branch');
       }
       branches[branchId] = branchName;
     }
+    final List<CatalogBranchChoice> branchChoices =
+        List<CatalogBranchChoice>.of(
+          branches.entries.map(
+            (MapEntry<String, String> branch) => CatalogBranchChoice(
+              branchId: branch.key,
+              branchName: branch.value,
+            ),
+          ),
+        )..sort(
+          (CatalogBranchChoice left, CatalogBranchChoice right) =>
+              left.branchId.compareTo(right.branchId),
+        );
 
     final Map<String, List<CatalogHolding>> holdings =
         <String, List<CatalogHolding>>{};
@@ -239,7 +252,7 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
         })
         .toList(growable: false);
     _sortItems(items);
-    return CatalogSnapshot(items);
+    return CatalogSnapshot(items, branchChoices: branchChoices);
   }
 
   Future<T> _readWithActiveSession<T>(Future<T> Function() read) async {

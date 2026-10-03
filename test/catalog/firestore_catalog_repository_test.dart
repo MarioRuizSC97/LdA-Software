@@ -117,6 +117,7 @@ void main() {
       expect(catalog.items.single.product.internalCode, 'DEMO-RIBBON');
       expect(catalog.items.single.holdings.single.quantityScaled, 0);
       expect(catalog.items.single.holdings.single.isOutOfStock, isTrue);
+      expect(catalog.branchChoices, isEmpty);
     });
 
     test('rejects an unvalidated seller branch before reads', () async {
@@ -317,6 +318,134 @@ void main() {
             .holdings,
         isEmpty,
       );
+    });
+
+    test(
+      'exposes every branch as a choice, including branches without stock',
+      () async {
+        final _FakeCatalogReadSource source = _FakeCatalogReadSource(
+          collections: <String, List<CatalogDocument>>{
+            'products': <CatalogDocument>[
+              CatalogDocument(path: 'products/DEMO-RIBBON', data: _product()),
+            ],
+            'branches': const <CatalogDocument>[
+              CatalogDocument(
+                path: 'branches/branch-south',
+                data: <String, Object?>{
+                  'name': 'South Demo Branch',
+                  'demoSeedVersion': 1,
+                },
+              ),
+              CatalogDocument(
+                path: 'branches/branch-north',
+                data: <String, Object?>{
+                  'name': 'North Demo Branch',
+                  'demoSeedVersion': 1,
+                },
+              ),
+              CatalogDocument(
+                path: 'branches/branch-east',
+                data: <String, Object?>{
+                  'name': 'East Demo Branch',
+                  'demoSeedVersion': 1,
+                },
+              ),
+            ],
+          },
+          collectionGroups: <String, List<CatalogDocument>>{
+            'stock': <CatalogDocument>[
+              CatalogDocument(
+                path: 'branches/branch-north/stock/DEMO-RIBBON',
+                data: _stock(quantityScaled: 425),
+              ),
+            ],
+          },
+        );
+
+        final CatalogSnapshot catalog =
+            await FirestoreCatalogRepository.administrator(
+              source: source,
+              session: _administrator,
+              sessionChecker: () async => _administrator,
+            ).fetchCatalog();
+
+        expect(source.calls, <String>[
+          'list:products',
+          'list:branches',
+          'group:stock',
+        ]);
+        expect(
+          catalog.branchChoices
+              .map((choice) => choice.branchId)
+              .toList(growable: false),
+          <String>['branch-east', 'branch-north', 'branch-south'],
+        );
+        expect(
+          catalog.branchChoices
+              .map((choice) => choice.branchName)
+              .toList(growable: false),
+          <String>[
+            'East Demo Branch',
+            'North Demo Branch',
+            'South Demo Branch',
+          ],
+        );
+      },
+    );
+
+    test('rejects duplicate branch identifiers or names', () async {
+      for (final List<CatalogDocument> branches in <List<CatalogDocument>>[
+        const <CatalogDocument>[
+          CatalogDocument(
+            path: 'branches/branch-north',
+            data: <String, Object?>{
+              'name': 'North Demo Branch',
+              'demoSeedVersion': 1,
+            },
+          ),
+          CatalogDocument(
+            path: 'branches/branch-north-2',
+            data: <String, Object?>{
+              'name': 'North Demo Branch',
+              'demoSeedVersion': 1,
+            },
+          ),
+        ],
+        const <CatalogDocument>[
+          CatalogDocument(
+            path: 'branches/branch-north',
+            data: <String, Object?>{
+              'name': 'North Demo Branch',
+              'demoSeedVersion': 1,
+            },
+          ),
+          CatalogDocument(
+            path: 'branches/branch-north',
+            data: <String, Object?>{
+              'name': 'North Branch Duplicate',
+              'demoSeedVersion': 1,
+            },
+          ),
+        ],
+      ]) {
+        final _FakeCatalogReadSource source = _FakeCatalogReadSource(
+          collections: <String, List<CatalogDocument>>{
+            'products': <CatalogDocument>[
+              CatalogDocument(path: 'products/DEMO-RIBBON', data: _product()),
+            ],
+            'branches': branches,
+          },
+        );
+
+        await expectLater(
+          FirestoreCatalogRepository.administrator(
+            source: source,
+            session: _administrator,
+            sessionChecker: () async => _administrator,
+          ).fetchCatalog(),
+          throwsA(isA<CatalogRepositoryUnavailable>()),
+        );
+      }
     });
   });
 
