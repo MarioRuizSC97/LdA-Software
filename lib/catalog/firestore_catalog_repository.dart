@@ -251,8 +251,45 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
           return CatalogItem(product: product, holdings: productHoldings);
         })
         .toList(growable: false);
+    // Catch only the protected collection transport read, never session checks
+    // or validation. Even an outage must pass the post-await authority fence.
+    await _requireActiveSession();
+    List<CatalogDocument> costDocuments = const <CatalogDocument>[];
+    bool costsAvailable = true;
+    try {
+      costDocuments = await _source.listCollection('costs');
+    } on FirebaseException catch (error) {
+      if (error.plugin != 'cloud_firestore' ||
+          !const <String>{
+            'unavailable',
+            'deadline-exceeded',
+          }.contains(error.code)) {
+        rethrow;
+      }
+      costsAvailable = false;
+    }
+    await _requireActiveSession();
+    final Map<String, CatalogProductCost> costs =
+        <String, CatalogProductCost>{};
+    for (final CatalogDocument document in costDocuments) {
+      final CatalogProductCost cost = CatalogProductCost.fromFirestore(
+        document.path,
+        document.data,
+      );
+      if (!products.containsKey(cost.productId) ||
+          costs.containsKey(cost.productId)) {
+        throw const FormatException('orphan or duplicate cost');
+      }
+      costs[cost.productId] = cost;
+    }
     _sortItems(items);
-    return CatalogSnapshot(items, branchChoices: branchChoices);
+    await _requireActiveSession();
+    return CatalogSnapshot(
+      items,
+      branchChoices: branchChoices,
+      costs: costs,
+      costsAvailable: costsAvailable,
+    );
   }
 
   Future<T> _readWithActiveSession<T>(Future<T> Function() read) async {
@@ -275,12 +312,16 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
 }
 
 final RegExp _branchIdPattern = RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$');
+// Same canonical identifier contract as inventory.js ID_PATTERN.
+final RegExp _movementIdPattern = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$');
 const Set<String> _branchFields = <String>{'name', 'demoSeedVersion'};
 const Set<String> _stockFields = <String>{
   'quantityScaled',
   'unit',
   'precision',
   'demoSeedVersion',
+  'updatedAt',
+  'lastMovementId',
 };
 
 CatalogProduct _parseProduct(CatalogDocument document) {
@@ -332,6 +373,19 @@ _StockPath _parseStockPath(String path) {
 
 _StockData _parseStock(Map<String, Object?> data) {
   _requireOnlyFields(data, _stockFields);
+  // Legacy/seed projections omit these fields; successful intake writes both
+  // nonnull. Validate SDK values, but never expose metadata in the read model.
+  if (data.containsKey('updatedAt') && data['updatedAt'] is! Timestamp) {
+    throw const FormatException(
+      'stock updatedAt must be a Firestore timestamp',
+    );
+  }
+  if (data.containsKey('lastMovementId')) {
+    final Object? movementId = data['lastMovementId'];
+    if (movementId is! String || !_movementIdPattern.hasMatch(movementId)) {
+      throw const FormatException('stock lastMovementId is invalid');
+    }
+  }
   final Object? quantity = data['quantityScaled'];
   final QuantitySpec spec = QuantitySpec.fromFirestore(<String, Object?>{
     'unit': data['unit'],

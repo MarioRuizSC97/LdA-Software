@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/firestore_catalog_repository.dart';
@@ -83,7 +85,502 @@ Map<String, Object?> _stock({
   'demoSeedVersion': 1,
 };
 
+// inventory.js transaction.set(stockReference) replaces the projection with
+// these five fields. Firestore decodes the server Date as an SDK Timestamp.
+Map<String, Object?> _intakeStock() => <String, Object?>{
+  'quantityScaled': 425,
+  'unit': 'meter',
+  'precision': 2,
+  'updatedAt': Timestamp(1790208000, 123000000),
+  'lastMovementId': '550e8400-e29b-41d4-a716-446655440000',
+};
+
+_FakeCatalogReadSource _intakeSource(
+  InventoryRole role,
+  List<CatalogDocument> stock,
+) => _FakeCatalogReadSource(
+  collections: <String, List<CatalogDocument>>{
+    if (role == InventoryRole.seller) 'branches/branch-north/stock': stock,
+    if (role == InventoryRole.administrator) ...<String, List<CatalogDocument>>{
+      'products': <CatalogDocument>[
+        CatalogDocument(path: 'products/DEMO-RIBBON', data: _product()),
+      ],
+      'branches': const <CatalogDocument>[
+        CatalogDocument(
+          path: 'branches/branch-north',
+          data: <String, Object?>{'name': 'North Demo Branch'},
+        ),
+      ],
+    },
+  },
+  documents: <String, CatalogDocument>{
+    'products/DEMO-RIBBON': CatalogDocument(
+      path: 'products/DEMO-RIBBON',
+      data: _product(),
+    ),
+  },
+  collectionGroups: <String, List<CatalogDocument>>{
+    if (role == InventoryRole.administrator) 'stock': stock,
+  },
+);
+
+FirestoreCatalogRepository _intakeRepository(
+  InventoryRole role,
+  _FakeCatalogReadSource source,
+) => role == InventoryRole.seller
+    ? FirestoreCatalogRepository.seller(
+        source: source,
+        session: _seller,
+        sessionChecker: () async => _seller,
+      )
+    : FirestoreCatalogRepository.administrator(
+        source: source,
+        session: _administrator,
+        sessionChecker: () async => _administrator,
+      );
+
+Map<String, Object?> _cost() => <String, Object?>{
+  'latestUnitCostCentavos': 0,
+  'currency': 'MXN',
+  'sourceEntryId': 'A_entry-1',
+  'updatedAt': Timestamp(0, 0),
+};
+
 void main() {
+  group('administrator latest unit cost metadata', () {
+    _FakeCatalogReadSource sourceFor(
+      List<CatalogDocument> costs, {
+      void Function(String)? onRead,
+    }) => _FakeCatalogReadSource(
+      collections: <String, List<CatalogDocument>>{
+        'products': <CatalogDocument>[
+          CatalogDocument(path: 'products/DEMO-RIBBON', data: _product()),
+        ],
+        'costs': costs,
+        'branches': const <CatalogDocument>[
+          CatalogDocument(
+            path: 'branches/branch-north',
+            data: <String, Object?>{'name': 'North Demo Branch'},
+          ),
+        ],
+      },
+      collectionGroups: <String, List<CatalogDocument>>{
+        'stock': <CatalogDocument>[
+          CatalogDocument(
+            path: 'branches/branch-north/stock/DEMO-RIBBON',
+            data: _intakeStock(),
+          ),
+        ],
+      },
+      onListCollection: onRead,
+    );
+    CatalogDocument document(
+      Map<String, Object?> data, [
+      String path = 'costs/DEMO-RIBBON',
+    ]) => CatalogDocument(path: path, data: data);
+
+    test(
+      'one global read maps exact zero and safe upper bound immutably',
+      () async {
+        for (final int cents in <int>[0, 9007199254740991]) {
+          final source = sourceFor(<CatalogDocument>[
+            document(<String, Object?>{
+              ..._cost(),
+              'latestUnitCostCentavos': cents,
+            }),
+          ]);
+          final catalog = await _intakeRepository(
+            InventoryRole.administrator,
+            source,
+          ).fetchCatalog();
+          expect(source.calls, <String>[
+            'list:products',
+            'list:branches',
+            'group:stock',
+            'list:costs',
+          ]);
+          expect(catalog.costsAvailable, isTrue);
+          final cost = catalog.costs['DEMO-RIBBON']!;
+          expect(cost.productId, 'DEMO-RIBBON');
+          expect(cost.latestUnitCostCentavos, cents);
+          expect(cost.currency, 'MXN');
+          expect(cost.sourceEntryId, 'A_entry-1');
+          expect(cost.updatedAt, Timestamp(0, 0));
+          expect(() => catalog.costs.clear(), throwsUnsupportedError);
+        }
+      },
+    );
+    test('successful absence differs from transient unavailable', () async {
+      for (final String? code in <String?>[
+        null,
+        'unavailable',
+        'deadline-exceeded',
+      ]) {
+        bool refreshed = false;
+        final source = sourceFor(
+          <CatalogDocument>[document(_cost())],
+          onRead: (String path) {
+            if (refreshed && path == 'costs' && code != null) {
+              throw FirebaseException(plugin: 'cloud_firestore', code: code);
+            }
+          },
+        );
+        final repository = _intakeRepository(
+          InventoryRole.administrator,
+          source,
+        );
+        expect((await repository.fetchCatalog()).costs, hasLength(1));
+        refreshed = true;
+        source.collections['costs'] = <CatalogDocument>[];
+        final catalog = await repository.fetchCatalog();
+        expect(catalog.items, hasLength(1));
+        expect(catalog.items.single.holdings.single.quantityScaled, 425);
+        expect(catalog.branchChoices.single.branchId, 'branch-north');
+        expect(catalog.items.single.product.toSafeFields(), _product());
+        expect(catalog.costs, isEmpty);
+        expect(catalog.costsAvailable, code == null);
+      }
+    });
+    test('malformed private documents always fail closed', () async {
+      final invalid = <CatalogDocument>[
+        for (final String key in _cost().keys)
+          document(Map<String, Object?>.of(_cost())..remove(key)),
+        document(<String, Object?>{..._cost(), 'extra': null}),
+        for (final Object? value in <Object?>[
+          null,
+          -1,
+          9007199254740992,
+          1.0,
+          '0',
+        ])
+          document(<String, Object?>{
+            ..._cost(),
+            'latestUnitCostCentavos': value,
+          }),
+        for (final Object? value in <Object?>[null, 'USD', 'mxn'])
+          document(<String, Object?>{..._cost(), 'currency': value}),
+        for (final Object? value in <Object?>[
+          null,
+          1,
+          '',
+          '_entry',
+          'entry/id',
+          ' entry',
+          'entry\n',
+          List<String>.filled(129, 'A').join(),
+        ])
+          document(<String, Object?>{..._cost(), 'sourceEntryId': value}),
+        for (final Object? value in <Object?>[
+          null,
+          0,
+          'timestamp',
+          DateTime.utc(2026),
+        ])
+          document(<String, Object?>{..._cost(), 'updatedAt': value}),
+        for (final String path in <String>[
+          'other/DEMO-RIBBON',
+          'costs/DEMO-RIBBON/nested/id',
+          'costs/',
+          'costs/demo-ribbon',
+          'costs/DEMO-ORPHAN',
+        ])
+          document(_cost(), path),
+      ];
+      for (final List<CatalogDocument> documents in <List<CatalogDocument>>[
+        for (final CatalogDocument cost in invalid) <CatalogDocument>[cost],
+        <CatalogDocument>[document(_cost()), document(_cost())],
+      ]) {
+        await expectLater(
+          _intakeRepository(
+            InventoryRole.administrator,
+            sourceFor(documents),
+          ).fetchCatalog(),
+          throwsA(isA<CatalogRepositoryUnavailable>()),
+        );
+      }
+    });
+    test(
+      'nontransport errors and session-checker errors never degrade',
+      () async {
+        for (final Object error in <Object>[
+          StateError('unknown'),
+          for (final String code in <String>[
+            'unauthenticated',
+            'permission-denied',
+            'internal',
+            'unknown',
+          ])
+            FirebaseException(plugin: 'cloud_firestore', code: code),
+          FirebaseException(plugin: 'firebase_auth', code: 'unavailable'),
+        ]) {
+          await expectLater(
+            _intakeRepository(
+              InventoryRole.administrator,
+              sourceFor(
+                <CatalogDocument>[],
+                onRead: (String path) {
+                  if (path == 'costs') throw error;
+                },
+              ),
+            ).fetchCatalog(),
+            throwsA(isA<CatalogRepositoryUnavailable>()),
+          );
+        }
+        final source = sourceFor(<CatalogDocument>[]);
+        await expectLater(
+          FirestoreCatalogRepository.administrator(
+            source: source,
+            session: _administrator,
+            sessionChecker: () async {
+              if (source.calls.contains('group:stock')) {
+                throw FirebaseException(
+                  plugin: 'cloud_firestore',
+                  code: 'unavailable',
+                );
+              }
+              return _administrator;
+            },
+          ).fetchCatalog(),
+          throwsA(isA<CatalogRepositoryUnavailable>()),
+        );
+        expect(source.calls, isNot(contains('list:costs')));
+      },
+    );
+    test(
+      'late success and outage reject logout role and actor drift',
+      () async {
+        for (final EmulatorSession? replacement in <EmulatorSession?>[
+          null,
+          _seller,
+          const EmulatorSession(
+            userId: 'admin-1',
+            email: 'admin@demo.invalid',
+            role: InventoryRole.administrator,
+            branchId: 'branch-north',
+          ),
+          const EmulatorSession(
+            userId: 'other',
+            email: 'other@demo.invalid',
+            role: InventoryRole.administrator,
+          ),
+        ]) {
+          for (final bool outage in <bool>[false, true]) {
+            EmulatorSession? active = _administrator;
+            final source = sourceFor(
+              <CatalogDocument>[document(_cost())],
+              onRead: (String path) {
+                if (path != 'costs') return;
+                active = replacement;
+                if (outage) {
+                  throw FirebaseException(
+                    plugin: 'cloud_firestore',
+                    code: 'unavailable',
+                  );
+                }
+              },
+            );
+            await expectLater(
+              FirestoreCatalogRepository.administrator(
+                source: source,
+                session: _administrator,
+                sessionChecker: () async => active,
+              ).fetchCatalog(),
+              throwsA(isA<CatalogRepositoryUnavailable>()),
+            );
+          }
+        }
+      },
+    );
+    test('seller never reads costs or receives private metadata', () async {
+      final source = _intakeSource(InventoryRole.seller, <CatalogDocument>[]);
+      final catalog = await _intakeRepository(
+        InventoryRole.seller,
+        source,
+      ).fetchCatalog();
+      expect(source.calls, <String>['list:branches/branch-north/stock']);
+      expect(catalog.costs, isEmpty);
+      expect(catalog.costsAvailable, isFalse);
+    });
+  });
+  group('server-written intake stock', () {
+    for (final InventoryRole role in InventoryRole.values) {
+      test(
+        '${role.name} preserves optional metadata and identifier bounds',
+        () async {
+          final Map<String, Object?> legacy = <String, Object?>{
+            'quantityScaled': 0,
+            'unit': 'meter',
+            'precision': 2,
+          };
+          for (final Map<String, Object?> data in <Map<String, Object?>>[
+            legacy,
+            _stock(),
+            <String, Object?>{...legacy, 'updatedAt': Timestamp(0, 0)},
+            <String, Object?>{...legacy, 'lastMovementId': 'A'},
+            <String, Object?>{
+              ..._intakeStock(),
+              'quantityScaled': 9007199254740991,
+              'lastMovementId': 'A${List<String>.filled(127, '_').join()}',
+            },
+          ]) {
+            final CatalogSnapshot catalog = await _intakeRepository(
+              role,
+              _intakeSource(role, <CatalogDocument>[
+                CatalogDocument(
+                  path: 'branches/branch-north/stock/DEMO-RIBBON',
+                  data: data,
+                ),
+              ]),
+            ).fetchCatalog();
+            expect(
+              catalog.items.single.holdings.single.quantityScaled,
+              data['quantityScaled'],
+            );
+          }
+        },
+      );
+
+      test(
+        '${role.name} rejects invalid metadata and protected fields',
+        () async {
+          final List<Map<String, Object?>> invalid = <Map<String, Object?>>[
+            for (final Object? value in <Object?>[
+              null,
+              '2026-09-24T00:00:00Z',
+              1790208000,
+              DateTime.utc(2026),
+              <String, Object?>{'seconds': 1790208000, 'nanoseconds': 0},
+            ])
+              <String, Object?>{..._intakeStock(), 'updatedAt': value},
+            for (final Object? value in <Object?>[
+              null,
+              1,
+              <String, Object?>{'id': 'movement-1'},
+              '',
+              '_movement',
+              '-movement',
+              'movement/id',
+              ' movement',
+              'movement ',
+              'movement\n',
+              List<String>.filled(129, 'A').join(),
+            ])
+              <String, Object?>{..._intakeStock(), 'lastMovementId': value},
+            for (final String field in <String>[
+              'actorId',
+              'createdBy',
+              'unitCostCentavos',
+              'cost',
+              'unknown',
+            ])
+              <String, Object?>{..._intakeStock(), field: 'protected'},
+            <String, Object?>{..._intakeStock(), 'quantityScaled': -1},
+            <String, Object?>{
+              ..._intakeStock(),
+              'quantityScaled': 9007199254740992,
+            },
+            <String, Object?>{..._intakeStock(), 'quantityScaled': 425.0},
+            <String, Object?>{..._intakeStock(), 'unit': 'piece'},
+            <String, Object?>{..._intakeStock(), 'precision': 3},
+          ];
+          for (final Map<String, Object?> data in invalid) {
+            await expectLater(
+              _intakeRepository(
+                role,
+                _intakeSource(role, <CatalogDocument>[
+                  CatalogDocument(
+                    path: 'branches/branch-north/stock/DEMO-RIBBON',
+                    data: data,
+                  ),
+                ]),
+              ).fetchCatalog(),
+              throwsA(isA<CatalogRepositoryUnavailable>()),
+              reason: 'Invalid server projection: $data',
+            );
+          }
+        },
+      );
+
+      test(
+        '${role.name} retains stock path and duplicate guards with metadata',
+        () async {
+          for (final List<String> paths in <List<String>>[
+            <String>['branches/branch-south/stock/DEMO-RIBBON'],
+            <String>['branches/branch-north/stock/DEMO-MISSING'],
+            <String>['other/branch-north/stock/DEMO-RIBBON'],
+            <String>[
+              'branches/branch-north/stock/DEMO-RIBBON',
+              'branches/branch-north/stock/DEMO-RIBBON',
+            ],
+          ]) {
+            final _FakeCatalogReadSource source = _intakeSource(
+              role,
+              paths
+                  .map(
+                    (String path) =>
+                        CatalogDocument(path: path, data: _intakeStock()),
+                  )
+                  .toList(),
+            );
+            await expectLater(
+              _intakeRepository(role, source).fetchCatalog(),
+              throwsA(isA<CatalogRepositoryUnavailable>()),
+            );
+            if (role == InventoryRole.seller &&
+                !paths.any((String path) => path.endsWith('DEMO-MISSING'))) {
+              expect(source.calls, <String>[
+                'list:branches/branch-north/stock',
+              ]);
+            }
+          }
+        },
+      );
+
+      test('${role.name} loads server-written intake stock safely', () async {
+        final _FakeCatalogReadSource source = _intakeSource(
+          role,
+          <CatalogDocument>[
+            CatalogDocument(
+              path: 'branches/branch-north/stock/DEMO-RIBBON',
+              data: _intakeStock(),
+            ),
+          ],
+        );
+        final CatalogSnapshot catalog = await _intakeRepository(
+          role,
+          source,
+        ).fetchCatalog();
+        expect(catalog.items, hasLength(1));
+        final CatalogHolding holding = catalog.items.single.holdings.single;
+        expect(holding.branchId, 'branch-north');
+        expect(holding.quantityScaled, 425);
+        expect(
+          holding.branchName,
+          role == InventoryRole.seller ? null : 'North Demo Branch',
+        );
+        expect(catalog.items.single.product.toSafeFields(), _product());
+        expect(
+          catalog.branchChoices,
+          role == InventoryRole.seller ? isEmpty : hasLength(1),
+        );
+        expect(
+          source.calls,
+          role == InventoryRole.seller
+              ? <String>[
+                  'list:branches/branch-north/stock',
+                  'get:products/DEMO-RIBBON',
+                ]
+              : <String>[
+                  'list:products',
+                  'list:branches',
+                  'group:stock',
+                  'list:costs',
+                ],
+        );
+      });
+    }
+  });
+
   group('seller catalog', () {
     test('lists only assigned stock then gets products individually', () async {
       final _FakeCatalogReadSource source = _FakeCatalogReadSource(
@@ -302,6 +799,7 @@ void main() {
         'list:products',
         'list:branches',
         'group:stock',
+        'list:costs',
       ]);
       expect(catalog.items, hasLength(2));
       expect(
@@ -373,6 +871,7 @@ void main() {
           'list:products',
           'list:branches',
           'group:stock',
+          'list:costs',
         ]);
         expect(
           catalog.branchChoices

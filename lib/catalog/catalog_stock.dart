@@ -1,4 +1,7 @@
 import 'catalog_product.dart';
+import 'catalog_product_cost.dart';
+
+export 'catalog_product_cost.dart';
 
 const int maxSafeScaledQuantity = 9007199254740991;
 
@@ -44,10 +47,20 @@ class CatalogSnapshot {
   CatalogSnapshot(
     List<CatalogItem> items, {
     List<CatalogBranchChoice> branchChoices = const <CatalogBranchChoice>[],
+    Map<String, CatalogProductCost> costs =
+        const <String, CatalogProductCost>{},
+    this.costsAvailable = false,
   }) : items = List<CatalogItem>.unmodifiable(items),
+       costs = Map<String, CatalogProductCost>.unmodifiable(costs),
        branchChoices = List<CatalogBranchChoice>.unmodifiable(branchChoices);
 
   final List<CatalogItem> items;
+
+  /// Administrator-only global latest unit costs. A loaded empty map means
+  /// no recorded cost; unavailable costs always have an empty map. For sellers
+  /// the empty map and false availability mean not applicable.
+  final Map<String, CatalogProductCost> costs;
+  final bool costsAvailable;
 
   /// Administrator-only branch choices covering every existing branch,
   /// including branches without any holdings or stock documents. Seller
