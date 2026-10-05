@@ -1,17 +1,29 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../auth/emulator_session.dart';
+import '../firebase/emulator_stock_intake_gateway.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
 import 'product_qr.dart';
+import 'stock_intake.dart';
 
 typedef CatalogSnapshotLoader = Future<CatalogSnapshot> Function(
   EmulatorSession session,
 );
 typedef ProductPricingDraftLookup = ProductPricingDraft? Function(
   String productId,
+);
+typedef StockIntakeSubmit = Future<StockIntakeResult> Function(
+  StockIntakeDraft draft,
+);
+typedef StockIntakeIdFactory = String Function();
+typedef StockIntakeDraftLookup = StockIntakeDraft? Function(
+  String productId,
+  String branchId,
 );
 
 class CatalogPage extends StatefulWidget {
@@ -106,6 +118,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createPricingId,
     this.unresolvedPricingDrafts = const <ProductPricingDraft>[],
     this.unresolvedPricingDraftForProduct,
+    this.submitStockIntake,
+    this.createIntakeId,
+    this.unresolvedIntakeDraftFor,
     super.key,
   });
 
@@ -119,6 +134,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final ProductPricingIdFactory? createPricingId;
   final List<ProductPricingDraft> unresolvedPricingDrafts;
   final ProductPricingDraftLookup? unresolvedPricingDraftForProduct;
+  final StockIntakeSubmit? submitStockIntake;
+  final StockIntakeIdFactory? createIntakeId;
+  final StockIntakeDraftLookup? unresolvedIntakeDraftFor;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -128,13 +146,20 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _unit = TextEditingController();
-  final TextEditingController _precision = TextEditingController();
   final TextEditingController _listedPrice = TextEditingController();
   final TextEditingController _ivaRate = TextEditingController();
+  final TextEditingController _intakeQuantity = TextEditingController();
+  final TextEditingController _intakeCost = TextEditingController();
   CatalogSnapshot? _snapshot;
   ProductCreationCoordinator? _creationCoordinator;
+  final Map<String, Timer> _successTimers = <String, Timer>{};
   ProductCreationResult? _creationSuccess;
+  ProductCreationDraft? _successfulCreationDraft;
   String? _creationError;
+  String? _creationNameError;
+  String? _creationUnitError;
+  String? _creationPrecisionError;
+  int? _creationPrecision;
   bool _creationVisible = false;
   bool _creationPending = false;
   bool _creationUncertain = false;
@@ -143,16 +168,32 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   ProductPricingResult? _pricingSuccess;
   String? _pricingError;
   String? _listedPriceError;
+  String? _priceModeError;
+  String? _ivaTreatmentError;
   String? _ivaRateError;
   String? _priceMode;
   String? _ivaTreatment;
   bool _pricingPending = false;
   bool _pricingUncertain = false;
+  CatalogProduct? _intakeProduct;
+  StockIntakeDraft? _lockedIntakeDraft;
+  StockIntakeResult? _intakeSuccess;
+  String? _intakeError;
+  String? _intakeBranchError;
+  String? _intakeQuantityError;
+  String? _intakeCostError;
+  String? _intakeBranch;
+  bool _intakePending = false;
+  bool _intakeUncertain = false;
   bool _loading = true;
   bool _failed = false;
   int _generation = 0;
   int _creationGeneration = 0;
+  // Navigation intent outlives visible forms; it only owns delayed handoffs,
+  // never mutation completion, stored drafts, or idempotency keys.
+  int _presentationRevision = 0;
   int _pricingGeneration = 0;
+  int _intakeGeneration = 0;
 
   @override
   void initState() {
@@ -166,41 +207,99 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     super.didUpdateWidget(oldWidget);
     final bool sessionChanged =
         _sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session);
+    final ProductCreationCoordinator? coordinator = _creationCoordinator;
+    // The shell freezes our request before token refresh can rebuild this
+    // page. That matching pending echo is not an uncertain restored request.
+    final bool selfOwnedPendingDraft =
+        !sessionChanged &&
+        oldWidget.createProduct == widget.createProduct &&
+        _creationPending &&
+        coordinator != null &&
+        coordinator.isPending &&
+        coordinator.lockedDraft != null &&
+        widget.unresolvedProductDraft == coordinator.lockedDraft;
+    // A later token frame can observe store resolution during the refresh
+    // await. Only our accepted success may consume that exact old draft's null
+    // echo; clearing an unresolved or pending foreign request stays authoritative.
+    final bool selfOwnedResolvedDraft =
+        !sessionChanged &&
+        oldWidget.createProduct == widget.createProduct &&
+        !_creationPending &&
+        coordinator != null &&
+        !coordinator.isPending &&
+        !coordinator.isLocked &&
+        _successfulCreationDraft != null &&
+        oldWidget.unresolvedProductDraft == _successfulCreationDraft &&
+        widget.unresolvedProductDraft == null;
     if (sessionChanged ||
         oldWidget.createProduct != widget.createProduct ||
-        oldWidget.unresolvedProductDraft != widget.unresolvedProductDraft) {
+        (oldWidget.unresolvedProductDraft != widget.unresolvedProductDraft &&
+            !selfOwnedPendingDraft &&
+            !selfOwnedResolvedDraft)) {
       _creationGeneration += 1;
       _creationVisible = false;
       _creationPending = false;
       _creationUncertain = false;
       _creationError = null;
+      _cancelSuccessNotice('creation');
       _creationSuccess = null;
+      _successfulCreationDraft = null;
       _configureCreation();
     }
     if (sessionChanged || oldWidget.setProductPrice != widget.setProductPrice) {
       _pricingGeneration += 1;
       _clearPricingPresentation();
     }
+    if (sessionChanged ||
+        oldWidget.submitStockIntake != widget.submitStockIntake) {
+      _intakeGeneration += 1;
+      _clearIntakePresentation();
+    }
     if (sessionChanged) _requestCatalog();
+  }
+
+  void _cancelSuccessNotice(String category) {
+    _successTimers.remove(category)?.cancel();
+  }
+
+  // Presentation-only ownership: never changes requests or handoff authority.
+  void _expireSuccessNotice(String category, VoidCallback clear) {
+    _cancelSuccessNotice(category);
+    late final Timer timer;
+    timer = Timer(const Duration(seconds: 10), () {
+      if (!mounted || !identical(_successTimers[category], timer)) return;
+      _successTimers.remove(category);
+      setState(clear);
+    });
+    _successTimers[category] = timer;
   }
 
   @override
   void dispose() {
+    for (final Timer timer in _successTimers.values) {
+      timer.cancel();
+    }
+    _successTimers.clear();
     _generation += 1;
     _creationGeneration += 1;
     _pricingGeneration += 1;
+    _intakeGeneration += 1;
     _name.dispose();
     _unit.dispose();
-    _precision.dispose();
     _listedPrice.dispose();
     _ivaRate.dispose();
+    _intakeQuantity.dispose();
+    _intakeCost.dispose();
     super.dispose();
   }
 
   void _configureCreation() {
     _name.clear();
     _unit.clear();
-    _precision.clear();
+    _creationPrecision = null;
+    _creationNameError = null;
+    _creationUnitError = null;
+    _creationPrecisionError = null;
     final ProductCreationSubmit? submit = widget.createProduct;
     if (widget.session.role != InventoryRole.administrator || submit == null) {
       _creationCoordinator = null;
@@ -215,7 +314,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     if (unresolved != null) {
       _name.text = unresolved.name;
       _unit.text = unresolved.unit;
-      _precision.text = unresolved.precision.toString();
+      _creationPrecision = unresolved.precision;
       _creationVisible = true;
       _creationUncertain = true;
       _creationError =
@@ -224,10 +323,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _clearPricingPresentation() {
+    _cancelSuccessNotice('pricing');
+    _pricingSuccess = null;
     _pricingProduct = null;
     _lockedPricingDraft = null;
     _pricingError = null;
     _listedPriceError = null;
+    _priceModeError = null;
+    _ivaTreatmentError = null;
     _ivaRateError = null;
     _priceMode = null;
     _ivaTreatment = null;
@@ -267,6 +370,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   void _lockPricingDraft(ProductPricingDraft draft) {
     _listedPriceError = null;
+    _priceModeError = null;
+    _ivaTreatmentError = null;
     _ivaRateError = null;
     _lockedPricingDraft = draft;
     _listedPrice.text = draft.listedPriceMxn;
@@ -278,7 +383,47 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         'The outcome is unknown. Retry the same request before editing.';
   }
 
-  Future<void> _requestCatalog({bool initial = false}) async {
+  void _clearIntakePresentation() {
+    _cancelSuccessNotice('intake');
+    _intakeSuccess = null;
+    _intakeProduct = null;
+    _lockedIntakeDraft = null;
+    _intakeError = null;
+    _intakeBranchError = null;
+    _intakeQuantityError = null;
+    _intakeCostError = null;
+    _intakeBranch = null;
+    _intakePending = false;
+    _intakeUncertain = false;
+    _intakeQuantity.clear();
+    _intakeCost.clear();
+  }
+
+  StockIntakeDraft? _unresolvedIntakeDraftFor(
+    String productId,
+    String branchId,
+  ) {
+    final StockIntakeDraftLookup? liveLookup = widget.unresolvedIntakeDraftFor;
+    if (liveLookup == null) return null;
+    return liveLookup(productId, branchId);
+  }
+
+  void _lockIntakeDraft(StockIntakeDraft draft) {
+    _intakeBranchError = null;
+    _intakeQuantityError = null;
+    _intakeCostError = null;
+    _lockedIntakeDraft = draft;
+    _intakeBranch = draft.branchId;
+    _intakeQuantity.text = draft.quantity;
+    _intakeCost.text = draft.unitCostMxn;
+    _intakeUncertain = true;
+    _intakeError =
+        'The outcome is unknown. Retry the same request before editing.';
+  }
+
+  /// Loads the catalog and returns the accepted snapshot, or null when the
+  /// load failed or a newer request or disposal superseded it.
+  Future<CatalogSnapshot?> _requestCatalog({bool initial = false}) async {
     final int generation = ++_generation;
     if (initial) {
       _snapshot = null;
@@ -297,19 +442,21 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         widget.session,
       );
       _validateCatalogSnapshot(snapshot, widget.session);
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) return null;
       setState(() {
         _restorePricingDraft(snapshot);
         _snapshot = snapshot;
         _loading = false;
       });
+      return snapshot;
     } catch (_) {
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) return null;
       setState(() {
         _snapshot = null;
         _loading = false;
         _failed = true;
       });
+      return null;
     }
   }
 
@@ -339,6 +486,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
               _PricingSuccess(result: result),
+            if (_intakeSuccess case final StockIntakeResult result)
+              _IntakeSuccess(result: result),
             if (_creationCoordinator != null)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
@@ -348,6 +497,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   ? _creationForm()
                   : _pricingProduct != null
                   ? _pricingForm()
+                  : _intakeProduct != null
+                  ? _intakeForm()
                   : _catalogBody(),
             ),
           ],
@@ -357,10 +508,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _showCreation() {
+    _presentationRevision += 1;
     setState(() => _creationVisible = true);
   }
 
   void _closeCreation() {
+    _presentationRevision += 1;
     _creationCoordinator?.closePresentation();
     setState(() => _creationVisible = false);
   }
@@ -371,38 +524,64 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final int generation = ++_creationGeneration;
     int? precision;
     if (!_creationUncertain) {
-      precision = int.tryParse(_precision.text);
-      if (precision == null) {
+      // One pass reports every applicable missing or invalid required field
+      // before any gateway call. Empty fields read as required; non-empty
+      // invalid values use the canonical client messages. The server stays
+      // authoritative: its validation still reports through the banner.
+      precision = _creationPrecision;
+      final String? nameError = _creationNameFieldError(_name.text);
+      final String? unitError = _creationUnitFieldError(_unit.text);
+      final String? precisionError = _creationPrecisionFieldError(precision);
+      if (nameError != null || unitError != null || precisionError != null) {
         setState(() {
-          _creationError = 'Precision must be an integer from 0 through 6.';
+          _creationError = null;
+          _creationNameError = nameError;
+          _creationUnitError = unitError;
+          _creationPrecisionError = precisionError;
         });
         return;
       }
     }
 
+    final int presentationRevision = ++_presentationRevision;
     setState(() {
       _creationPending = true;
       _creationError = null;
+      _successfulCreationDraft = null;
     });
     try {
-      final ProductCreationResult result = _creationUncertain
-          ? await coordinator.retry()
-          : await coordinator.submit(
+      final Future<ProductCreationResult> pending = _creationUncertain
+          ? coordinator.retry()
+          : coordinator.submit(
               name: _name.text,
               unit: _unit.text,
               precision: precision!,
             );
+      final ProductCreationDraft? submittedDraft = coordinator.lockedDraft;
+      final ProductCreationResult result = await pending;
       if (!mounted || generation != _creationGeneration) return;
       setState(() {
         _creationPending = false;
         _creationUncertain = false;
         _creationVisible = false;
         _creationSuccess = result;
+        _expireSuccessNotice('creation', () => _creationSuccess = null);
+        _successfulCreationDraft = submittedDraft;
         _name.clear();
         _unit.clear();
-        _precision.clear();
+        _creationPrecision = null;
+        _creationNameError = null;
+        _creationUnitError = null;
+        _creationPrecisionError = null;
       });
-      await _requestCatalog();
+      final CatalogSnapshot? refreshed = await _requestCatalog();
+      if (refreshed == null) return;
+      if (!mounted ||
+          generation != _creationGeneration ||
+          presentationRevision != _presentationRevision) {
+        return;
+      }
+      _openPricingForCreated(result, refreshed);
     } on ProductCreationValidationException catch (error) {
       if (!mounted || generation != _creationGeneration) return;
       setState(() {
@@ -427,6 +606,30 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _creationError =
             'The outcome is unknown. Retry the same request before editing.';
       });
+    }
+  }
+
+  /// Chains creation to pricing: opens the ordinary, empty pricing form for
+  /// the new product, never submitting and never overriding a form that
+  /// already owns the screen.
+  void _openPricingForCreated(
+    ProductCreationResult result,
+    CatalogSnapshot snapshot,
+  ) {
+    if (widget.session.role != InventoryRole.administrator ||
+        widget.setProductPrice == null ||
+        _creationVisible ||
+        _pricingProduct != null ||
+        _pricingPending ||
+        _pricingUncertain ||
+        _intakeProduct != null) {
+      return;
+    }
+    for (final CatalogItem item in snapshot.items) {
+      if (item.product.internalCode == result.internalCode) {
+        _showPricing(item.product);
+        return;
+      }
     }
   }
 
@@ -457,32 +660,92 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 'The server assigns the stable internal code and QR identity.',
               ),
               const SizedBox(height: 16),
-              TextFormField(
-                key: const ValueKey<String>('create-product-name'),
-                controller: _name,
-                enabled: !locked,
-                maxLength: maxProductNameLength,
-                decoration: const InputDecoration(labelText: 'Product name'),
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
-                key: const ValueKey<String>('create-product-unit'),
-                controller: _unit,
-                enabled: !locked,
-                decoration: const InputDecoration(
-                  labelText: 'Unit identifier',
-                  helperText: 'Lowercase identifier, for example piece or kg.',
+              Semantics(
+                container: true,
+                liveRegion: _creationNameError != null,
+                label: _creationNameError == null
+                    ? null
+                    : 'Product name error: $_creationNameError',
+                child: TextFormField(
+                  key: const ValueKey<String>('create-product-name'),
+                  controller: _name,
+                  enabled: !locked,
+                  maxLength: maxProductNameLength,
+                  onChanged: (_) {
+                    if (_creationNameError == null) return;
+                    setState(() => _creationNameError = null);
+                  },
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Product name',
+                      border: _pricingFieldBorder,
+                    ),
+                    _creationNameError,
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
-              TextFormField(
-                key: const ValueKey<String>('create-product-precision'),
-                controller: _precision,
-                enabled: !locked,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Quantity precision',
-                  helperText: 'Integer from 0 through 6.',
+              Semantics(
+                container: true,
+                liveRegion: _creationUnitError != null,
+                label: _creationUnitError == null
+                    ? null
+                    : 'Unit error: $_creationUnitError',
+                child: TextFormField(
+                  key: const ValueKey<String>('create-product-unit'),
+                  controller: _unit,
+                  enabled: !locked,
+                  onChanged: (_) {
+                    if (_creationUnitError == null) return;
+                    setState(() => _creationUnitError = null);
+                  },
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Unit identifier',
+                      border: _pricingFieldBorder,
+                      helperText:
+                          'Lowercase identifier, for example piece or kg.',
+                    ),
+                    _creationUnitError,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Semantics(
+                container: true,
+                liveRegion: _creationPrecisionError != null,
+                label: _creationPrecisionError == null
+                    ? null
+                    : 'Precision error: $_creationPrecisionError',
+                child: DropdownButtonFormField<int>(
+                  key: const ValueKey<String>('create-product-precision'),
+                  isExpanded: true,
+                  initialValue: _creationPrecision,
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Quantity precision',
+                      border: _pricingFieldBorder,
+                      helperText: 'Integer from 0 through 6.',
+                    ),
+                    _creationPrecisionError,
+                  ),
+                  hint: const Text('Select 0–6'),
+                  items: List<DropdownMenuItem<int>>.generate(
+                    7,
+                    (int index) => DropdownMenuItem<int>(
+                      value: index,
+                      child: Text('$index'),
+                    ),
+                  ),
+                  onChanged: locked
+                      ? null
+                      : (int? value) => setState(() {
+                          _creationPrecision = value;
+                          _creationPrecisionError = null;
+                        }),
                 ),
               ),
               if (_creationError case final String error) ...<Widget>[
@@ -529,15 +792,19 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _showPricing(CatalogProduct product) {
+    _presentationRevision += 1;
     final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
       product.internalCode,
     );
     final CatalogPricing? pricing = product.pricing;
     setState(() {
       _pricingProduct = product;
+      _cancelSuccessNotice('pricing');
       _pricingSuccess = null;
       _pricingError = null;
       _listedPriceError = null;
+      _priceModeError = null;
+      _ivaTreatmentError = null;
       _ivaRateError = null;
       _pricingUncertain = unresolved != null;
       _lockedPricingDraft = unresolved;
@@ -561,9 +828,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   void _closePricing() {
     if (_pricingPending) return;
+    _presentationRevision += 1;
     setState(() {
       _pricingProduct = null;
       _listedPriceError = null;
+      _priceModeError = null;
+      _ivaTreatmentError = null;
       _ivaRateError = null;
     });
   }
@@ -571,6 +841,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   void _changeIvaTreatment(String? value) {
     setState(() {
       _ivaTreatment = value;
+      _ivaTreatmentError = null;
       _ivaRateError = null;
       if (value == 'zero-rated') {
         _ivaRate.text = '0';
@@ -588,12 +859,18 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     if (product == null || submit == null || _pricingPending) return;
     if (!_pricingUncertain) {
       final bool missingPrice = _listedPrice.text.trim().isEmpty;
+      final bool missingMode = _priceMode == null;
+      final bool missingTreatment = _ivaTreatment == null;
       final bool missingRate =
           _ivaTreatment == 'taxable' && _ivaRate.text.trim().isEmpty;
-      if (missingPrice || missingRate) {
+      if (missingPrice || missingMode || missingTreatment || missingRate) {
         setState(() {
           _pricingError = null;
           _listedPriceError = missingPrice ? 'Listed price is required.' : null;
+          _priceModeError = missingMode ? 'Price mode is required.' : null;
+          _ivaTreatmentError = missingTreatment
+              ? 'IVA treatment is required.'
+              : null;
           _ivaRateError = missingRate
               ? 'IVA rate is required for taxable products.'
               : null;
@@ -645,6 +922,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _lockedPricingDraft = null;
         _pricingProduct = null;
         _pricingSuccess = result;
+        _expireSuccessNotice('pricing', () => _pricingSuccess = null);
       });
       await _requestCatalog();
     } on ProductPricingValidationException catch (error) {
@@ -721,7 +999,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               Semantics(
                 header: true,
                 child: Text(
-                  'Configure price / IVA',
+                  'Edit price / IVA',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
               ),
@@ -758,42 +1036,73 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                key: const ValueKey<String>('pricing-mode'),
-                isExpanded: true,
-                initialValue: _priceMode,
-                decoration: const InputDecoration(labelText: 'Price mode'),
-                hint: const Text('Select price mode'),
-                items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem(
-                    value: 'iva-included',
-                    child: Text('IVA included'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'iva-additional-on-invoice',
-                    child: Text('IVA additional on invoice'),
-                  ),
-                ],
-                onChanged: locked
+              Semantics(
+                container: true,
+                liveRegion: _priceModeError != null,
+                label: _priceModeError == null
                     ? null
-                    : (String? value) => setState(() => _priceMode = value),
+                    : 'Price mode error: $_priceModeError',
+                child: DropdownButtonFormField<String>(
+                  key: const ValueKey<String>('pricing-mode'),
+                  isExpanded: true,
+                  initialValue: _priceMode,
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Price mode',
+                      border: _pricingFieldBorder,
+                    ),
+                    _priceModeError,
+                  ),
+                  hint: const Text('Select price mode'),
+                  items: const <DropdownMenuItem<String>>[
+                    DropdownMenuItem(
+                      value: 'iva-included',
+                      child: Text('IVA included'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'iva-additional-on-invoice',
+                      child: Text('IVA additional on invoice'),
+                    ),
+                  ],
+                  onChanged: locked
+                      ? null
+                      : (String? value) => setState(() {
+                          _priceMode = value;
+                          _priceModeError = null;
+                        }),
+                ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                key: const ValueKey<String>('pricing-treatment'),
-                isExpanded: true,
-                initialValue: _ivaTreatment,
-                decoration: const InputDecoration(labelText: 'IVA treatment'),
-                hint: const Text('Select IVA treatment'),
-                items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem(value: 'taxable', child: Text('Taxable')),
-                  DropdownMenuItem(
-                    value: 'zero-rated',
-                    child: Text('Zero-rated'),
+              Semantics(
+                container: true,
+                liveRegion: _ivaTreatmentError != null,
+                label: _ivaTreatmentError == null
+                    ? null
+                    : 'IVA treatment error: $_ivaTreatmentError',
+                child: DropdownButtonFormField<String>(
+                  key: const ValueKey<String>('pricing-treatment'),
+                  isExpanded: true,
+                  initialValue: _ivaTreatment,
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'IVA treatment',
+                      border: _pricingFieldBorder,
+                    ),
+                    _ivaTreatmentError,
                   ),
-                  DropdownMenuItem(value: 'exempt', child: Text('Exempt')),
-                ],
-                onChanged: locked ? null : _changeIvaTreatment,
+                  hint: const Text('Select IVA treatment'),
+                  items: const <DropdownMenuItem<String>>[
+                    DropdownMenuItem(value: 'taxable', child: Text('Taxable')),
+                    DropdownMenuItem(
+                      value: 'zero-rated',
+                      child: Text('Zero-rated'),
+                    ),
+                    DropdownMenuItem(value: 'exempt', child: Text('Exempt')),
+                  ],
+                  onChanged: locked ? null : _changeIvaTreatment,
+                ),
               ),
               const SizedBox(height: 12),
               if (_ivaTreatment == 'exempt')
@@ -871,6 +1180,393 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     );
   }
 
+  void _showIntake(CatalogProduct product) {
+    _presentationRevision += 1;
+    // Explicitly scan every existing administrator branch choice for an
+    // unresolved draft. A draft found for any branch — including one different
+    // from the first choice — is restored by selecting its exact branch and
+    // locking, never discarded or replaced.
+    final List<CatalogBranchChoice> choices =
+        _snapshot?.branchChoices ?? const <CatalogBranchChoice>[];
+    StockIntakeDraft? unresolved;
+    String? unresolvedBranchId;
+    for (final CatalogBranchChoice choice in choices) {
+      final StockIntakeDraft? draft = _unresolvedIntakeDraftFor(
+        product.internalCode,
+        choice.branchId,
+      );
+      if (draft == null) continue;
+      unresolved = draft;
+      unresolvedBranchId = choice.branchId;
+      break;
+    }
+    setState(() {
+      _intakeProduct = product;
+      _cancelSuccessNotice('intake');
+      _intakeSuccess = null;
+      _intakeError = null;
+      _intakeBranchError = null;
+      _intakeQuantityError = null;
+      _intakeCostError = null;
+      _intakePending = false;
+      _intakeQuantity.clear();
+      _intakeCost.clear();
+      _lockedIntakeDraft = null;
+      if (unresolved != null) {
+        _intakeBranch = unresolvedBranchId;
+        _lockIntakeDraft(unresolved);
+      } else {
+        _intakeBranch = null;
+        _intakeUncertain = false;
+      }
+    });
+  }
+
+  void _closeIntake() {
+    if (_intakePending) return;
+    _presentationRevision += 1;
+    setState(() {
+      _intakeProduct = null;
+      _intakeBranchError = null;
+      _intakeQuantityError = null;
+      _intakeCostError = null;
+    });
+  }
+
+  void _changeIntakeBranch(String? branchId) {
+    final CatalogProduct? product = _intakeProduct;
+    if (product == null) return;
+    final StockIntakeDraft? unresolved = branchId == null
+        ? null
+        : _unresolvedIntakeDraftFor(product.internalCode, branchId);
+    setState(() {
+      _intakeBranchError = null;
+      if (unresolved != null) {
+        // An unresolved request for the newly selected branch is restored
+        // explicitly: the branch switches to the draft's branch and the form
+        // locks for a same-request retry. The stored draft is never replaced.
+        _lockIntakeDraft(unresolved);
+      } else {
+        _intakeBranch = branchId;
+      }
+    });
+  }
+
+  /// Exact truncated line-total preview from the draft's exact BigInt
+  /// arithmetic. Never allocates an idempotency key: a fixed preview
+  /// identifier is used and any validation failure simply hides the preview.
+  String? _intakeTotalPreview() {
+    final CatalogProduct? product = _intakeProduct;
+    final String? branchId = _intakeBranch;
+    if (product == null || branchId == null) return null;
+    final String quantity = _intakeQuantity.text;
+    final String cost = _intakeCost.text;
+    if (quantity.trim().isEmpty || cost.trim().isEmpty) return null;
+    try {
+      final StockIntakeDraft preview = StockIntakeDraft(
+        idempotencyKey: 'intake-total-preview',
+        branchId: branchId,
+        productId: product.internalCode,
+        quantity: quantity,
+        unitCostMxn: cost,
+        quantitySpec: StockIntakeQuantitySpec(
+          unit: product.quantitySpec.unit,
+          precision: product.quantitySpec.precision,
+        ),
+      );
+      return '${_formatPricingCentavos(preview.lineTotalCentavos)} MXN';
+    } on StockIntakeValidationException {
+      return null;
+    }
+  }
+
+  Future<void> _submitIntake() async {
+    final CatalogProduct? product = _intakeProduct;
+    final StockIntakeSubmit? submit = widget.submitStockIntake;
+    if (product == null || submit == null || _intakePending) return;
+    if (!_intakeUncertain) {
+      // One pass reports every applicable missing required field before any
+      // UUID allocation or gateway call.
+      final bool missingBranch = _intakeBranch == null;
+      final bool missingQuantity = _intakeQuantity.text.trim().isEmpty;
+      final bool missingCost = _intakeCost.text.trim().isEmpty;
+      if (missingBranch || missingQuantity || missingCost) {
+        setState(() {
+          _intakeError = null;
+          _intakeBranchError = missingBranch ? 'Branch is required.' : null;
+          _intakeQuantityError = missingQuantity
+              ? 'Quantity is required.'
+              : null;
+          _intakeCostError = missingCost ? 'Unit cost is required.' : null;
+        });
+        return;
+      }
+    }
+    StockIntakeDraft draft;
+    try {
+      final StockIntakeDraft? authoritative = _intakeBranch == null
+          ? null
+          : _unresolvedIntakeDraftFor(product.internalCode, _intakeBranch!);
+      if (authoritative != null) _lockIntakeDraft(authoritative);
+      draft =
+          authoritative ??
+          (_intakeUncertain
+              ? _lockedIntakeDraft!
+              : StockIntakeDraft(
+                  idempotencyKey:
+                      (widget.createIntakeId ?? createStockIntakeUuidV4)(),
+                  branchId: _intakeBranch!,
+                  productId: product.internalCode,
+                  quantity: _intakeQuantity.text,
+                  unitCostMxn: _intakeCost.text,
+                  quantitySpec: StockIntakeQuantitySpec(
+                    unit: product.quantitySpec.unit,
+                    precision: product.quantitySpec.precision,
+                  ),
+                ));
+      draft.validate();
+    } on StockIntakeValidationException catch (error) {
+      setState(() => _intakeError = error.message);
+      return;
+    }
+
+    final int generation = ++_intakeGeneration;
+    _lockedIntakeDraft ??= draft;
+    setState(() {
+      _intakePending = true;
+      _intakeError = null;
+    });
+    try {
+      final StockIntakeResult result = await submit(draft);
+      if (!mounted || generation != _intakeGeneration) return;
+      setState(() {
+        _intakePending = false;
+        _intakeUncertain = false;
+        _lockedIntakeDraft = null;
+        _intakeProduct = null;
+        _intakeSuccess = result;
+        _expireSuccessNotice('intake', () => _intakeSuccess = null);
+      });
+      await _requestCatalog();
+    } on StockIntakeRejectedException catch (error) {
+      if (!mounted || generation != _intakeGeneration) return;
+      setState(() {
+        _intakePending = false;
+        _intakeUncertain = false;
+        _lockedIntakeDraft = null;
+        _intakeError = 'Stock intake was rejected (${error.code}).';
+      });
+    } on StockIntakeUnresolvedException {
+      if (!mounted || generation != _intakeGeneration) return;
+      final StockIntakeDraft? authoritative = _intakeBranch == null
+          ? null
+          : _unresolvedIntakeDraftFor(product.internalCode, _intakeBranch!);
+      setState(() {
+        _intakePending = false;
+        if (authoritative != null) {
+          _lockIntakeDraft(authoritative);
+        } else {
+          _intakeProduct = null;
+          _lockedIntakeDraft = null;
+          _intakeUncertain = false;
+          _intakeError = null;
+          _snapshot = null;
+          _failed = true;
+        }
+      });
+    } on StockIntakeStaleException {
+      // A newer attempt or session owns presentation authority.
+    } catch (_) {
+      if (!mounted || generation != _intakeGeneration) return;
+      final StockIntakeDraft? authoritative = _intakeBranch == null
+          ? null
+          : _unresolvedIntakeDraftFor(product.internalCode, _intakeBranch!);
+      setState(() {
+        _intakePending = false;
+        if (authoritative != null) {
+          _lockIntakeDraft(authoritative);
+        } else {
+          _intakeUncertain = true;
+          _lockedIntakeDraft = draft;
+          _intakeError =
+              'The outcome is unknown. Retry the same request before editing.';
+        }
+      });
+    }
+  }
+
+  Widget _intakeForm() {
+    final CatalogProduct product = _intakeProduct!;
+    final bool locked = _intakePending || _intakeUncertain;
+    final List<CatalogBranchChoice> choices =
+        _snapshot?.branchChoices ?? const <CatalogBranchChoice>[];
+    final String? totalPreview = _intakeTotalPreview();
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        20,
+        20,
+        20 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Text(
+                  'Record stock intake',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(product.name),
+              SelectableText(product.internalCode),
+              const SizedBox(height: 8),
+              Text(
+                'Unit: ${product.quantitySpec.unit} '
+                '(precision ${product.quantitySpec.precision})',
+              ),
+              const SizedBox(height: 16),
+              Semantics(
+                container: true,
+                liveRegion: _intakeBranchError != null,
+                label: _intakeBranchError == null
+                    ? null
+                    : 'Branch error: $_intakeBranchError',
+                child: DropdownButtonFormField<String>(
+                  key: const ValueKey<String>('intake-branch'),
+                  isExpanded: true,
+                  initialValue: _intakeBranch,
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Branch',
+                      border: _pricingFieldBorder,
+                    ),
+                    _intakeBranchError,
+                  ),
+                  hint: const Text('Select branch'),
+                  items: choices
+                      .map(
+                        (CatalogBranchChoice choice) =>
+                            DropdownMenuItem<String>(
+                              value: choice.branchId,
+                              child: Text(choice.branchName),
+                            ),
+                      )
+                      .toList(growable: false),
+                  onChanged: locked ? null : _changeIntakeBranch,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                container: true,
+                liveRegion: _intakeQuantityError != null,
+                label: _intakeQuantityError == null
+                    ? null
+                    : 'Quantity error: $_intakeQuantityError',
+                child: TextFormField(
+                  key: const ValueKey<String>('intake-quantity'),
+                  controller: _intakeQuantity,
+                  enabled: !locked,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (_) {
+                    setState(() => _intakeQuantityError = null);
+                  },
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    InputDecoration(
+                      labelText: 'Quantity (${product.quantitySpec.unit})',
+                      helperText: product.quantitySpec.precision == 0
+                          ? 'Whole ${product.quantitySpec.unit} only.'
+                          : 'Up to ${product.quantitySpec.precision} decimal '
+                                'places.',
+                      border: _pricingFieldBorder,
+                    ),
+                    _intakeQuantityError,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Semantics(
+                container: true,
+                liveRegion: _intakeCostError != null,
+                label: _intakeCostError == null
+                    ? null
+                    : 'Unit cost error: $_intakeCostError',
+                child: TextFormField(
+                  key: const ValueKey<String>('intake-unit-cost'),
+                  controller: _intakeCost,
+                  enabled: !locked,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  onChanged: (_) {
+                    setState(() => _intakeCostError = null);
+                  },
+                  decoration: _requiredErrorDecoration(
+                    context,
+                    const InputDecoration(
+                      labelText: 'Unit cost (MXN)',
+                      helperText: 'Exact MXN amount with at most two decimals.',
+                      border: _pricingFieldBorder,
+                    ),
+                    _intakeCostError,
+                  ),
+                ),
+              ),
+              if (totalPreview case final String total) ...<Widget>[
+                const SizedBox(height: 12),
+                Text('Line total (truncated): $total'),
+              ],
+              if (_intakeError case final String error) ...<Widget>[
+                const SizedBox(height: 12),
+                Semantics(
+                  label: 'Stock intake error',
+                  liveRegion: true,
+                  child: ExcludeSemantics(child: Text(error)),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: <Widget>[
+                  FilledButton(
+                    onPressed: _intakePending ? null : _submitIntake,
+                    child: _intakePending
+                        ? Semantics(
+                            label: 'Recording stock intake',
+                            liveRegion: true,
+                            child: const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : Text(
+                            _intakeUncertain
+                                ? 'Retry same request'
+                                : 'Record intake',
+                          ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _intakePending ? null : _closeIntake,
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _catalogBody() {
     if (_loading) return const _CatalogLoading();
     if (_failed) return _CatalogError(onRetry: _requestCatalog);
@@ -879,10 +1575,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     return _CatalogList(
       items: items,
       role: widget.session.role,
+      branchChoices: _snapshot!.branchChoices,
+      snapshot: _snapshot,
       onConfigurePricing:
           widget.session.role == InventoryRole.administrator &&
               widget.setProductPrice != null
           ? _showPricing
+          : null,
+      onRecordIntake:
+          widget.session.role == InventoryRole.administrator &&
+              widget.submitStockIntake != null
+          ? _showIntake
           : null,
     );
   }
@@ -895,6 +1598,54 @@ void _validateCatalogSnapshot(
   CatalogSnapshot snapshot,
   EmulatorSession session,
 ) {
+  if ((session.role == InventoryRole.seller &&
+          (snapshot.costsAvailable || snapshot.costs.isNotEmpty)) ||
+      (!snapshot.costsAvailable && snapshot.costs.isNotEmpty)) {
+    throw const FormatException('catalog cost scope mismatch');
+  }
+  final Set<String> productIds = snapshot.items
+      .map((CatalogItem item) => item.product.internalCode)
+      .toSet();
+  for (final MapEntry<String, CatalogProductCost> entry
+      in snapshot.costs.entries) {
+    final CatalogProductCost cost = entry.value;
+    if (entry.key != cost.productId ||
+        !productIds.contains(entry.key) ||
+        cost.currency != 'MXN' ||
+        cost.latestUnitCostCentavos < 0 ||
+        cost.latestUnitCostCentavos > maxSafePricingInteger ||
+        RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$')
+                .stringMatch(cost.sourceEntryId) !=
+            cost.sourceEntryId) {
+      throw const FormatException('catalog cost metadata is inconsistent');
+    }
+  }
+  final Map<String, String> namesByBranchId = <String, String>{};
+  final Map<String, String> branchIdsByName = <String, String>{};
+  void correlateBranch(String branchId, String branchName) {
+    final String? knownName = namesByBranchId[branchId];
+    final String? knownId = branchIdsByName[branchName];
+    if ((knownName != null && knownName != branchName) ||
+        (knownId != null && knownId != branchId)) {
+      throw const FormatException('catalog branch metadata is inconsistent');
+    }
+    namesByBranchId[branchId] = branchName;
+    branchIdsByName[branchName] = branchId;
+  }
+
+  if (session.role == InventoryRole.administrator) {
+    final Set<String> branchIds = <String>{};
+    final Set<String> branchNames = <String>{};
+    for (final CatalogBranchChoice choice in snapshot.branchChoices) {
+      if (!_validBranchId(choice.branchId) ||
+          !branchIds.add(choice.branchId) ||
+          !branchNames.add(choice.branchName)) {
+        throw const FormatException('catalog branch choice is invalid');
+      }
+      _validateBranchName(choice.branchName);
+      correlateBranch(choice.branchId, choice.branchName);
+    }
+  }
   final Set<String> productCodes = <String>{};
   for (final CatalogItem item in snapshot.items) {
     if (!productCodes.add(item.product.internalCode)) {
@@ -916,6 +1667,7 @@ void _validateCatalogSnapshot(
     final Set<String> branchIds = <String>{};
     for (final CatalogHolding holding in item.holdings) {
       _validateHolding(holding, requireBranchName: true);
+      correlateBranch(holding.branchId, holding.branchName!);
       if (!branchIds.add(holding.branchId)) {
         throw const FormatException('duplicate branch holding');
       }
@@ -933,14 +1685,17 @@ void _validateHolding(
     throw const FormatException('catalog holding is invalid');
   }
   if (requireBranchName) {
-    final String? name = holding.branchName;
-    if (name == null ||
-        name.isEmpty ||
-        name.length > 120 ||
-        name.trim() != name ||
-        RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
-      throw const FormatException('catalog branch name is invalid');
-    }
+    _validateBranchName(holding.branchName);
+  }
+}
+
+void _validateBranchName(String? name) {
+  if (name == null ||
+      name.isEmpty ||
+      name.length > 120 ||
+      name.trim() != name ||
+      RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
+    throw const FormatException('catalog branch name is invalid');
   }
 }
 
@@ -1036,6 +1791,38 @@ String _ivaTreatmentLabel(String value) => switch (value) {
 
 bool _validBranchId(String value) =>
     RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$').hasMatch(value);
+
+/// Client-side mirror of `ProductCreationDraft.validate()` used to mark each
+/// creation field independently before a submit. The server remains the
+/// authority: empty values read as required, non-empty invalid values reuse
+/// the canonical client messages verbatim.
+String? _creationNameFieldError(String name) {
+  if (name.isEmpty) return 'Product name is required.';
+  if (name.length > maxProductNameLength ||
+      name.trim() != name ||
+      RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
+    return 'Name must be canonical text of 1 to 120 characters with no leading, '
+        'trailing, or control characters.';
+  }
+  return null;
+}
+
+String? _creationUnitFieldError(String unit) {
+  if (unit.isEmpty) return 'Unit is required.';
+  if (!RegExp(r'^[a-z][a-z0-9_-]{0,31}$').hasMatch(unit)) {
+    return 'Unit must start with a lowercase letter and use only lowercase '
+        'letters, numbers, underscores, or hyphens (1 to 32 characters).';
+  }
+  return null;
+}
+
+String? _creationPrecisionFieldError(int? precision) {
+  if (precision == null) return 'Precision is required.';
+  if (precision < 0 || precision > 6) {
+    return 'Precision must be an integer from 0 through 6.';
+  }
+  return null;
+}
 
 class _SessionStatus extends StatelessWidget {
   const _SessionStatus({required this.session});
@@ -1148,6 +1935,33 @@ class _CreationSuccess extends StatelessWidget {
   );
 }
 
+class _IntakeSuccess extends StatelessWidget {
+  const _IntakeSuccess({required this.result});
+
+  final StockIntakeResult result;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Stock intake succeeded',
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Icon(Icons.check_circle_outline),
+            const SizedBox(width: 8),
+            Flexible(child: Text('Intake recorded. Entry ${result.entryId}')),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _CatalogLoading extends StatelessWidget {
   const _CatalogLoading();
 
@@ -1201,11 +2015,21 @@ class _ConnectionStatus extends StatelessWidget {
 }
 
 class _CatalogList extends StatelessWidget {
-  const _CatalogList({required this.items, this.role, this.onConfigurePricing});
+  const _CatalogList({
+    required this.items,
+    this.branchChoices = const <CatalogBranchChoice>[],
+    this.snapshot,
+    this.role,
+    this.onConfigurePricing,
+    this.onRecordIntake,
+  });
 
   final List<CatalogItem> items;
+  final CatalogSnapshot? snapshot;
+  final List<CatalogBranchChoice> branchChoices;
   final InventoryRole? role;
   final void Function(CatalogProduct product)? onConfigurePricing;
+  final void Function(CatalogProduct product)? onRecordIntake;
 
   @override
   Widget build(BuildContext context) {
@@ -1237,8 +2061,16 @@ class _CatalogList extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 920),
                 child: _ProductCard(
                   item: items[index],
+                  costLabel: role == InventoryRole.administrator
+                      ? _latestCostLabel(
+                          snapshot,
+                          items[index].product.internalCode,
+                        )
+                      : null,
                   role: role,
+                  branchChoices: branchChoices,
                   onConfigurePricing: onConfigurePricing,
+                  onRecordIntake: onRecordIntake,
                 ),
               ),
             ),
@@ -1250,23 +2082,41 @@ class _CatalogList extends StatelessWidget {
   }
 }
 
+String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
+  if (snapshot == null || !snapshot.costsAvailable) return 'Cost unavailable';
+  final CatalogProductCost? cost = snapshot.costs[productId];
+  if (cost == null) return 'No cost recorded';
+  return 'Latest unit cost: '
+      '${_formatPricingCentavos(cost.latestUnitCostCentavos)} MXN';
+}
+
 class _ProductCard extends StatelessWidget {
   const _ProductCard({
+    required this.costLabel,
     required this.item,
     required this.role,
+    required this.branchChoices,
     required this.onConfigurePricing,
+    required this.onRecordIntake,
   });
 
   final CatalogItem item;
   final InventoryRole? role;
+  final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
+  final void Function(CatalogProduct product)? onRecordIntake;
+
+  final String? costLabel;
 
   @override
   Widget build(BuildContext context) {
     final Widget details = _ProductDetails(
+      costLabel: costLabel,
       item: item,
       role: role,
+      branchChoices: branchChoices,
       onConfigurePricing: onConfigurePricing,
+      onRecordIntake: onRecordIntake,
     );
     final Widget qr = ProductQrView(product: item.product);
 
@@ -1303,14 +2153,21 @@ class _ProductCard extends StatelessWidget {
 
 class _ProductDetails extends StatelessWidget {
   const _ProductDetails({
+    required this.costLabel,
     required this.item,
     required this.role,
+    required this.branchChoices,
     required this.onConfigurePricing,
+    required this.onRecordIntake,
   });
 
   final CatalogItem item;
   final InventoryRole? role;
+  final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
+  final void Function(CatalogProduct product)? onRecordIntake;
+
+  final String? costLabel;
 
   CatalogProduct get product => item.product;
 
@@ -1334,7 +2191,7 @@ class _ProductDetails extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Quantity: ${product.quantitySpec.unit} '
+          'Unit: ${product.quantitySpec.unit} '
           '(precision ${product.quantitySpec.precision})',
         ),
         if (product.pricing case final CatalogPricing pricing) ...<Widget>[
@@ -1352,6 +2209,16 @@ class _ProductDetails extends StatelessWidget {
             'IVA rate: ${pricing.ivaRateBasisPoints == null ? 'Not required' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
           ),
         ],
+        if (role == InventoryRole.administrator &&
+            costLabel != null) ...<Widget>[
+          const SizedBox(height: 4),
+          Semantics(
+            container: true,
+            label: costLabel,
+            excludeSemantics: true,
+            child: Text(costLabel!),
+          ),
+        ],
         if (role != null) ...<Widget>[
           const SizedBox(height: 12),
           ..._holdingRows(),
@@ -1362,7 +2229,16 @@ class _ProductDetails extends StatelessWidget {
             key: ValueKey<String>('configure-price-${product.internalCode}'),
             onPressed: () => onConfigurePricing!(product),
             icon: const Icon(Icons.price_change_outlined),
-            label: const Text('Configure price / IVA'),
+            label: const Text('Edit price / IVA'),
+          ),
+        ],
+        if (onRecordIntake != null) ...<Widget>[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: ValueKey<String>('intake-${product.internalCode}'),
+            onPressed: () => onRecordIntake!(product),
+            icon: const Icon(Icons.inventory_outlined),
+            label: const Text('Record stock intake'),
           ),
         ],
       ],
@@ -1370,34 +2246,55 @@ class _ProductDetails extends StatelessWidget {
   }
 
   List<Widget> _holdingRows() {
+    if (role == InventoryRole.administrator && branchChoices.isNotEmpty) {
+      final Map<String, CatalogHolding> holdings = <String, CatalogHolding>{
+        for (final CatalogHolding holding in item.holdings)
+          holding.branchId: holding,
+      };
+      final Map<String, CatalogBranchChoice> choices =
+          <String, CatalogBranchChoice>{
+            for (final CatalogBranchChoice choice in branchChoices)
+              choice.branchId: choice,
+          };
+      final List<String> branchIds = <String>{
+        ...choices.keys,
+        ...holdings.keys,
+      }.toList()..sort();
+      return branchIds
+          .map((String branchId) {
+            final CatalogHolding? holding = holdings[branchId];
+            if (holding != null) return _holdingRow(holding);
+            return Text(
+              '${choices[branchId]!.branchName}: Agotado · Sin entrada registrada',
+            );
+          })
+          .toList(growable: false);
+    }
     if (role == InventoryRole.administrator && item.holdings.isEmpty) {
       return const <Widget>[Text('No branch holdings')];
     }
-    return item.holdings
-        .map((CatalogHolding holding) {
-          final String quantity = _formatQuantity(
-            holding.quantityScaled,
-            product.quantitySpec.precision,
-          );
-          final String unit = product.quantitySpec.unit;
-          if (role == InventoryRole.administrator) {
-            final String branchName = holding.branchName!;
-            final String empty = holding.isOutOfStock ? ' · Agotado' : '';
-            return Text('$branchName: $quantity $unit$empty');
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text('Stock: $quantity $unit'),
-              if (holding.isOutOfStock)
-                Text(
-                  'Agotado',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-            ],
-          );
-        })
-        .toList(growable: false);
+    return item.holdings.map(_holdingRow).toList(growable: false);
+  }
+
+  Widget _holdingRow(CatalogHolding holding) {
+    final String quantity = _formatQuantity(
+      holding.quantityScaled,
+      product.quantitySpec.precision,
+    );
+    final String unit = product.quantitySpec.unit;
+    if (role == InventoryRole.administrator) {
+      final String branchName = holding.branchName!;
+      final String empty = holding.isOutOfStock ? ' · Agotado' : '';
+      return Text('$branchName: $quantity $unit$empty');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Stock: $quantity $unit'),
+        if (holding.isOutOfStock)
+          Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
+    );
   }
 
   String _formatQuantity(int scaled, int precision) {

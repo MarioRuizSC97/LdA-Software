@@ -27,6 +27,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorCatalogLoader,
     this.emulatorProductCreationLoader,
     this.emulatorProductPricingLoader,
+    this.emulatorStockIntakeLoader,
     super.key,
   });
 
@@ -36,6 +37,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final CatalogSnapshotLoader? emulatorCatalogLoader;
   final ProductCreationGatewayLoader? emulatorProductCreationLoader;
   final ProductPricingGatewayLoader? emulatorProductPricingLoader;
+  final StockIntakeGatewayLoader? emulatorStockIntakeLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +57,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         productPricingGatewayLoader:
             emulatorProductPricingLoader ??
             DemoEmulatorBootstrap.initializeProductPricingGateway,
+        stockIntakeGatewayLoader:
+            emulatorStockIntakeLoader ??
+            DemoEmulatorBootstrap.initializeStockIntakeGateway,
       );
     }
     return const CatalogSetupApp();
@@ -67,6 +72,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     required this.catalogLoader,
     required this.productCreationGatewayLoader,
     required this.productPricingGatewayLoader,
+    required this.stockIntakeGatewayLoader,
     super.key,
   });
 
@@ -74,6 +80,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader productCreationGatewayLoader;
   final ProductPricingGatewayLoader productPricingGatewayLoader;
+  final StockIntakeGatewayLoader stockIntakeGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -104,6 +111,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       catalogLoader: widget.catalogLoader,
       productCreationGatewayLoader: widget.productCreationGatewayLoader,
       productPricingGatewayLoader: widget.productPricingGatewayLoader,
+      stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
     ),
   );
 }

@@ -5,6 +5,7 @@ import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/catalog/product_pricing.dart';
+import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/main.dart';
 
 class _UnauthenticatedGateway implements EmulatorSessionGateway {
@@ -37,6 +38,10 @@ Future<ProductCreationGateway> _unexpectedFunctionsLoad(
 Future<ProductPricingGateway> _unexpectedPricingLoad(EmulatorSession session) =>
     throw StateError('fixture mode must never initialize pricing Functions');
 
+Future<EmulatorStockIntakeGateway> _unexpectedStockIntakeLoad(
+  EmulatorSession session,
+) => throw StateError('fixture mode must never initialize intake Functions');
+
 void main() {
   testWidgets('ordinary bootstrap fails closed without fixture products', (
     WidgetTester tester,
@@ -46,6 +51,7 @@ void main() {
         demoEnabled: false,
         emulatorProductCreationLoader: _unexpectedFunctionsLoad,
         emulatorProductPricingLoader: _unexpectedPricingLoad,
+        emulatorStockIntakeLoader: _unexpectedStockIntakeLoad,
       ),
     );
     await tester.pumpAndSettle();
@@ -94,6 +100,7 @@ void main() {
         emulatorLoader: _unexpectedEmulatorLoad,
         emulatorProductCreationLoader: _unexpectedFunctionsLoad,
         emulatorProductPricingLoader: _unexpectedPricingLoad,
+        emulatorStockIntakeLoader: _unexpectedStockIntakeLoad,
       ),
     );
     await tester.pumpAndSettle();

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
@@ -7,9 +8,12 @@ import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
+import 'package:lda_inventory/catalog/catalog_stock.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/catalog/product_pricing.dart';
+import 'package:lda_inventory/catalog/stock_intake.dart';
 import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
+import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
@@ -19,12 +23,14 @@ class _FakeGateway implements EmulatorSessionGateway {
     this.loginError,
     this.loginCompleter,
     this.logoutCompleter,
+    this.cleanupBeforeLoginFailure = false,
   });
 
   final EmulatorSession? restored;
   Object? restoreError;
   final EmulatorSession? loginResult;
   final Object? loginError;
+  final bool cleanupBeforeLoginFailure;
   Completer<EmulatorSession>? loginCompleter;
   final Completer<void>? logoutCompleter;
   final StreamController<EmulatorSession?> sessions =
@@ -53,7 +59,16 @@ class _FakeGateway implements EmulatorSessionGateway {
     submittedPassword = password;
     if (loginError case final Object error) throw error;
     if (loginCompleter case final Completer<EmulatorSession> completer) {
-      return completer.future;
+      try {
+        return await completer.future;
+      } catch (_) {
+        if (cleanupBeforeLoginFailure) {
+          // Model SDK signOut delivering null before gateway.login rejects.
+          sessions.add(null);
+          await Future<void>.delayed(Duration.zero);
+        }
+        rethrow;
+      }
     }
     return loginResult!;
   }
@@ -65,6 +80,99 @@ class _FakeGateway implements EmulatorSessionGateway {
   }
 }
 
+// A local SDK double: no Firebase initialization, endpoints, or Auth requests.
+class _FailingSdkAuth implements FirebaseAuth {
+  _FailingSdkAuth({
+    required this.validationFailure,
+    this.signInError,
+    this.tokenError,
+  });
+
+  final bool validationFailure;
+  Object? signInError;
+  Completer<UserCredential>? pendingSignIn;
+  Object? tokenError;
+  final StreamController<User?> events = StreamController<User?>.broadcast();
+  int cleanupCalls = 0;
+
+  @override
+  User? get currentUser => null;
+
+  @override
+  Stream<User?> idTokenChanges() => events.stream;
+
+  @override
+  Future<UserCredential> signInWithEmailAndPassword({
+    required String email,
+    required String password,
+  }) async {
+    if (pendingSignIn case final Completer<UserCredential> pending) {
+      return pending.future;
+    }
+    if (signInError case final Object error) throw error;
+    if (validationFailure) {
+      return _InvalidSdkCredential(tokenError: tokenError);
+    }
+    throw StateError('private SDK failure');
+  }
+
+  @override
+  Future<void> signOut() async {
+    cleanupCalls += 1;
+    events.add(null);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _InvalidSdkCredential implements UserCredential {
+  _InvalidSdkCredential({this.tokenError});
+  final Object? tokenError;
+
+  @override
+  User get user => _InvalidSdkUser(tokenError: tokenError);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _InvalidSdkUser implements User {
+  _InvalidSdkUser({this.tokenError});
+  final Object? tokenError;
+
+  @override
+  String get uid => 'test-sdk-user';
+
+  @override
+  String get email => 'test-sdk@demo.invalid';
+
+  @override
+  Future<IdTokenResult> getIdTokenResult([bool forceRefresh = false]) async {
+    expect(forceRefresh, isTrue);
+    if (tokenError case final Object error) throw error;
+    throw StateError('private token validation failure');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Object _syntheticTypeError() {
+  try {
+    final Object value = 'synthetic-private-value';
+    return value as int;
+  } catch (error) {
+    return error;
+  }
+}
+
+class _HostileSdkError implements Exception {
+  @override
+  String toString() => throw StateError('must not inspect error contents');
+}
+
 class _FakePricingGateway implements ProductPricingGateway {
   _FakePricingGateway(this.onSetPrice);
 
@@ -74,6 +182,21 @@ class _FakePricingGateway implements ProductPricingGateway {
   @override
   Future<ProductPricingResult> setPrice(ProductPricingDraft draft) =>
       onSetPrice(draft);
+}
+
+class _FakeStockIntakeGateway extends EmulatorStockIntakeGateway {
+  _FakeStockIntakeGateway(this.onSubmit)
+    : super(
+        expectedSession: _administrator,
+        sessionChecker: () async => null,
+        invoke: (_) async => <String, Object?>{},
+      );
+
+  final Future<StockIntakeResult> Function(StockIntakeDraft draft) onSubmit;
+
+  @override
+  Future<StockIntakeResult> submitIntake(StockIntakeDraft draft) =>
+      onSubmit(draft);
 }
 
 class _FakeProductGateway implements ProductCreationGateway {
@@ -121,12 +244,16 @@ Widget _app(
   CatalogSnapshotLoader catalogLoader = _emptyCatalog,
   ProductCreationGatewayLoader? productCreationGatewayLoader,
   ProductPricingGatewayLoader? productPricingGatewayLoader,
+  StockIntakeGatewayLoader? stockIntakeGatewayLoader,
+  GlobalKey<EmulatorLoginShellState>? shellKey,
 }) => MaterialApp(
   home: EmulatorLoginShell(
+    key: shellKey,
     sessionGateway: gateway,
     catalogLoader: catalogLoader,
     productCreationGatewayLoader: productCreationGatewayLoader,
     productPricingGatewayLoader: productPricingGatewayLoader,
+    stockIntakeGatewayLoader: stockIntakeGatewayLoader,
   ),
 );
 
@@ -141,10 +268,13 @@ Future<void> _enterProduct(WidgetTester tester) async {
     find.byKey(const ValueKey<String>('create-product-unit')),
     'piece',
   );
-  await tester.enterText(
+  // Precision is now a dropdown of 0 through 6 with no default; select 0.
+  await tester.tap(
     find.byKey(const ValueKey<String>('create-product-precision')),
-    '0',
   );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('0').last);
+  await tester.pumpAndSettle();
   final Finder create = find.widgetWithText(FilledButton, 'Create');
   await tester.ensureVisible(create);
   await tester.tap(create);
@@ -168,6 +298,23 @@ Future<CatalogSnapshot> _coffeeCatalog(EmulatorSession session) async =>
       CatalogItem(product: _pricedCoffee, holdings: const <CatalogHolding>[]),
     ]);
 
+Future<CatalogSnapshot> _intakeCatalog(EmulatorSession session) async =>
+    CatalogSnapshot(
+      <CatalogItem>[
+        CatalogItem(product: _pricedCoffee, holdings: const <CatalogHolding>[]),
+      ],
+      branchChoices: const <CatalogBranchChoice>[
+        CatalogBranchChoice(
+          branchId: 'branch-north',
+          branchName: 'North Demo Branch',
+        ),
+        CatalogBranchChoice(
+          branchId: 'branch-south',
+          branchName: 'South Demo Branch',
+        ),
+      ],
+    );
+
 Future<void> _submitExistingPricing(WidgetTester tester) async {
   await tester.tap(
     find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
@@ -190,6 +337,28 @@ Future<void> _signIn(WidgetTester tester) async {
   await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
   await tester.pumpAndSettle();
 }
+
+StockIntakeDraft _intakeDraft({String? quantity}) => StockIntakeDraft(
+  idempotencyKey: createStockIntakeUuidV4(),
+  branchId: 'branch-north',
+  productId: 'PRD-COFFEE-001',
+  quantity: quantity ?? '3',
+  unitCostMxn: '12.50',
+  quantitySpec: const StockIntakeQuantitySpec(unit: 'piece', precision: 0),
+);
+
+StockIntakeResult _intakeResult(
+  StockIntakeDraft draft, {
+  required bool replayed,
+}) => StockIntakeResult.fromCallable(<String, Object?>{
+  'entryId': draft.idempotencyKey,
+  'movementId': draft.idempotencyKey,
+  'quantityScaled': draft.quantityScaled,
+  'stockQuantityScaled': draft.quantityScaled,
+  'unitCostCentavos': draft.unitCostCentavos,
+  'lineTotalCentavos': draft.lineTotalCentavos,
+  'replayed': replayed,
+}, request: draft);
 
 void main() {
   testWidgets('shows a safe loading state while bootstrap is pending', (
@@ -568,6 +737,373 @@ void main() {
     },
   );
 
+  for (final bool checkPending in <bool>[true, false]) {
+    testWidgets(
+      'same-identity session frames preserve two creations (pending checks: $checkPending)',
+      (WidgetTester tester) async {
+        final _FakeGateway auth = _FakeGateway(restored: _administrator);
+        final List<ProductCreationDraft> attempts = <ProductCreationDraft>[];
+        final List<Completer<ProductCreationResult>> results =
+            <Completer<ProductCreationResult>>[];
+        await tester.pumpWidget(
+          _app(
+            Future<EmulatorSessionGateway>.value(auth),
+            productCreationGatewayLoader: (_) async =>
+                _FakeProductGateway((ProductCreationDraft draft) {
+                  attempts.add(draft);
+                  final Completer<ProductCreationResult> result =
+                      Completer<ProductCreationResult>();
+                  results.add(result);
+                  return result.future;
+                }),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        for (int index = 0; index < 2; index += 1) {
+          await _enterProduct(tester);
+          await tester.pump();
+          expect(attempts, hasLength(index + 1));
+          // A new validated session object models a token lifecycle event. The
+          // real shell supplies its already-frozen draft before gateway success.
+          auth.sessions.add(
+            EmulatorSession(
+              userId: _administrator.userId,
+              email: _administrator.email,
+              role: _administrator.role,
+            ),
+          );
+          await tester.pump();
+          if (checkPending) {
+            expect(find.textContaining('outcome is unknown'), findsNothing);
+            expect(find.text('Retry same request'), findsNothing);
+            expect(
+              tester
+                  .widget<FilledButton>(
+                    find.ancestor(
+                      of: find.byType(CircularProgressIndicator),
+                      matching: find.byType(FilledButton),
+                    ),
+                  )
+                  .onPressed,
+              isNull,
+            );
+            expect(find.byType(CircularProgressIndicator), findsWidgets);
+            expect(
+              tester
+                  .widget<TextFormField>(
+                    find.byKey(const ValueKey<String>('create-product-name')),
+                  )
+                  .enabled,
+              isFalse,
+            );
+          }
+          final String code = 'PRD-SESSION-000$index';
+          results[index].complete(
+            ProductCreationResult(
+              productId: code,
+              internalCode: code,
+              replayed: false,
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(find.text('Created product $code'), findsOneWidget);
+          expect(find.textContaining('outcome is unknown'), findsNothing);
+          expect(attempts, hasLength(index + 1));
+        }
+        expect(attempts[1].idempotencyKey, isNot(attempts[0].idempotencyKey));
+        for (final ProductCreationDraft draft in attempts) {
+          expect(
+            draft.idempotencyKey,
+            matches(
+              RegExp(
+                r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+              ),
+            ),
+          );
+          expect(draft.name, 'Coffee');
+          expect(draft.unit, 'piece');
+          expect(draft.precision, 0);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'resolved self-owned draft null echo preserves success and delayed pricing',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final Completer<ProductCreationResult> result =
+          Completer<ProductCreationResult>();
+      final Completer<CatalogSnapshot> refresh = Completer<CatalogSnapshot>();
+      int loads = 0;
+      int calls = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          catalogLoader: (_) {
+            loads += 1;
+            return loads == 1 ? _emptyCatalog(_administrator) : refresh.future;
+          },
+          productCreationGatewayLoader: (_) async => _FakeProductGateway((_) {
+            calls += 1;
+            return result.future;
+          }),
+          productPricingGatewayLoader: (_) async => _FakePricingGateway(
+            (_) => throw StateError('pricing must not auto-submit'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pump();
+      auth.sessions.add(
+        EmulatorSession(
+          userId: _administrator.userId,
+          email: _administrator.email,
+          role: _administrator.role,
+        ),
+      );
+      await tester.pump();
+      result.complete(
+        const ProductCreationResult(
+          productId: 'PRD-COFFEE-001',
+          internalCode: 'PRD-COFFEE-001',
+          replayed: false,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      // The shell has now resolved the store; a later same-identity frame
+      // changes the observed draft to null during the catalog refresh await.
+      auth.sessions.add(
+        EmulatorSession(
+          userId: _administrator.userId,
+          email: _administrator.email,
+          role: _administrator.role,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      refresh.complete(
+        CatalogSnapshot(<CatalogItem>[
+          CatalogItem(
+            product: const CatalogProduct(
+              internalCode: 'PRD-COFFEE-001',
+              name: 'Coffee',
+              quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+            ),
+            holdings: const <CatalogHolding>[],
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey<String>('pricing-listed-price')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(calls, 1);
+    },
+  );
+
+  testWidgets('expired success preserves late self-null echo and pricing', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGateway auth = _FakeGateway(restored: _administrator);
+    final Completer<ProductCreationResult> result =
+        Completer<ProductCreationResult>();
+    final Completer<CatalogSnapshot> refresh = Completer<CatalogSnapshot>();
+    int loads = 0;
+    int calls = 0;
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(auth),
+        catalogLoader: (_) =>
+            ++loads == 1 ? _emptyCatalog(_administrator) : refresh.future,
+        productCreationGatewayLoader: (_) async => _FakeProductGateway((_) {
+          calls += 1;
+          return result.future;
+        }),
+        productPricingGatewayLoader: (_) async => _FakePricingGateway(
+          (_) => throw StateError('pricing must not auto-submit'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _enterProduct(tester);
+    await tester.pump();
+    void sameIdentityFrame() => auth.sessions.add(
+      EmulatorSession(
+        userId: _administrator.userId,
+        email: _administrator.email,
+        role: _administrator.role,
+      ),
+    );
+    sameIdentityFrame();
+    await tester.pump();
+    result.complete(
+      const ProductCreationResult(
+        productId: 'PRD-COFFEE-001',
+        internalCode: 'PRD-COFFEE-001',
+        replayed: false,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 10));
+    expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+    sameIdentityFrame();
+    await tester.pump();
+    expect(find.textContaining('outcome is unknown'), findsNothing);
+    refresh.complete(
+      CatalogSnapshot(<CatalogItem>[
+        CatalogItem(
+          product: const CatalogProduct(
+            internalCode: 'PRD-COFFEE-001',
+            name: 'Coffee',
+            quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+          ),
+          holdings: const <CatalogHolding>[],
+        ),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+    expect(
+      tester
+          .widget<TextFormField>(
+            find.byKey(const ValueKey<String>('pricing-listed-price')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(calls, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'self-owned pending echo still becomes genuine uncertainty and exact manual retry',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final Completer<ProductCreationResult> result =
+          Completer<ProductCreationResult>();
+      final List<ProductCreationDraft> attempts = <ProductCreationDraft>[];
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: (_) async =>
+              _FakeProductGateway((ProductCreationDraft draft) {
+                attempts.add(draft);
+                return attempts.length == 1
+                    ? result.future
+                    : Future<ProductCreationResult>.value(
+                        const ProductCreationResult(
+                          productId: 'PRD-COFFEE-001',
+                          internalCode: 'PRD-COFFEE-001',
+                          replayed: true,
+                        ),
+                      );
+              }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pump();
+      auth.sessions.add(
+        EmulatorSession(
+          userId: _administrator.userId,
+          email: _administrator.email,
+          role: _administrator.role,
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('outcome is unknown'), findsNothing);
+      result.completeError(const ProductCreationUncertainException());
+      await tester.pumpAndSettle();
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(attempts, hasLength(1));
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('create-product-name')),
+            )
+            .enabled,
+        isFalse,
+      );
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+      expect(attempts, hasLength(2));
+      expect(identical(attempts[0], attempts[1]), isTrue);
+      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.textContaining('outcome is unknown'), findsNothing);
+    },
+  );
+
+  for (final String authority in <String>[
+    'logout',
+    'null',
+    'seller',
+    'other UID',
+  ]) {
+    testWidgets('pending self-owned echo respects shell $authority authority', (
+      WidgetTester tester,
+    ) async {
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final Completer<ProductCreationResult> result =
+          Completer<ProductCreationResult>();
+      int calls = 0;
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          productCreationGatewayLoader: (_) async => _FakeProductGateway((_) {
+            calls += 1;
+            return result.future;
+          }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _enterProduct(tester);
+      await tester.pump();
+      auth.sessions.add(
+        EmulatorSession(
+          userId: _administrator.userId,
+          email: _administrator.email,
+          role: _administrator.role,
+        ),
+      );
+      await tester.pump();
+      expect(find.textContaining('outcome is unknown'), findsNothing);
+      if (authority == 'logout') {
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      } else {
+        auth.sessions.add(switch (authority) {
+          'seller' => _seller,
+          'other UID' => _otherAdministrator,
+          _ => null,
+        });
+      }
+      await tester.pumpAndSettle();
+      result.complete(
+        const ProductCreationResult(
+          productId: 'PRD-STALE-001',
+          internalCode: 'PRD-STALE-001',
+          replayed: false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Created product PRD-STALE-001'), findsNothing);
+      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(calls, 1);
+    });
+  }
+
   testWidgets('remote sign-out immediately clears authenticated content', (
     WidgetTester tester,
   ) async {
@@ -872,6 +1408,332 @@ void main() {
       expect(catalogCalls, 1);
     },
   );
+
+  test(
+    'lifecycle validation keeps the original error identity and cleanup',
+    () async {
+      final auth = _FailingSdkAuth(validationFailure: true);
+      addTearDown(auth.events.close);
+      final original = _syntheticTypeError();
+      final caught = Completer<Object>();
+      final sessions = <EmulatorSession?>[];
+      final subscription = FirebaseEmulatorSessionGateway(auth)
+          .sessionChanges()
+          .listen(
+            sessions.add,
+            onError: (Object error) => caught.complete(error),
+          );
+      addTearDown(subscription.cancel);
+      auth.events.add(_InvalidSdkUser(tokenError: original));
+      expect(await caught.future, same(original));
+      await Future<void>.delayed(Duration.zero);
+      expect(auth.cleanupCalls, 1);
+      expect(sessions.whereType<EmulatorSession>(), isEmpty);
+      expect(sessions, <EmulatorSession?>[null]);
+    },
+  );
+
+  test('gateway keeps Firebase classification, identity, and cleanup counts', () async {
+    // SDK sign-in failure: original identity, exactly one cleanup.
+    final Object signInError = FirebaseAuthException(
+      code: 'network-request-failed',
+      message: 'synthetic-private-message',
+    );
+    var auth = _FailingSdkAuth(
+      validationFailure: false,
+      signInError: signInError,
+    );
+    addTearDown(auth.events.close);
+    await expectLater(
+      FirebaseEmulatorSessionGateway(
+        auth,
+      ).login(email: 'test-sdk@demo.invalid', password: 'test-only-password'),
+      throwsA(same(signInError)),
+    );
+    expect(auth.cleanupCalls, 1);
+
+    // Refresh rejection remaps to UntrustedSessionException with double cleanup.
+    auth = _FailingSdkAuth(
+      validationFailure: true,
+      tokenError: FirebaseAuthException(
+        code: 'user-disabled',
+        message: 'synthetic-private-message',
+      ),
+    );
+    addTearDown(auth.events.close);
+    await expectLater(
+      FirebaseEmulatorSessionGateway(
+        auth,
+      ).login(email: 'test-sdk@demo.invalid', password: 'test-only-password'),
+      throwsA(same(const UntrustedSessionException())),
+    );
+    expect(auth.cleanupCalls, 2);
+
+    // Refresh connection failure remaps to EmulatorSessionConnectionException.
+    auth = _FailingSdkAuth(
+      validationFailure: true,
+      tokenError: FirebaseAuthException(
+        code: 'network-request-failed',
+        message: 'synthetic-private-message',
+      ),
+    );
+    addTearDown(auth.events.close);
+    await expectLater(
+      FirebaseEmulatorSessionGateway(
+        auth,
+      ).login(email: 'test-sdk@demo.invalid', password: 'test-only-password'),
+      throwsA(isA<EmulatorSessionConnectionException>()),
+    );
+    expect(auth.cleanupCalls, 2);
+  });
+
+  test('lifecycle source errors keep their original identity', () async {
+    final auth = _FailingSdkAuth(validationFailure: true);
+    addTearDown(auth.events.close);
+    final original = _syntheticTypeError();
+    final caught = Completer<Object>();
+    final subscription = FirebaseEmulatorSessionGateway(auth)
+        .sessionChanges()
+        .listen((_) {}, onError: (Object error) => caught.complete(error));
+    addTearDown(subscription.cancel);
+    auth.events.addError(original);
+    expect(await caught.future, same(original));
+    expect(auth.cleanupCalls, 0);
+  });
+
+  testWidgets(
+    'hostile lifecycle error shows sanitized failure cleared by session change',
+    (tester) async {
+      final auth = _FailingSdkAuth(validationFailure: true);
+      addTearDown(auth.events.close);
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(
+            FirebaseEmulatorSessionGateway(auth),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      auth.events.addError(_HostileSdkError());
+      await tester.pumpAndSettle();
+      expect(find.text('Unable to verify session'), findsOneWidget);
+      expect(find.textContaining('Temporary local diagnostic:'), findsNothing);
+      auth.events.add(null);
+      await tester.pumpAndSettle();
+      expect(find.text('Unable to verify session'), findsNothing);
+      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(find.textContaining('synthetic-private'), findsNothing);
+    },
+  );
+
+  for (final bool validationFailure in <bool>[false, true]) {
+    testWidgets(
+      'SDK ${validationFailure ? 'validation' : 'sign-in'} failure cleanup null shows safe feedback',
+      (WidgetTester tester) async {
+        final _FailingSdkAuth auth = _FailingSdkAuth(
+          validationFailure: validationFailure,
+        );
+        addTearDown(auth.events.close);
+        var catalogCalls = 0;
+        await tester.pumpWidget(
+          _app(
+            Future<EmulatorSessionGateway>.value(
+              FirebaseEmulatorSessionGateway(auth),
+            ),
+            catalogLoader: (EmulatorSession session) async {
+              catalogCalls += 1;
+              return CatalogSnapshot(const <CatalogItem>[]);
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('login-email')),
+          'test-sdk@demo.invalid',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('login-password')),
+          'test-only-password',
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+        await tester.pumpAndSettle();
+        expect(auth.cleanupCalls, validationFailure ? 2 : 1);
+        expect(
+          find.text('Unable to sign in to the local emulator.'),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('Temporary local diagnostic:'),
+          findsNothing,
+        );
+        expect(find.textContaining('private'), findsNothing);
+        expect(find.text('Authenticated locally'), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(catalogCalls, 0);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Sign in'),
+              )
+              .onPressed,
+          isNotNull,
+        );
+      },
+    );
+  }
+
+  testWidgets('cleanup null preserves safe login failure and successful retry', (
+    WidgetTester tester,
+  ) async {
+    final Completer<EmulatorSession> login = Completer<EmulatorSession>();
+    final _FakeGateway gateway = _FakeGateway(
+      loginCompleter: login,
+      cleanupBeforeLoginFailure: true,
+    );
+    var catalogCalls = 0;
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(gateway),
+        catalogLoader: (EmulatorSession session) async {
+          catalogCalls += 1;
+          return CatalogSnapshot(const <CatalogItem>[]);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-email')),
+      'seller@demo.invalid',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('login-password')),
+      'test-only-password',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+    login.completeError(StateError('private Firebase detail/token'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Unable to sign in to the local emulator.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('private Firebase'), findsNothing);
+    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(catalogCalls, 0);
+    final Semantics announcement = tester.widget<Semantics>(
+      find
+          .ancestor(
+            of: find.text('Unable to sign in to the local emulator.'),
+            matching: find.byType(Semantics),
+          )
+          .first,
+    );
+    expect(announcement.properties.liveRegion, isTrue);
+
+    // An unclassified coincident/external null has the same fail-closed policy.
+    gateway.sessions.add(null);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Unable to sign in to the local emulator.'),
+      findsOneWidget,
+    );
+    gateway.loginCompleter = Completer<EmulatorSession>();
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+    gateway.loginCompleter!.complete(_seller);
+    await tester.pumpAndSettle();
+    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(catalogCalls, 1);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+  });
+
+  for (final String boundary in <String>[
+    'external null',
+    'actor replacement',
+    'role replacement',
+    'logout',
+    'disposal',
+    'lifecycle rejection',
+  ]) {
+    testWidgets('login failure feedback fence respects $boundary', (
+      WidgetTester tester,
+    ) async {
+      final Completer<EmulatorSession> login = Completer<EmulatorSession>();
+      final _FakeGateway gateway = _FakeGateway(loginCompleter: login);
+      await tester.pumpWidget(
+        _app(Future<EmulatorSessionGateway>.value(gateway)),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-email')),
+        'old-actor@demo.invalid',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-password')),
+        'old-private-password',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.pump();
+      gateway.sessions.add(null);
+      await tester.pump();
+      switch (boundary) {
+        case 'actor replacement':
+          gateway.sessions.add(_administrator);
+        case 'role replacement':
+          gateway.sessions.add(
+            EmulatorSession(
+              userId: _seller.userId,
+              email: _seller.email,
+              role: InventoryRole.administrator,
+            ),
+          );
+        case 'logout':
+          gateway.sessions.add(_seller);
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+        case 'disposal':
+          await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+        case 'lifecycle rejection':
+          gateway.sessions.addError(const UntrustedSessionException());
+        case 'external null':
+          break;
+      }
+      await tester.pumpAndSettle();
+      login.completeError(StateError('old-private-password/token'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Unable to sign in to the local emulator.'),
+        boundary == 'external null' ? findsOneWidget : findsNothing,
+      );
+      expect(find.textContaining('old-private-password/token'), findsNothing);
+      if (boundary == 'logout') {
+        expect(find.text('Local emulator sign in'), findsOneWidget);
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey<String>('login-email')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey<String>('login-password')),
+              )
+              .controller!
+              .text,
+          isEmpty,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('stale login failure cannot cancel a newer attempt', (
     WidgetTester tester,
@@ -1500,6 +2362,481 @@ void main() {
     expect(find.textContaining('outcome is unknown'), findsNothing);
     expect(find.text('Retry same request'), findsNothing);
   });
+
+  testWidgets(
+    'unresolved intake survives logout and same-uid reentry with fresh gateway',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _administrator,
+      );
+      final List<StockIntakeDraft> attempts = <StockIntakeDraft>[];
+      var gatewayLoads = 0;
+      Future<EmulatorStockIntakeGateway> loadIntakeGateway(
+        EmulatorSession session,
+      ) async {
+        gatewayLoads += 1;
+        final int load = gatewayLoads;
+        return _FakeStockIntakeGateway((StockIntakeDraft draft) async {
+          attempts.add(draft);
+          if (load == 1) throw const StockIntakeUncertainException();
+          return _intakeResult(draft, replayed: true);
+        });
+      }
+
+      final GlobalKey<EmulatorLoginShellState> shellKey =
+          GlobalKey<EmulatorLoginShellState>();
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          stockIntakeGatewayLoader: loadIntakeGateway,
+          shellKey: shellKey,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final EmulatorLoginShellState shell = shellKey.currentState!;
+      final StockIntakeDraft draft = _intakeDraft();
+
+      await expectLater(
+        shell.submitStockIntake(draft),
+        throwsA(isA<StockIntakeUncertainException>()),
+      );
+      expect(gatewayLoads, 1);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        same(draft),
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+      await _signIn(tester);
+
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        same(draft),
+      );
+
+      final StockIntakeResult retried = await shell.submitStockIntake(draft);
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], same(draft));
+      expect(attempts[1].idempotencyKey, draft.idempotencyKey);
+      expect(retried.replayed, isTrue);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  testWidgets('seller cannot initialize, submit, or observe stock intake', (
+    WidgetTester tester,
+  ) async {
+    var gatewayLoads = 0;
+    final _FakeGateway gateway = _FakeGateway(restored: _seller);
+    final GlobalKey<EmulatorLoginShellState> shellKey =
+        GlobalKey<EmulatorLoginShellState>();
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(gateway),
+        stockIntakeGatewayLoader: (EmulatorSession session) async {
+          gatewayLoads += 1;
+          throw StateError('sellers never initialize intake');
+        },
+        shellKey: shellKey,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final EmulatorLoginShellState shell = shellKey.currentState!;
+    final StockIntakeDraft draft = _intakeDraft();
+
+    await expectLater(
+      shell.submitStockIntake(draft),
+      throwsA(isA<StockIntakeSessionException>()),
+    );
+    expect(gatewayLoads, 0);
+    expect(
+      shell.unresolvedStockIntakeDraftFor(
+        _seller,
+        draft.productId,
+        draft.branchId,
+      ),
+      isNull,
+    );
+  });
+
+  testWidgets(
+    'another administrator cannot read the intake draft; original owner retains it',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(
+        restored: _administrator,
+        loginResult: _otherAdministrator,
+      );
+      var gatewayLoads = 0;
+      final GlobalKey<EmulatorLoginShellState> shellKey =
+          GlobalKey<EmulatorLoginShellState>();
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          stockIntakeGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            return _FakeStockIntakeGateway(
+              (_) => throw const StockIntakeUncertainException(),
+            );
+          },
+          shellKey: shellKey,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final EmulatorLoginShellState shell = shellKey.currentState!;
+      final StockIntakeDraft draft = _intakeDraft();
+
+      await expectLater(
+        shell.submitStockIntake(draft),
+        throwsA(isA<StockIntakeUncertainException>()),
+      );
+      expect(gatewayLoads, 1);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        same(draft),
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.pumpAndSettle();
+      await _signIn(tester);
+
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _otherAdministrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        isNull,
+      );
+
+      auth.sessions.add(_administrator);
+      await tester.pumpAndSettle();
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        same(draft),
+      );
+      expect(gatewayLoads, 1);
+    },
+  );
+
+  testWidgets('late old intake completion cannot resolve a newer attempt', (
+    WidgetTester tester,
+  ) async {
+    final Completer<StockIntakeResult> first = Completer<StockIntakeResult>();
+    final _FakeGateway auth = _FakeGateway(restored: _administrator);
+    var gatewayLoads = 0;
+    final GlobalKey<EmulatorLoginShellState> shellKey =
+        GlobalKey<EmulatorLoginShellState>();
+    await tester.pumpWidget(
+      _app(
+        Future<EmulatorSessionGateway>.value(auth),
+        stockIntakeGatewayLoader: (EmulatorSession session) async {
+          gatewayLoads += 1;
+          final int load = gatewayLoads;
+          return _FakeStockIntakeGateway((StockIntakeDraft draft) async {
+            if (load == 1) return first.future;
+            return _intakeResult(draft, replayed: true);
+          });
+        },
+        shellKey: shellKey,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final EmulatorLoginShellState shell = shellKey.currentState!;
+    final StockIntakeDraft draft = _intakeDraft();
+
+    final Future<StockIntakeResult> oldAttempt = shell.submitStockIntake(draft);
+    await tester.pump();
+    expect(gatewayLoads, 1);
+    expect(
+      shell.unresolvedStockIntakeDraftFor(
+        _administrator,
+        draft.productId,
+        draft.branchId,
+      ),
+      same(draft),
+    );
+
+    final StockIntakeResult newResult = await shell.submitStockIntake(draft);
+    expect(gatewayLoads, 2);
+    expect(newResult.replayed, isTrue);
+    expect(
+      shell.unresolvedStockIntakeDraftFor(
+        _administrator,
+        draft.productId,
+        draft.branchId,
+      ),
+      isNull,
+    );
+
+    first.complete(_intakeResult(draft, replayed: false));
+    await expectLater(oldAttempt, throwsA(isA<StockIntakeStaleException>()));
+    expect(
+      shell.unresolvedStockIntakeDraftFor(
+        _administrator,
+        draft.productId,
+        draft.branchId,
+      ),
+      isNull,
+    );
+  });
+
+  testWidgets(
+    'intake gateway initialization failure freezes the exact request for retry',
+    (WidgetTester tester) async {
+      var loads = 0;
+      final List<StockIntakeDraft> attempts = <StockIntakeDraft>[];
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final GlobalKey<EmulatorLoginShellState> shellKey =
+          GlobalKey<EmulatorLoginShellState>();
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          stockIntakeGatewayLoader: (EmulatorSession session) async {
+            loads += 1;
+            if (loads == 1) throw StateError('functions unavailable');
+            return _FakeStockIntakeGateway((StockIntakeDraft draft) async {
+              attempts.add(draft);
+              return _intakeResult(draft, replayed: true);
+            });
+          },
+          shellKey: shellKey,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final EmulatorLoginShellState shell = shellKey.currentState!;
+      final StockIntakeDraft draft = _intakeDraft();
+
+      await expectLater(
+        shell.submitStockIntake(draft),
+        throwsA(isA<StateError>()),
+      );
+      expect(loads, 1);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        same(draft),
+      );
+
+      await shell.submitStockIntake(draft);
+      expect(loads, 2);
+      expect(attempts, hasLength(1));
+      expect(attempts.single, same(draft));
+      expect(attempts.single.idempotencyKey, draft.idempotencyKey);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          draft.productId,
+          draft.branchId,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
+    'a different intake draft cannot replace or resolve the frozen request',
+    (WidgetTester tester) async {
+      var gatewayLoads = 0;
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final GlobalKey<EmulatorLoginShellState> shellKey =
+          GlobalKey<EmulatorLoginShellState>();
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          stockIntakeGatewayLoader: (EmulatorSession session) async {
+            gatewayLoads += 1;
+            return _FakeStockIntakeGateway(
+              (_) => throw const StockIntakeUncertainException(),
+            );
+          },
+          shellKey: shellKey,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final EmulatorLoginShellState shell = shellKey.currentState!;
+      final StockIntakeDraft frozen = _intakeDraft();
+      final StockIntakeDraft replacement = _intakeDraft(quantity: '7');
+
+      await expectLater(
+        shell.submitStockIntake(frozen),
+        throwsA(isA<StockIntakeUncertainException>()),
+      );
+      await expectLater(
+        shell.submitStockIntake(replacement),
+        throwsA(isA<StockIntakeUnresolvedException>()),
+      );
+      expect(gatewayLoads, 1);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          frozen.productId,
+          frozen.branchId,
+        ),
+        same(frozen),
+      );
+
+      await expectLater(
+        shell.submitStockIntake(frozen),
+        throwsA(isA<StockIntakeUncertainException>()),
+      );
+      expect(gatewayLoads, 2);
+    },
+  );
+
+  testWidgets(
+    'intake UI submits through the shell and isolates unresolved drafts by actor',
+    (WidgetTester tester) async {
+      final _FakeGateway auth = _FakeGateway(restored: _administrator);
+      final List<StockIntakeDraft> attempts = <StockIntakeDraft>[];
+      var gatewayLoads = 0;
+      Future<EmulatorStockIntakeGateway> loadIntakeGateway(
+        EmulatorSession session,
+      ) async {
+        gatewayLoads += 1;
+        final int load = gatewayLoads;
+        return _FakeStockIntakeGateway((StockIntakeDraft draft) async {
+          attempts.add(draft);
+          if (load == 1) throw const StockIntakeUncertainException();
+          return _intakeResult(draft, replayed: true);
+        });
+      }
+
+      final GlobalKey<EmulatorLoginShellState> shellKey =
+          GlobalKey<EmulatorLoginShellState>();
+      await tester.pumpWidget(
+        _app(
+          Future<EmulatorSessionGateway>.value(auth),
+          catalogLoader: _intakeCatalog,
+          stockIntakeGatewayLoader: loadIntakeGateway,
+          shellKey: shellKey,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final EmulatorLoginShellState shell = shellKey.currentState!;
+
+      // The administrator opens the visible intake form and submits.
+      await tester.tap(
+        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('North Demo Branch').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('intake-quantity')),
+        '3',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('intake-unit-cost')),
+        '12.50',
+      );
+      final Finder record = find.widgetWithText(FilledButton, 'Record intake');
+      await tester.ensureVisible(record);
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+
+      expect(attempts, hasLength(1));
+      final String frozenKey = attempts.single.idempotencyKey;
+      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.text('Retry same request'), findsOneWidget);
+
+      // A seller session receives no intake control and cannot read the draft.
+      auth.sessions.add(_seller);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
+        findsNothing,
+      );
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _seller,
+          'PRD-COFFEE-001',
+          'branch-north',
+        ),
+        isNull,
+      );
+
+      // Another administrator cannot read or resolve it either.
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _otherAdministrator,
+          'PRD-COFFEE-001',
+          'branch-north',
+        ),
+        isNull,
+      );
+
+      // The originating administrator returns and resolves the same request
+      // through the visible form with a fresh gateway.
+      auth.sessions.add(_administrator);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('North Demo Branch'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey<String>('intake-quantity')),
+            )
+            .controller
+            ?.text,
+        '3',
+      );
+      final Finder retry = find.widgetWithText(
+        FilledButton,
+        'Retry same request',
+      );
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(gatewayLoads, 2);
+      expect(attempts, hasLength(2));
+      expect(attempts[1], same(attempts[0]));
+      expect(attempts[1].idempotencyKey, frozenKey);
+      expect(find.text('Intake recorded. Entry $frozenKey'), findsOneWidget);
+      expect(
+        shell.unresolvedStockIntakeDraftFor(
+          _administrator,
+          'PRD-COFFEE-001',
+          'branch-north',
+        ),
+        isNull,
+      );
+    },
+  );
 
   testWidgets('bootstrap failure is fail-closed and retryable', (
     WidgetTester tester,

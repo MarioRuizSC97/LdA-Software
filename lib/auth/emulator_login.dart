@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import '../catalog/stock_intake.dart';
+import '../firebase/emulator_stock_intake_gateway.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
@@ -15,6 +17,9 @@ typedef ProductCreationGatewayLoader = Future<ProductCreationGateway> Function(
 typedef ProductPricingGatewayLoader = Future<ProductPricingGateway> Function(
   EmulatorSession session,
 );
+typedef StockIntakeGatewayLoader = Future<EmulatorStockIntakeGateway> Function(
+  EmulatorSession session,
+);
 
 class EmulatorLoginShell extends StatefulWidget {
   const EmulatorLoginShell({
@@ -22,6 +27,7 @@ class EmulatorLoginShell extends StatefulWidget {
     required this.catalogLoader,
     this.productCreationGatewayLoader,
     this.productPricingGatewayLoader,
+    this.stockIntakeGatewayLoader,
     this.retryLoader,
     super.key,
   });
@@ -30,26 +36,40 @@ class EmulatorLoginShell extends StatefulWidget {
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader? productCreationGatewayLoader;
   final ProductPricingGatewayLoader? productPricingGatewayLoader;
+  final StockIntakeGatewayLoader? stockIntakeGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
-  State<EmulatorLoginShell> createState() => _EmulatorLoginShellState();
+  State<EmulatorLoginShell> createState() => EmulatorLoginShellState();
 }
 
 enum _SessionFailure { none, bootstrap, rejected, connection }
 
-class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
+class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   EmulatorSessionGateway? _gateway;
   EmulatorSession? _session;
   StreamSubscription<EmulatorSession?>? _sessionSubscription;
   bool _loading = true;
   bool _logoutIntent = false;
   int _authGeneration = 0;
+  // Failure feedback is not authentication authority. SDK null events always
+  // invalidate success, but cannot identify cleanup versus external sign-out.
+  // Only the current explicit attempt may still report a sanitized failure.
+  int? _loginFeedbackAttempt;
   int _streamGeneration = 0;
   final ProductCreationDraftStore _productCreationDrafts =
       ProductCreationDraftStore();
   final ProductPricingDraftStore _productPricingDrafts =
       ProductPricingDraftStore();
+
+  // Intake draft retention is intentionally volatile: this store lives only in
+  // this live shell state. There is no disk, preference, database, or global
+  // singleton persistence, so unresolved intake drafts do not survive shell
+  // disposal, browser reload, process restart, or app restart. Keeping the
+  // store above the disposable authenticated page is what lets an unresolved
+  // intake request survive closing the intake presentation, logout, role
+  // replacement, and same-UID administrator reentry on this live shell.
+  final StockIntakeDraftStore _stockIntakeDrafts = StockIntakeDraftStore();
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -60,6 +80,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
 
   @override
   void dispose() {
+    _loginFeedbackAttempt = null;
     _authGeneration += 1;
     _streamGeneration += 1;
     _sessionSubscription?.cancel();
@@ -67,6 +88,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
   }
 
   Future<void> _load(Future<EmulatorSessionGateway> gatewayFuture) async {
+    _loginFeedbackAttempt = null;
     final int generation = ++_authGeneration;
     setState(() {
       _loading = true;
@@ -94,6 +116,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     EmulatorSessionGateway gateway, {
     int? generation,
   }) async {
+    _loginFeedbackAttempt = null;
     final int operation = generation ?? ++_authGeneration;
     setState(() {
       _loading = true;
@@ -146,15 +169,19 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
   void _listenToSessionChanges(EmulatorSessionGateway gateway) {
     final int generation = ++_streamGeneration;
     _sessionSubscription = gateway.sessionChanges().listen(
-      (EmulatorSession? session) => _sessionChanged(session, generation),
-      onError: (Object error, StackTrace stackTrace) =>
-          _sessionChangeFailed(error, stackTrace, generation),
+      (EmulatorSession? session) {
+        _sessionChanged(session, generation);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _sessionChangeFailed(error, stackTrace, generation);
+      },
     );
   }
 
   void _sessionChanged(EmulatorSession? session, int generation) {
     if (!mounted || generation != _streamGeneration) return;
     if (_logoutIntent && session != null) return;
+    if (session != null) _loginFeedbackAttempt = null;
     _authGeneration += 1;
     setState(() {
       _session = session;
@@ -169,6 +196,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     int generation,
   ) {
     if (generation != _streamGeneration || _logoutIntent) return;
+    _loginFeedbackAttempt = null;
     _authGeneration += 1;
     _showFailure(
       error is UntrustedSessionException
@@ -203,13 +231,18 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     });
   }
 
-  int _startLoginAttempt() => ++_authGeneration;
+  int _startLoginAttempt() {
+    final int generation = ++_authGeneration;
+    _loginFeedbackAttempt = generation;
+    return generation;
+  }
 
   bool _completeLoginAttempt(int generation, EmulatorSession session) {
     final EmulatorSessionGateway? gateway = _gateway;
     if (!mounted || gateway == null || generation != _authGeneration) {
       return false;
     }
+    _loginFeedbackAttempt = null;
     _authGeneration += 1;
     _logoutIntent = false;
     if (_sessionSubscription == null) _listenToSessionChanges(gateway);
@@ -217,12 +250,13 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     return true;
   }
 
-  bool _isLoginAttemptCurrent(int generation) =>
-      mounted && generation == _authGeneration;
+  bool _mayShowLoginFailure(int generation) =>
+      mounted && generation == _loginFeedbackAttempt;
 
   Future<void> _logout() async {
     final EmulatorSessionGateway? gateway = _gateway;
     if (gateway == null) return;
+    _loginFeedbackAttempt = null;
     _authGeneration += 1;
     _logoutIntent = true;
     final Future<void> detach = _detachSessionSubscription();
@@ -322,15 +356,88 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
   }
 
+  /// Exact intake submit API consumed by the authenticated page (intake UI
+  /// slice): freezes ownership and the immutable request under the current
+  /// exact administrator before gateway initialization or transport, then
+  /// resolves only the current attempt's proven success or deterministic
+  /// rejection. Every attempt — including a retry — initializes a fresh
+  /// gateway bound to the current validated session.
+  Future<StockIntakeResult> submitStockIntake(StockIntakeDraft draft) async {
+    final EmulatorSession? session = _session;
+    final StockIntakeGatewayLoader? loader = widget.stockIntakeGatewayLoader;
+    if (!_isExactAdministrator(session) || loader == null) {
+      throw const StockIntakeSessionException();
+    }
+
+    final StockIntakeAttempt attempt = _stockIntakeDrafts.begin(
+      ownerUserId: session!.userId,
+      draft: draft,
+    );
+    try {
+      final EmulatorStockIntakeGateway gateway = await loader(session);
+      final StockIntakeResult result = await gateway.submitIntake(draft);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const StockIntakeUncertainException();
+      }
+      if (!_stockIntakeDrafts.resolve(attempt)) {
+        throw const StockIntakeStaleException();
+      }
+      return result;
+    } on StockIntakeRejectedException {
+      if (!_isSameCurrentAdministrator(session)) {
+        _stockIntakeDrafts.retain(attempt);
+        throw const StockIntakeUncertainException();
+      }
+      if (!_stockIntakeDrafts.resolve(attempt)) {
+        throw const StockIntakeStaleException();
+      }
+      rethrow;
+    } catch (_) {
+      _stockIntakeDrafts.retain(attempt);
+      rethrow;
+    }
+  }
+
+  /// Exact intake lookup API the authenticated page (intake UI slice) calls
+  /// for an exact (current uid, product id, branch id) unresolved draft. The
+  /// draft is returned only while the current session is the same exact UID
+  /// with the exact administrator role and a null branch, so sellers, other
+  /// administrators, and replaced sessions receive neither fields nor retry
+  /// authority.
+  StockIntakeDraft? unresolvedStockIntakeDraftFor(
+    EmulatorSession originatingSession,
+    String productId,
+    String branchId,
+  ) {
+    if (!_isSameCurrentAdministrator(originatingSession)) return null;
+    return _stockIntakeDrafts.unresolvedFor(
+      originatingSession.userId,
+      productId,
+      branchId,
+    );
+  }
+
   bool _isExactAdministrator(EmulatorSession? session) =>
       session != null &&
       session.role == InventoryRole.administrator &&
       session.branchId == null;
-
   bool _isSameCurrentAdministrator(EmulatorSession originatingSession) {
     final EmulatorSession? current = _session;
     return _isExactAdministrator(current) &&
         current!.userId == originatingSession.userId;
+  }
+
+  StockIntakeDraft? _unresolvedIntakeDraftFor(
+    EmulatorSession originatingSession,
+    String productId,
+    String branchId,
+  ) {
+    if (!_isSameCurrentAdministrator(originatingSession)) return null;
+    return _stockIntakeDrafts.unresolvedFor(
+      originatingSession.userId,
+      productId,
+      branchId,
+    );
   }
 
   ProductPricingDraft? _unresolvedPricingDraftFor(
@@ -394,6 +501,15 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
             ? (String productId) =>
                   _unresolvedPricingDraftFor(session, productId)
             : null,
+        submitStockIntake:
+            _isExactAdministrator(session) &&
+                widget.stockIntakeGatewayLoader != null
+            ? submitStockIntake
+            : null,
+        unresolvedIntakeDraftFor: _isExactAdministrator(session)
+            ? (String productId, String branchId) =>
+                  _unresolvedIntakeDraftFor(session, productId, branchId)
+            : null,
         onLogout: _logout,
       );
     }
@@ -402,7 +518,7 @@ class _EmulatorLoginShellState extends State<EmulatorLoginShell> {
       authGeneration: _authGeneration,
       onLoginStarted: _startLoginAttempt,
       onAuthenticated: _completeLoginAttempt,
-      isLoginAttemptCurrent: _isLoginAttemptCurrent,
+      mayShowLoginFailure: _mayShowLoginFailure,
     );
   }
 }
@@ -473,14 +589,14 @@ class _LoginView extends StatefulWidget {
     required this.authGeneration,
     required this.onLoginStarted,
     required this.onAuthenticated,
-    required this.isLoginAttemptCurrent,
+    required this.mayShowLoginFailure,
   });
 
   final EmulatorSessionGateway gateway;
   final int authGeneration;
   final int Function() onLoginStarted;
   final bool Function(int generation, EmulatorSession session) onAuthenticated;
-  final bool Function(int generation) isLoginAttemptCurrent;
+  final bool Function(int generation) mayShowLoginFailure;
 
   @override
   State<_LoginView> createState() => _LoginViewState();
@@ -491,13 +607,18 @@ class _LoginViewState extends State<_LoginView> {
   final TextEditingController _password = TextEditingController();
   bool _submitting = false;
   String? _error;
+  int? _errorAttempt;
 
   @override
   void didUpdateWidget(_LoginView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.authGeneration != widget.authGeneration) {
       _submitting = false;
-      _error = null;
+      if (_errorAttempt == null ||
+          !widget.mayShowLoginFailure(_errorAttempt!)) {
+        _error = null;
+        _errorAttempt = null;
+      }
     }
   }
 
@@ -512,7 +633,10 @@ class _LoginViewState extends State<_LoginView> {
     final String email = _email.text.trim();
     final String password = _password.text;
     if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = 'Enter the local demo email and password.');
+      setState(() {
+        _errorAttempt = null;
+        _error = 'Enter the local demo email and password.';
+      });
       return;
     }
 
@@ -520,6 +644,7 @@ class _LoginViewState extends State<_LoginView> {
     setState(() {
       _submitting = true;
       _error = null;
+      _errorAttempt = null;
     });
     try {
       final EmulatorSession session = await widget.gateway.login(
@@ -528,9 +653,10 @@ class _LoginViewState extends State<_LoginView> {
       );
       if (mounted) widget.onAuthenticated(generation, session);
     } catch (_) {
-      if (!mounted || !widget.isLoginAttemptCurrent(generation)) return;
+      if (!mounted || !widget.mayShowLoginFailure(generation)) return;
       setState(() {
         _submitting = false;
+        _errorAttempt = generation;
         _error = 'Unable to sign in to the local emulator.';
       });
     }
