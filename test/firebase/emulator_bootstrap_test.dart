@@ -388,5 +388,107 @@ void main() {
         );
       },
     );
+
+    test(
+      'stock intake connects trusted Auth, Firestore, and Functions first',
+      () async {
+        final List<String> events = <String>[];
+
+        final String result =
+            await DemoEmulatorBootstrap.startStockIntake<String>(
+              platform: EmulatorClientPlatform.web,
+              initializeApp: (_) async => events.add('initialize'),
+              connectAuthEmulator: (String host, int port) async {
+                events.add('auth:$host:$port');
+              },
+              connectFirestoreEmulator: (String host, int port) async {
+                events.add('firestore:$host:$port');
+              },
+              connectFunctionsEmulator: (String host, int port) async {
+                events.add('functions:$host:$port');
+              },
+              createGateway: () {
+                events.add('intake');
+                return 'intake';
+              },
+            );
+
+        expect(result, 'intake');
+        expect(events, <String>[
+          'initialize',
+          'auth:127.0.0.1:9099',
+          'firestore:127.0.0.1:8080',
+          'functions:127.0.0.1:5001',
+          'intake',
+        ]);
+      },
+    );
+
+    test(
+      'stock intake uses Android host and rejects unsupported platforms',
+      () async {
+        final List<String> endpoints = <String>[];
+        await DemoEmulatorBootstrap.startStockIntake<String>(
+          platform: EmulatorClientPlatform.android,
+          initializeApp: (_) async {},
+          connectAuthEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFirestoreEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFunctionsEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          createGateway: () => 'intake',
+        );
+        expect(endpoints, <String>[
+          '10.0.2.2:9099',
+          '10.0.2.2:8080',
+          '10.0.2.2:5001',
+        ]);
+
+        var initialized = false;
+        await expectLater(
+          DemoEmulatorBootstrap.startStockIntake<String>(
+            platform: EmulatorClientPlatform.unsupported,
+            initializeApp: (_) async => initialized = true,
+            connectAuthEmulator: (_, _) async {},
+            connectFirestoreEmulator: (_, _) async {},
+            connectFunctionsEmulator: (_, _) async {},
+            createGateway: () => 'intake',
+          ),
+          throwsA(isA<UnsupportedError>()),
+        );
+        expect(initialized, isFalse);
+      },
+    );
+
+    test('failed stock intake connection never builds the gateway and is retryable', () async {
+      var connectionCalls = 0;
+      var gatewaysBuilt = 0;
+      Future<String> attempt() =>
+          DemoEmulatorBootstrap.startStockIntake<String>(
+            platform: EmulatorClientPlatform.web,
+            initializeApp: (_) async {},
+            connectAuthEmulator: (_, _) async {},
+            connectFirestoreEmulator: (_, _) async {},
+            connectFunctionsEmulator: (_, _) async {
+              connectionCalls += 1;
+              if (connectionCalls == 1) {
+                throw StateError('host unavailable');
+              }
+            },
+            createGateway: () {
+              gatewaysBuilt += 1;
+              return 'intake';
+            },
+          );
+
+      await expectLater(attempt(), throwsStateError);
+      expect(gatewaysBuilt, 0);
+      expect(await attempt(), 'intake');
+      expect(gatewaysBuilt, 1);
+    });
   });
 }

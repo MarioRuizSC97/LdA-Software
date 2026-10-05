@@ -9,8 +9,12 @@ import '../catalog/catalog_repository.dart';
 import '../catalog/firestore_catalog_repository.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import 'emulator_auth_routing.dart';
+import 'emulator_auth_routing_platform.dart';
+import 'emulator_auth_routing_preinit.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
+import 'emulator_stock_intake_gateway.dart';
 
 enum EmulatorClientPlatform { android, web, unsupported }
 
@@ -19,9 +23,21 @@ typedef FirestoreEmulatorConnect = Future<void> Function(String host, int port);
 typedef FunctionsEmulatorConnect = Future<void> Function(String host, int port);
 
 class AuthEmulatorConnection {
-  AuthEmulatorConnection(this._connect);
+  AuthEmulatorConnection(
+    AuthEmulatorConnect connect, {
+    String appName = emulatorDemoAppName,
+    void Function(String host, int port)? verify,
+  }) {
+    final WebAuthEmulatorRouting? routing = webAuthEmulatorRouting(
+      appName: appName,
+      connect: connect,
+    );
+    _connect = routing?.ensureConnected ?? connect;
+    _verify = verify ?? routing?.verify;
+  }
 
-  final AuthEmulatorConnect _connect;
+  late final AuthEmulatorConnect _connect;
+  late final void Function(String host, int port)? _verify;
   Future<void>? _connectionAttempt;
   String? _host;
   int? _port;
@@ -31,6 +47,7 @@ class AuthEmulatorConnection {
       if (_host != host || _port != port) {
         throw StateError('Auth is already configured for another emulator.');
       }
+      _verify?.call(host, port);
       return;
     }
 
@@ -44,6 +61,7 @@ class AuthEmulatorConnection {
     _connectionAttempt = attempt;
     try {
       await attempt;
+      _verify?.call(host, port);
       _host = host;
       _port = port;
     } finally {
@@ -125,7 +143,7 @@ class FunctionsEmulatorConnection {
 class DemoEmulatorBootstrap {
   const DemoEmulatorBootstrap._();
 
-  static const String _appName = 'lda-demo-emulators';
+  static const String _appName = emulatorDemoAppName;
   static final Map<String, AuthEmulatorConnection> _authConnections =
       <String, AuthEmulatorConnection>{};
   static final Map<String, FirestoreEmulatorConnection> _firestoreConnections =
@@ -133,13 +151,7 @@ class DemoEmulatorBootstrap {
   static final Map<String, FunctionsEmulatorConnection> _functionsConnections =
       <String, FunctionsEmulatorConnection>{};
 
-  static const FirebaseOptions options = FirebaseOptions(
-    apiKey: 'demo-api-key',
-    appId: '1:1234567890:web:demo-lda-inventory',
-    messagingSenderId: '1234567890',
-    projectId: 'demo-lda-inventory',
-    authDomain: 'demo-lda-inventory.firebaseapp.com',
-  );
+  static const FirebaseOptions options = emulatorDemoOptions;
 
   static EmulatorClientPlatform get currentPlatform {
     if (kIsWeb) return EmulatorClientPlatform.web;
@@ -154,8 +166,10 @@ class DemoEmulatorBootstrap {
     required Future<void> Function(FirebaseOptions options) initializeApp,
     required Future<void> Function(String host, int port) connectAuthEmulator,
     required EmulatorSessionGateway Function() createGateway,
+    Future<void> Function()? prepareWebAuth,
   }) async {
     final String host = _hostFor(platform);
+    await _prepareWebAuth(platform, prepareWebAuth);
     await initializeApp(options);
     await connectAuthEmulator(host, 9099);
     return createGateway();
@@ -168,8 +182,10 @@ class DemoEmulatorBootstrap {
     required Future<void> Function(String host, int port)
     connectFirestoreEmulator,
     required T Function() createCatalog,
+    Future<void> Function()? prepareWebAuth,
   }) async {
     final String host = _hostFor(platform);
+    await _prepareWebAuth(platform, prepareWebAuth);
     await initializeApp(options);
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
@@ -185,8 +201,10 @@ class DemoEmulatorBootstrap {
     required Future<void> Function(String host, int port)
     connectFunctionsEmulator,
     required T Function() createGateway,
+    Future<void> Function()? prepareWebAuth,
   }) async {
     final String host = _hostFor(platform);
+    await _prepareWebAuth(platform, prepareWebAuth);
     await initializeApp(options);
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
@@ -203,8 +221,10 @@ class DemoEmulatorBootstrap {
     required Future<void> Function(String host, int port)
     connectFunctionsEmulator,
     required T Function() createGateway,
+    Future<void> Function()? prepareWebAuth,
   }) async {
     final String host = _hostFor(platform);
+    await _prepareWebAuth(platform, prepareWebAuth);
     await initializeApp(options);
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
@@ -424,6 +444,90 @@ class DemoEmulatorBootstrap {
     );
   }
 
+  static Future<T> startStockIntake<T>({
+    required EmulatorClientPlatform platform,
+    required Future<void> Function(FirebaseOptions options) initializeApp,
+    required Future<void> Function(String host, int port) connectAuthEmulator,
+    required Future<void> Function(String host, int port)
+    connectFirestoreEmulator,
+    required Future<void> Function(String host, int port)
+    connectFunctionsEmulator,
+    required T Function() createGateway,
+    Future<void> Function()? prepareWebAuth,
+  }) async {
+    final String host = _hostFor(platform);
+    await _prepareWebAuth(platform, prepareWebAuth);
+    await initializeApp(options);
+    await connectAuthEmulator(host, 9099);
+    await connectFirestoreEmulator(host, 8080);
+    await connectFunctionsEmulator(host, 5001);
+    return createGateway();
+  }
+
+  static Future<EmulatorStockIntakeGateway> initializeStockIntakeGateway(
+    EmulatorSession session,
+  ) async {
+    late FirebaseApp app;
+    late FirebaseAuth auth;
+    late FirebaseFirestore firestore;
+    late FirebaseFunctions functions;
+    return startStockIntake<EmulatorStockIntakeGateway>(
+      platform: currentPlatform,
+      initializeApp: (FirebaseOptions explicitOptions) async {
+        app = await _initializeTrustedApp(explicitOptions);
+        auth = FirebaseAuth.instanceFor(app: app);
+        firestore = FirebaseFirestore.instanceFor(app: app);
+        functions = FirebaseFunctions.instanceFor(
+          app: app,
+          region: 'us-south1',
+        );
+      },
+      connectAuthEmulator: (String host, int port) {
+        final AuthEmulatorConnection connection = _authConnections.putIfAbsent(
+          app.name,
+          () => AuthEmulatorConnection(
+            (String emulatorHost, int emulatorPort) => auth.useAuthEmulator(
+              emulatorHost,
+              emulatorPort,
+              automaticHostMapping: false,
+            ),
+          ),
+        );
+        return connection.ensureConnected(host, port);
+      },
+      connectFirestoreEmulator: (String host, int port) {
+        final FirestoreEmulatorConnection connection = _firestoreConnections
+            .putIfAbsent(
+              app.name,
+              () => FirestoreEmulatorConnection((String host, int port) async {
+                firestore.useFirestoreEmulator(host, port);
+              }),
+            );
+        return connection.ensureConnected(host, port);
+      },
+      connectFunctionsEmulator: (String host, int port) {
+        final String key = '${app.name}|us-south1';
+        final FunctionsEmulatorConnection connection = _functionsConnections
+            .putIfAbsent(
+              key,
+              () => FunctionsEmulatorConnection((String host, int port) async {
+                functions.useFunctionsEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
+              }),
+            );
+        return connection.ensureConnected(host, port);
+      },
+      createGateway: () => EmulatorStockIntakeGateway(
+        expectedSession: session,
+        sessionChecker: _firebaseActiveSessionChecker(auth),
+        invoke: firebaseStockIntakeCallable(functions),
+      ),
+    );
+  }
+
   static ActiveSessionChecker _firebaseActiveSessionChecker(FirebaseAuth auth) {
     return () async {
       final User? user = auth.currentUser;
@@ -438,6 +542,16 @@ class DemoEmulatorBootstrap {
         claims: claims.cast<String, Object?>(),
       );
     };
+  }
+
+  static Future<void> _prepareWebAuth(
+    EmulatorClientPlatform platform,
+    Future<void> Function()? prepare,
+  ) async {
+    if (platform == EmulatorClientPlatform.web) {
+      await (prepare ??
+          () => prepareWebAuthEmulator(appName: _appName, options: options))();
+    }
   }
 
   static String _hostFor(EmulatorClientPlatform platform) => switch (platform) {
@@ -455,9 +569,13 @@ class DemoEmulatorBootstrap {
     for (final FirebaseApp candidate in Firebase.apps) {
       if (candidate.name == _appName) existing = candidate;
     }
+    // Web preinitialization creates the JS app, not FlutterFire's per-app
+    // plugin initialization. Run that initialization with identical options
+    // only after the synchronous local Auth route has been verified.
     final FirebaseApp app =
-        existing ??
-        await Firebase.initializeApp(name: _appName, options: explicitOptions);
+        currentPlatform == EmulatorClientPlatform.web || existing == null
+        ? await Firebase.initializeApp(name: _appName, options: explicitOptions)
+        : existing;
     if (app.name != _appName ||
         app.options.projectId != options.projectId ||
         app.options.appId != options.appId ||
