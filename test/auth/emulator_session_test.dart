@@ -1,7 +1,56 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 
+class _HostileError implements Exception {
+  @override
+  String toString() => throw StateError('must not inspect raw diagnostics');
+}
+
+Object _typeError() {
+  try {
+    final Object value = 'synthetic-private-value';
+    return value as int;
+  } catch (error) {
+    return error;
+  }
+}
+
 void main() {
+  group('guard failure handling', () {
+    test(
+      'cleanup runs before rethrowing the original failure identity',
+      () async {
+        final Object original = _typeError();
+        var signOutCalls = 0;
+        await expectLater(
+          EmulatorSessionGuard.validate(
+            userId: 'uid',
+            email: 'user@example.invalid',
+            refreshClaims: () async => throw original,
+            signOut: () async => signOutCalls += 1,
+          ),
+          throwsA(same(original)),
+        );
+        expect(signOutCalls, 1);
+      },
+    );
+
+    test('failure handling never inspects hostile error contents', () async {
+      // _HostileError.toString throws, so rethrowing the identical instance
+      // proves no diagnostic or rendering path ever inspected the error.
+      final Object original = _HostileError();
+      await expectLater(
+        EmulatorSessionGuard.validate(
+          userId: 'uid',
+          email: 'user@example.invalid',
+          refreshClaims: () async => throw original,
+          signOut: () async {},
+        ),
+        throwsA(same(original)),
+      );
+    });
+  });
+
   group('EmulatorSessionClaims', () {
     test('accepts the exact administrator role without a branch', () {
       final EmulatorSession session = EmulatorSessionClaims.validate(
@@ -18,10 +67,7 @@ void main() {
       final EmulatorSession session = EmulatorSessionClaims.validate(
         userId: 'demo-local-seller-north',
         email: 'seller.north@demo-lda-inventory.invalid',
-        claims: <String, Object?>{
-          'role': 'seller',
-          'branchId': 'branch-north',
-        },
+        claims: <String, Object?>{'role': 'seller', 'branchId': 'branch-north'},
       );
 
       expect(session.role, InventoryRole.seller);
@@ -46,10 +92,7 @@ void main() {
         <String, Object?>{'role': 'seller'},
         <String, Object?>{'role': 'seller', 'branchId': ''},
         <String, Object?>{'role': 'seller', 'branchId': 12},
-        <String, Object?>{
-          'role': 'administrator',
-          'branchId': 'branch-north',
-        },
+        <String, Object?>{'role': 'administrator', 'branchId': 'branch-north'},
       ]) {
         expect(
           () => EmulatorSessionClaims.validate(

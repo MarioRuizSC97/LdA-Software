@@ -95,10 +95,11 @@ class EmulatorSessionGuard {
     required Future<void> Function() signOut,
   }) async {
     try {
+      final Map<String, Object?> claims = await refreshClaims();
       return EmulatorSessionClaims.validate(
         userId: userId,
         email: email,
-        claims: await refreshClaims(),
+        claims: claims,
       );
     } catch (_) {
       try {
@@ -165,11 +166,14 @@ class FirebaseEmulatorSessionGateway implements EmulatorSessionGateway {
         },
         signOut: _auth.signOut,
       );
-    } on FirebaseAuthException catch (error) {
-      if (_isRejectedCredential(error.code)) {
-        throw const UntrustedSessionException();
+    } catch (error) {
+      if (error is FirebaseAuthException) {
+        if (_isRejectedCredential(error.code)) {
+          throw const UntrustedSessionException();
+        }
+        throw const EmulatorSessionConnectionException();
       }
-      throw const EmulatorSessionConnectionException();
+      rethrow;
     }
   }
 
