@@ -18,6 +18,12 @@ import {
   createProductPricingService,
 } from './pricing.js';
 
+import {
+  SaleError,
+  assertLocalSalesEmulator,
+  createSaleService,
+} from './sales.js';
+
 export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
   /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
@@ -82,6 +88,36 @@ export const setProductPrice = onCall(
       throw new HttpsError(
         'internal',
         'product pricing is temporarily unavailable',
+      );
+    }
+  },
+);
+
+export const submitSale = onCall(
+  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  async (request) => {
+    try {
+      assertLocalSalesEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'sales are restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      if (getApps().length === 0) {
+        initializeApp();
+      }
+      const submit = createSaleService({ firestore: getFirestore() });
+      return await submit(request);
+    } catch (error) {
+      if (error instanceof SaleError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      throw new HttpsError(
+        'internal',
+        'sale submission is temporarily unavailable',
       );
     }
   },

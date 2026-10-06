@@ -1,0 +1,164 @@
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+import test from 'node:test';
+import * as sales from '../src/sales.js';
+
+const demo = {
+  GCLOUD_PROJECT: 'demo-lda-inventory', FUNCTIONS_EMULATOR: 'true',
+  FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+};
+let environment, events, apps, failure, forwarded, useRealService;
+const firestore = {
+  doc: (path) => ({ path }),
+  runTransaction: async (callback) => callback({
+    get: async ({ path }) => ({
+      exists: !path.startsWith('saleSubmissionReceipts/'),
+      data: () => path.startsWith('products/') ? {
+        quantitySpec: { unit: 'piece', precision: 0 },
+        pricing: { currency: 'MXN', listedPriceCentavos: 100,
+          priceMode: 'iva-included', ivaTreatment: 'taxable', ivaRateBasisPoints: 1600 },
+      } : { unit: 'piece', precision: 0, quantityScaled: 10 },
+    }),
+    create: () => {}, set: () => {},
+  }),
+};
+class HttpsError extends Error {
+  constructor(code, message) { super(message); this.code = code; }
+}
+const safeResult = Object.freeze({ receipt: { saleId: 'key-one' }, replayed: true });
+const seams = {
+  HttpsError,
+  onCall: (options, handler) => ({ options, handler }),
+  getApps: () => { events.push('apps'); return apps; },
+  initializeApp: () => { events.push('initialize'); if (failure?.at === 'initialize') throw failure.error; },
+  getFirestore: () => { events.push('firestore'); if (failure?.at === 'firestore') throw failure.error; return firestore; },
+  SaleError: sales.SaleError,
+  assertLocalSalesEmulator: () => { events.push('guard'); sales.assertLocalSalesEmulator(environment); },
+  createSaleService: (options) => {
+    events.push('service');
+    assert.equal(options.firestore, firestore);
+    if (failure?.at === 'factory') throw failure.error;
+    return async (request) => {
+      forwarded = request;
+      if (failure?.at === 'submit') throw failure.error;
+      return useRealService
+        ? sales.createSaleService({ ...options, environment })(request) : safeResult;
+    };
+  },
+};
+// Load the real entrypoint with virtual dependency modules. No SDK is imported;
+// the real pure sale module above supplies guard, error and authorization logic.
+const key = Symbol.for('lda.sales-callable.test');
+globalThis[key] = seams;
+const replacements = new Map([
+  ['firebase-admin/app', ['getApps', 'initializeApp']],
+  ['firebase-admin/firestore', ['getFirestore']],
+  ['firebase-functions/v2/https', ['HttpsError', 'onCall']],
+  ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService']],
+]);
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (replacements.has(specifier)
+      && (specifier !== './sales.js' || context.parentURL === new URL('../src/index.js', import.meta.url).href)) {
+      return { url: `test-seam:${specifier}`, shortCircuit: true };
+    }
+    assert.ok(!specifier.startsWith('firebase-'), 'unexpected SDK import must not initialize Firebase');
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (!url.startsWith('test-seam:')) return nextLoad(url, context);
+    const names = replacements.get(url.slice('test-seam:'.length));
+    return { format: 'module', shortCircuit: true,
+      source: `export const { ${names.join(', ')} } = globalThis[Symbol.for('lda.sales-callable.test')];` };
+  },
+});
+let entry;
+try { entry = await import('../src/index.js'); }
+finally { hooks.deregister(); delete globalThis[key]; }
+
+function reset() {
+  environment = { ...demo }; events = []; apps = []; failure = null;
+  forwarded = null; useRealService = false;
+}
+function invoke(request = {}) {
+  assert.equal(typeof entry.submitSale?.handler, 'function', 'submitSale must be registered');
+  return entry.submitSale.handler(request);
+}
+const rejects = (promise, code, message) => assert.rejects(promise, (error) => {
+  assert.ok(error instanceof HttpsError);
+  assert.equal(error.code, code);
+  assert.equal(error.message, message);
+  assert.equal(error.details, undefined);
+  return true;
+});
+
+test('sale registration uses the existing region and local-only origins', () => {
+  assert.ok(entry.submitSale, 'submitSale must be registered');
+  assert.equal(entry.submitSale.options.region, 'us-south1');
+  assert.equal(entry.submitSale.options.cors, entry.LOCAL_WEB_ORIGINS);
+  for (const origin of ['http://localhost:5173', 'https://127.0.0.1:443']) {
+    assert.ok(entry.submitSale.options.cors.some((pattern) => pattern.test(origin)));
+  }
+  assert.ok(!entry.submitSale.options.cors.some((pattern) => pattern.test('https://example.com')));
+});
+
+test('every demo guard condition fails before SDK or service access', async () => {
+  for (const [field, value] of [
+    ['GCLOUD_PROJECT', 'production'], ['FUNCTIONS_EMULATOR', 'false'],
+    ['FIRESTORE_EMULATOR_HOST', ''], ['FIRESTORE_EMULATOR_HOST', undefined],
+  ]) {
+    reset(); environment[field] = value;
+    await rejects(invoke(), 'failed-precondition', 'sales are restricted to the local demo emulator');
+    assert.deepEqual(events, ['guard']);
+  }
+});
+
+test('trusted request and seller-safe result pass through, with lazy Admin initialization', async () => {
+  for (const existing of [[], [{}]]) {
+    reset(); apps = existing;
+    const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } }, data: {} };
+    assert.equal(await invoke(request), safeResult);
+    assert.equal(forwarded, request);
+    assert.deepEqual(events, existing.length
+      ? ['guard', 'apps', 'firestore', 'service'] : ['guard', 'apps', 'initialize', 'firestore', 'service']);
+  }
+});
+
+test('unchanged sale service derives branch from auth and rejects client authority or admins', async () => {
+  reset(); useRealService = true;
+  const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
+    data: { idempotencyKey: 'key-one', invoiceRequested: false,
+      lines: [{ productId: 'p1', quantity: '1' }], payment: { method: 'cash', amountCentavos: 100 } } };
+  const { receipt, replayed } = await invoke(request);
+  assert.equal(receipt.branchId, 'north'); assert.equal(replayed, false);
+  assert.deepEqual(Object.keys(receipt).sort(), ['branchId', 'calculation', 'payment', 'productIds', 'saleId', 'version']);
+  assert.equal(receipt.calculation.totalCentavos, 100);
+  await rejects(invoke({ ...request, data: { ...request.data, branchId: 'south' } }),
+    'invalid-argument', 'sale request contains missing, invalid or unsupported fields');
+  await rejects(invoke({ ...request, auth: { uid: 'admin', token: { role: 'admin', branchId: 'north' } } }),
+    'permission-denied', 'an assigned seller is required');
+  await rejects(invoke({ ...request, auth: { uid: 'seller', token: { role: 'seller' } } }),
+    'permission-denied', 'an assigned seller is required');
+  await rejects(invoke({ ...request, auth: null }), 'unauthenticated', 'authentication is required');
+});
+
+test('known SaleError codes and public messages are mapped without private details', async () => {
+  for (const code of ['unauthenticated', 'permission-denied', 'invalid-argument',
+    'not-found', 'failed-precondition', 'out-of-range', 'already-exists']) {
+    reset();
+    const error = new sales.SaleError(code, 'public sale failure');
+    error.details = 'private provenance';
+    failure = { at: 'submit', error };
+    await rejects(invoke(), code, 'public sale failure');
+  }
+});
+
+test('unknown initialization, Firestore, factory and submission errors are sanitized', async () => {
+  for (const at of ['initialize', 'firestore', 'factory', 'submit']) {
+    reset(); failure = { at, error: new Error('private infrastructure diagnostic') };
+    await rejects(invoke(), 'internal', 'sale submission is temporarily unavailable');
+  }
+  reset();
+  failure = { at: 'submit', error: { code: 'permission-denied', message: 'private diagnostic' } };
+  await rejects(invoke(), 'internal', 'sale submission is temporarily unavailable');
+});
