@@ -148,6 +148,66 @@ test('local demo guard runs on each invocation before Firestore access', async (
   await rejectsUnchanged(firestore, service, request(), 'failed-precondition');
 });
 
+test('unsafe sale environments fail before documents, clock, transaction or auth', async (t) => {
+  const cases = [
+    ['remote host', { FIRESTORE_EMULATOR_HOST: 'firestore.googleapis.com:443' }],
+    ['alternate port', { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8081' }],
+    ['scheme', { FIRESTORE_EMULATOR_HOST: 'http://127.0.0.1:8080' }],
+    ['hostname alias', { FIRESTORE_EMULATOR_HOST: 'localhost:8080' }],
+    ['host whitespace', { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080 ' }],
+    ['project whitespace', { GCLOUD_PROJECT: 'demo-lda-inventory ' }],
+    ['missing project', { GCLOUD_PROJECT: undefined }],
+    ['missing functions flag', { FUNCTIONS_EMULATOR: undefined }],
+    ['flag whitespace', { FUNCTIONS_EMULATOR: 'true ' }],
+    ['missing host', { FIRESTORE_EMULATOR_HOST: undefined }],
+    ['conflicting Google project', { GOOGLE_CLOUD_PROJECT: 'production' }],
+    ['empty Google project', { GOOGLE_CLOUD_PROJECT: '' }],
+    ['conflicting Firebase project', { FIREBASE_CONFIG: '{"projectId":"production"}' }],
+    ['Firebase project whitespace', { FIREBASE_CONFIG: '{"projectId":"demo-lda-inventory "}' }],
+    ['malformed Firebase config', { FIREBASE_CONFIG: '{' }],
+    ['Firebase config path', { FIREBASE_CONFIG: '/unread/config.json' }],
+    ['Firebase config array', { FIREBASE_CONFIG: '[{"projectId":"demo-lda-inventory"}]' }],
+    ['Firebase config null', { FIREBASE_CONFIG: 'null' }],
+    ['Firebase config lacks project', { FIREBASE_CONFIG: '{}' }],
+    ['empty Firebase config', { FIREBASE_CONFIG: '' }],
+    ['non-string Firebase config', { FIREBASE_CONFIG: { projectId: 'demo-lda-inventory' } }],
+    ['non-string project ID', { FIREBASE_CONFIG: '{"projectId":123}' }],
+  ];
+  for (const [label, patch] of cases) {
+    await t.test(label, async () => {
+      const events = [];
+      const service = sales.createSaleService({
+        environment: { ...environment, ...patch },
+        firestore: {
+          doc: () => { events.push('doc'); throw new Error('unexpected document access'); },
+          runTransaction: () => { events.push('transaction'); throw new Error('unexpected transaction'); },
+        },
+        now: () => { events.push('clock'); throw new Error('unexpected clock access'); },
+      });
+      // Reject valid requests before I/O and invalid auth before authorization.
+      for (const input of [request(), {}]) {
+        await assert.rejects(service(input), (error) => {
+          assert.ok(error instanceof sales.SaleError);
+          assert.equal(error.code, 'failed-precondition');
+          assert.equal(error.message, 'sales require the dedicated local demo emulator');
+          return true;
+        });
+      }
+      assert.deepEqual(events, []);
+    });
+  }
+});
+
+test('consistent optional project sources accept the exact local sale configuration', async () => {
+  const { service } = fixture({ environment: { ...environment,
+    GOOGLE_CLOUD_PROJECT: 'demo-lda-inventory',
+    FIREBASE_CONFIG: '{"projectId":"demo-lda-inventory","storageBucket":"demo-lda-inventory.appspot.com"}',
+  } });
+  const result = await service(request());
+  assert.equal(result.receipt.branchId, 'north');
+  assert.equal(result.replayed, false);
+});
+
 test('only authenticated assigned sellers may submit', async () => {
   for (const [candidate, code] of [
     [undefined, 'unauthenticated'], [{ uid: '' }, 'unauthenticated'],

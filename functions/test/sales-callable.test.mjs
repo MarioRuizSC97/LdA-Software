@@ -113,6 +113,48 @@ test('every demo guard condition fails before SDK or service access', async () =
   }
 });
 
+test('strict sale configuration fails before even getApps for new or existing apps', async (t) => {
+  const patches = [
+    { FIRESTORE_EMULATOR_HOST: 'firestore.googleapis.com:443' },
+    { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8081' },
+    { FIRESTORE_EMULATOR_HOST: 'http://127.0.0.1:8080' },
+    { FIRESTORE_EMULATOR_HOST: 'localhost:8080' },
+    { FIRESTORE_EMULATOR_HOST: ' 127.0.0.1:8080' },
+    { GCLOUD_PROJECT: 'demo-lda-inventory ' },
+    { GCLOUD_PROJECT: undefined },
+    { FUNCTIONS_EMULATOR: undefined },
+    { GOOGLE_CLOUD_PROJECT: 'production' },
+    { GOOGLE_CLOUD_PROJECT: '' },
+    { FIREBASE_CONFIG: '{"projectId":"production"}' },
+    { FIREBASE_CONFIG: '{"projectId":"demo-lda-inventory "}' },
+    { FIREBASE_CONFIG: '{' },
+    { FIREBASE_CONFIG: '/unread/config.json' },
+    { FIREBASE_CONFIG: '[]' },
+    { FIREBASE_CONFIG: 'null' },
+    { FIREBASE_CONFIG: '{}' },
+    { FIREBASE_CONFIG: '' },
+    { FIREBASE_CONFIG: { projectId: 'demo-lda-inventory' } },
+    { FIREBASE_CONFIG: '{"projectId":123}' },
+  ];
+  for (const patch of patches) {
+    const label = Object.entries(patch).map(([field, value]) => `${field}=${JSON.stringify(value)}`).join(', ');
+    await t.test(label, async () => {
+      for (const existing of [[], [{}]]) {
+        reset(); apps = existing; environment = { ...demo, ...patch };
+        await rejects(invoke(), 'failed-precondition', 'sales are restricted to the local demo emulator');
+        assert.deepEqual(events, ['guard']);
+      }
+    });
+  }
+});
+
+test('matching optional project sources preserve callable receipt forwarding', async () => {
+  reset(); environment = { ...demo, GOOGLE_CLOUD_PROJECT: 'demo-lda-inventory',
+    FIREBASE_CONFIG: '{"projectId":"demo-lda-inventory"}' };
+  assert.equal(await invoke(), safeResult);
+  assert.deepEqual(events, ['guard', 'apps', 'initialize', 'firestore', 'service']);
+});
+
 test('trusted request and seller-safe result pass through, with lazy Admin initialization', async () => {
   for (const existing of [[], [{}]]) {
     reset(); apps = existing;

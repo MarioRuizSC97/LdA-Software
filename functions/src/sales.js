@@ -157,14 +157,28 @@ export class SaleError extends Error {
   }
 }
 
-/** Same dedicated demo context as existing mutation guards; no SDK access. */
+/** Sale-only, pure guard shared by service and callable before any SDK work. */
 export function assertLocalSalesEmulator(environment = process.env) {
-  if (
-    environment?.GCLOUD_PROJECT !== 'demo-lda-inventory'
-    || environment?.FUNCTIONS_EMULATOR !== 'true'
-    || typeof environment?.FIRESTORE_EMULATOR_HOST !== 'string'
-    || environment.FIRESTORE_EMULATOR_HOST.length === 0
-  ) {
+  const projectId = 'demo-lda-inventory';
+  let valid = environment?.GCLOUD_PROJECT === projectId
+    && environment?.FUNCTIONS_EMULATOR === 'true'
+    && environment?.FIRESTORE_EMULATOR_HOST === '127.0.0.1:8080';
+  // Optional Admin project sources must agree, never override the pinned ID.
+  if (environment?.GOOGLE_CLOUD_PROJECT !== undefined) {
+    valid &&= environment.GOOGLE_CLOUD_PROJECT === projectId;
+  }
+  if (environment?.FIREBASE_CONFIG !== undefined) {
+    try {
+      // Accept inline JSON only: a config path must never trigger a file read.
+      const config = typeof environment.FIREBASE_CONFIG === 'string'
+        ? JSON.parse(environment.FIREBASE_CONFIG) : null;
+      valid &&= config !== null && typeof config === 'object'
+        && !Array.isArray(config) && config.projectId === projectId;
+    } catch {
+      valid = false;
+    }
+  }
+  if (!valid) {
     throw new SaleError('failed-precondition', 'sales require the dedicated local demo emulator');
   }
 }
