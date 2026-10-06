@@ -1,4 +1,5 @@
 import { createQuantitySpec, formatQuantity, parseQuantity } from './quantity.js';
+import { addStockMovement } from './quantity.js';
 
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 const PRICING_FIELDS = [
@@ -144,4 +145,325 @@ function safeNumber(value, label) {
     throw new RangeError(`${label} must fit in a nonnegative safe integer`);
   }
   return Number(value);
+}
+
+const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+
+export class SaleError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'SaleError';
+    this.code = code;
+  }
+}
+
+/** Same dedicated demo context as existing mutation guards; no SDK access. */
+export function assertLocalSalesEmulator(environment = process.env) {
+  if (
+    environment?.GCLOUD_PROJECT !== 'demo-lda-inventory'
+    || environment?.FUNCTIONS_EMULATOR !== 'true'
+    || typeof environment?.FIRESTORE_EMULATOR_HOST !== 'string'
+    || environment.FIRESTORE_EMULATOR_HOST.length === 0
+  ) {
+    throw new SaleError('failed-precondition', 'sales require the dedicated local demo emulator');
+  }
+}
+
+/**
+ * Injected Admin-Firestore-compatible service, not a callable registration.
+ * Request.data has exactly { idempotencyKey, invoiceRequested, lines:
+ * [{ productId, quantity }], payment: { method, amountCentavos } }.
+ * Only trusted auth.token { role: 'seller', branchId } assigns the branch.
+ * Duplicate products are rejected: merging could change per-line rounding.
+ *
+ * Returns { receipt, replayed }; receipt is a detached deeply frozen v1
+ * { saleId, branchId, productIds, calculation, payment, version } snapshot.
+ * sales stores that internal receipt; saleAudits and saleSubmissionReceipts
+ * hold private provenance. None of these collections grants client access.
+ * Identifiers derive from the validated key/index, never callback randomness.
+ */
+export function createSaleService({
+  firestore, now = () => new Date(), environment = process.env,
+} = {}) {
+  if (!firestore || typeof firestore.doc !== 'function' || typeof firestore.runTransaction !== 'function') {
+    throw new TypeError('an Admin Firestore-compatible instance is required');
+  }
+  if (typeof now !== 'function') throw new TypeError('now must be a function');
+
+  return async function submitSale(request = {}) {
+    assertLocalSalesEmulator(environment);
+    const { actorId, branchId } = saleSeller(request?.auth);
+    // Copy every supported scalar before awaiting: caller mutation cannot change
+    // the transaction or its actor/branch/request-bound fingerprint mid-flight.
+    const input = saleInput(request?.data);
+    const fingerprint = JSON.stringify({ actorId, branchId, ...input });
+    const replayReference = firestore.doc(`saleSubmissionReceipts/${input.idempotencyKey}`);
+    // Capture and validate invocation time once, outside retryable callbacks.
+    // Defer clock errors until a new sale passes business validation: historical
+    // replay and existing validation errors must not depend on today's clock.
+    let invocationTime;
+    try {
+      const timestamp = now();
+      saleTimestamp(timestamp);
+      invocationTime = { timestamp };
+    } catch (error) {
+      invocationTime = { error };
+    }
+
+    return firestore.runTransaction(async (transaction) => {
+      const replay = await transaction.get(replayReference);
+      if (replay.exists) {
+        return {
+          receipt: validatedSaleReplay(replay.data(), input, actorId, branchId, fingerprint),
+          replayed: true,
+        };
+      }
+
+      const branch = await transaction.get(firestore.doc(`branches/${branchId}`));
+      if (!branch.exists) throw new SaleError('not-found', 'branch does not exist');
+      const inputs = await Promise.all(input.lines.map(async (line) => {
+        const stockReference = firestore.doc(`branches/${branchId}/stock/${line.productId}`);
+        const [product, stock] = await Promise.all([
+          transaction.get(firestore.doc(`products/${line.productId}`)),
+          transaction.get(stockReference),
+        ]);
+        return { line, product, stock, stockReference };
+      }));
+      // All reads, including the replay ownership guard, finish before writes.
+      const prepared = inputs.map(({ line, product, stock, stockReference }) => {
+        if (!product.exists) throw new SaleError('not-found', 'product does not exist');
+        const data = product.data();
+        const quantitySpec = saleStoredSpec(data?.quantitySpec);
+        const scaled = saleQuantity(line.quantity, quantitySpec);
+        const pricing = saleStoredPricing(data?.pricing);
+        const current = saleCurrentStock(stock, quantitySpec);
+        let next;
+        try {
+          next = addStockMovement(current, -scaled, quantitySpec, quantitySpec);
+        } catch {
+          throw new SaleError('failed-precondition', 'insufficient stock');
+        }
+        return { line, quantitySpec, pricing, scaled, next, stockReference };
+      });
+      let calculation;
+      try {
+        calculation = calculateSale({
+          invoiceRequested: input.invoiceRequested,
+          lines: prepared.map(({ line, quantitySpec, pricing }) => ({
+            quantity: line.quantity, quantitySpec, pricing,
+          })),
+        });
+      } catch {
+        // Quantity and stored policies were validated separately above; the
+        // remaining calculation failure is an unsafe monetary result.
+        throw new SaleError('out-of-range', 'sale calculation exceeds safe bounds');
+      }
+      if (input.payment.amountCentavos !== calculation.totalCentavos) {
+        throw new SaleError('invalid-argument', 'full payment must equal the authoritative total');
+      }
+      if (Object.hasOwn(invocationTime, 'error')) throw invocationTime.error;
+      const { timestamp } = invocationTime;
+      const receipt = saleReceipt(input, branchId, calculation);
+      transaction.create(firestore.doc(`sales/${input.idempotencyKey}`), {
+        receipt, createdAt: timestamp,
+      });
+      transaction.create(firestore.doc(`saleAudits/${input.idempotencyKey}`), {
+        saleId: input.idempotencyKey, branchId, actorId, createdAt: timestamp,
+      });
+      prepared.forEach(({ line, quantitySpec, scaled, next, stockReference }, index) => {
+        const movementId = `sale-${input.idempotencyKey}-${index}`;
+        transaction.create(firestore.doc(`inventoryMovements/${movementId}`), {
+          type: 'sale', saleId: input.idempotencyKey, branchId,
+          productId: line.productId, quantityScaled: -scaled, ...quantitySpec,
+          actorId, occurredAt: timestamp,
+        });
+        transaction.set(stockReference, {
+          quantityScaled: next, ...quantitySpec, updatedAt: timestamp, lastMovementId: movementId,
+        });
+      });
+      // Create, never set/update: global key ownership conflicts roll back every
+      // buffered write. Firestore transaction retries re-read this guard first.
+      transaction.create(replayReference, {
+        actorId, branchId, fingerprint, result: receipt, completedAt: timestamp,
+      });
+      return { receipt, replayed: false };
+    });
+  };
+}
+
+function saleSeller(auth) {
+  if (!auth || typeof auth.uid !== 'string' || auth.uid.length === 0) {
+    throw new SaleError('unauthenticated', 'authentication is required');
+  }
+  if (auth.token?.role !== 'seller' || !saleValidId(auth.token?.branchId)) {
+    throw new SaleError('permission-denied', 'an assigned seller is required');
+  }
+  return { actorId: auth.uid, branchId: auth.token.branchId };
+}
+
+function saleValidId(value) {
+  return typeof value === 'string' && SALE_ID_PATTERN.test(value);
+}
+
+function saleInput(data) {
+  try {
+    exactFields(data, ['idempotencyKey', 'invoiceRequested', 'lines', 'payment'], 'request');
+    if (!saleValidId(data.idempotencyKey) || typeof data.invoiceRequested !== 'boolean') {
+      throw new TypeError('key and invoice intent are required');
+    }
+    saleDenseArray(data.lines);
+    if (data.lines.length === 0) throw new TypeError('lines are required');
+    const seen = new Set();
+    const lines = data.lines.map((line) => {
+      exactFields(line, ['productId', 'quantity'], 'request line');
+      if (!saleValidId(line.productId) || seen.has(line.productId)) {
+        throw new TypeError('product must be unique and valid');
+      }
+      seen.add(line.productId);
+      // Precision and safe scaled bounds require the authoritative spec later.
+      if (typeof line.quantity !== 'string' || line.quantity.length > 18
+        || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(line.quantity)
+        || !/[1-9]/.test(line.quantity)) {
+        throw new TypeError('quantity must be a canonical positive decimal string');
+      }
+      return { productId: line.productId, quantity: line.quantity };
+    });
+    exactFields(data.payment, ['method', 'amountCentavos'], 'payment');
+    if (!['cash', 'card', 'transfer'].includes(data.payment.method)
+      || !Number.isSafeInteger(data.payment.amountCentavos) || data.payment.amountCentavos < 0) {
+      throw new TypeError('payment must be a supported method and safe centavo amount');
+    }
+    return {
+      idempotencyKey: data.idempotencyKey, invoiceRequested: data.invoiceRequested, lines,
+      payment: { method: data.payment.method, amountCentavos: data.payment.amountCentavos },
+    };
+  } catch {
+    throw new SaleError('invalid-argument', 'sale request contains missing, invalid or unsupported fields');
+  }
+}
+
+function saleStoredSpec(value) {
+  try {
+    exactFields(value, ['unit', 'precision'], 'quantity specification');
+    return createQuantitySpec(value);
+  } catch {
+    throw new SaleError('failed-precondition', 'product quantity specification is invalid');
+  }
+}
+
+function saleStoredPricing(value) {
+  try {
+    const snapshot = snapshotPricing(value);
+    // calculateSale accepts the published policy, not its output version field.
+    return Object.fromEntries(PRICING_FIELDS.map((key) => [key, snapshot[key]]));
+  } catch {
+    throw new SaleError('failed-precondition', 'product pricing is invalid');
+  }
+}
+
+function saleQuantity(value, spec) {
+  try {
+    const scaled = parseQuantity(value, spec);
+    if (scaled <= 0) throw new RangeError('not positive');
+    return scaled;
+  } catch {
+    throw new SaleError('invalid-argument', 'quantity is not representable by the product specification');
+  }
+}
+
+function saleCurrentStock(snapshot, spec) {
+  if (!snapshot.exists) return 0;
+  const value = snapshot.data();
+  if (value?.unit !== spec.unit || value?.precision !== spec.precision
+    || !Number.isSafeInteger(value?.quantityScaled) || value.quantityScaled < 0) {
+    throw new SaleError('failed-precondition', 'stock projection is invalid');
+  }
+  return value.quantityScaled;
+}
+
+function saleTimestamp(value) {
+  // Admin reads Date writes back as Timestamp; support both without importing
+  // or initializing the SDK. Reject strings and sentinel/nonfinite values.
+  try {
+    const date = value instanceof Date
+      ? value
+      : typeof value?.toDate === 'function' ? value.toDate() : null;
+    if (date instanceof Date && Number.isFinite(date.getTime())) return;
+  } catch {
+    // A malformed persisted Timestamp adapter also fails with the domain error.
+  }
+  throw new SaleError('failed-precondition', 'sale timestamp is invalid');
+}
+
+function saleReceipt(input, branchId, calculation) {
+  return Object.freeze({
+    version: 1, saleId: input.idempotencyKey, branchId,
+    productIds: Object.freeze(input.lines.map((line) => line.productId)),
+    calculation, payment: Object.freeze({ ...input.payment }),
+  });
+}
+
+function validatedSaleReplay(record, input, actorId, branchId, fingerprint) {
+  // Ownership is checked before touching private result fields; a collision
+  // never reveals another seller's historical receipt or decrements stock.
+  if (record?.actorId !== actorId || record?.branchId !== branchId || record?.fingerprint !== fingerprint) {
+    throw new SaleError('already-exists', 'idempotency key is already owned by a different submission');
+  }
+  try {
+    exactFields(record, ['actorId', 'branchId', 'fingerprint', 'result', 'completedAt'], 'replay');
+    saleTimestamp(record.completedAt);
+    const receipt = record.result;
+    exactFields(receipt, ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment'], 'receipt');
+    saleDenseArray(receipt.calculation.lines);
+    if (receipt.calculation.lines.length !== input.lines.length) throw new TypeError('line count');
+    // Recompute only from immutable stored policy, never a repriced catalog.
+    // Compare the complete v1 snapshot, catching altered totals/scales/policy,
+    // unsupported fields, private metadata and malformed precision/overflow.
+    const calculation = calculateSale({
+      invoiceRequested: input.invoiceRequested,
+      lines: input.lines.map((line, index) => {
+        const stored = receipt.calculation.lines[index];
+        exactFields(stored.pricing, [...PRICING_FIELDS, 'version'], 'snapshot pricing');
+        if (stored.pricing.version !== 1) throw new TypeError('pricing version');
+        return {
+          quantity: line.quantity, quantitySpec: stored.quantity.spec,
+          pricing: Object.fromEntries(PRICING_FIELDS.map((key) => [key, stored.pricing[key]])),
+        };
+      }),
+    });
+    const expected = saleReceipt(input, branchId, calculation);
+    if (calculation.totalCentavos !== input.payment.amountCentavos
+      || saleCanonical(receipt) !== saleCanonical(expected)) {
+      throw new TypeError('receipt snapshot differs');
+    }
+    return expected;
+  } catch {
+    throw new SaleError('failed-precondition', 'persisted sale replay is invalid');
+  }
+}
+
+function saleDenseArray(value) {
+  if (!Array.isArray(value) || Reflect.ownKeys(value).length !== value.length + 1) {
+    throw new TypeError('a dense array without extra fields is required');
+  }
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
+  }
+}
+
+// Map ordering is not guaranteed by Firestore. Compare all own keys without
+// JSON.stringify silently ignoring symbols, non-enumerable extras or holes.
+function saleCanonical(value) {
+  if (Array.isArray(value)) {
+    saleDenseArray(value);
+    return `[${value.map(saleCanonical).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== 'string')) throw new TypeError('symbol field');
+    return `{${keys.sort().map((key) => `${JSON.stringify(key)}:${saleCanonical(value[key])}`).join(',')}}`;
+  }
+  if (value === null || typeof value === 'string' || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))) return JSON.stringify(value);
+  throw new TypeError('unsupported snapshot value');
 }
