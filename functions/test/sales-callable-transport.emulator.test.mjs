@@ -78,6 +78,21 @@ const SALE_DENIAL = {
   seller: 'an assigned seller is required',
 };
 
+// Sellers may read their own branch's sale movements by published rule; the movement must carry
+// only the seller actorId as identity and an exact cost-free field set.
+const SELLER_MOVEMENT_FIELDS = ['actorId', 'branchId', 'occurredAt', 'precision', 'productId', 'quantityScaled',
+  'saleId', 'type', 'unit'];
+function sellerMovementView(outcome, { saleKey, actorId, branchId }) {
+  const fields = outcome.body?.fields;
+  if (outcome.status !== 200 || typeof outcome.body?.name !== 'string'
+    || !outcome.body.name.endsWith(`/documents/inventoryMovements/sale-${saleKey}-0`)
+    || !fields || !same(Object.keys(fields).sort(), SELLER_MOVEMENT_FIELDS)
+    || fields.type?.stringValue !== 'sale' || fields.saleId?.stringValue !== saleKey
+    || fields.branchId?.stringValue !== branchId || fields.actorId?.stringValue !== actorId) {
+    throw new Error('acceptance/seller-movement-view');
+  }
+}
+
 // Cross-collection agreement for confirmed sales; exact projections are validated separately.
 function ledger(records, { branch, other, productId, intake, sales }) {
   const at = (path) => records.get(path) ?? null;
@@ -870,6 +885,29 @@ test('offline: live SDK credential is a local certificate and initialization err
   assert.equal(initializationError(Object.assign(new Error('x'), { code: 42 })).code, 'acceptance/unknown');
 });
 
+test('offline: seller sale movement view exposes only the seller actorId and no cost', () => {
+  const scope = { saleKey: 'http-key-sale', actorId: SELLER, branchId: OWN };
+  const document = (fields) => ({ status: 200, body: { name: `projects/${PROJECT}/databases/(default)/documents/`
+    + `inventoryMovements/sale-${scope.saleKey}-0`, fields, createTime: 'x', updateTime: 'x' } });
+  const fields = {
+    type: { stringValue: 'sale' }, saleId: { stringValue: scope.saleKey }, branchId: { stringValue: OWN },
+    productId: { stringValue: 'PRD-0123456789ABCDEF' }, quantityScaled: { integerValue: '-100' },
+    unit: { stringValue: 'kg' }, precision: { integerValue: '2' }, actorId: { stringValue: SELLER },
+    occurredAt: { timestampValue: '2026-10-07T00:00:00Z' },
+  };
+  assert.doesNotThrow(() => sellerMovementView(document(fields), scope));
+  for (const forged of [
+    { ...fields, unitCostCentavos: { integerValue: '321' } },
+    { ...fields, actorId: { stringValue: ADMIN } },
+    { ...fields, saleId: { stringValue: 'other' } },
+    { ...fields, branchId: { stringValue: `${OWN}-other` } },
+    { ...fields, type: { stringValue: 'intake' } },
+  ]) assert.throws(() => sellerMovementView(document(forged), scope), /acceptance\/seller-movement-view/);
+  assert.throws(() => sellerMovementView({ status: 403, body: {} }, scope), /acceptance\/seller-movement-view/);
+  assert.throws(() => sellerMovementView({ ...document(fields), body: { ...document(fields).body, name: 'x' } }, scope),
+    /acceptance\/seller-movement-view/);
+});
+
 test('offline: ledger requires stock, movements, audits and receipts to agree', async () => {
   const sample = specimen();
   const { result } = await stockedProduct(sample);
@@ -1240,12 +1278,13 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
       await manifest.unchanged(async () => callableDenied(await call('sale',
         { ...manifest.request('sale'), lines: [line('0.50')] }, tokens.seller), 'ALREADY_EXISTS'));
     });
-    await t.test('sale artifacts stay private to the seller', () => manifest.unchanged(async () => {
+    await t.test('sale records stay private; the own sale movement shows only the seller actorId', () => manifest.unchanged(async () => {
       const saleKey = manifest.request('sale').idempotencyKey;
-      for (const path of [`sales/${saleKey}`, `saleAudits/${saleKey}`, `saleSubmissionReceipts/${saleKey}`,
-        `inventoryMovements/sale-${saleKey}-0`]) {
+      for (const path of [`sales/${saleKey}`, `saleAudits/${saleKey}`, `saleSubmissionReceipts/${saleKey}`]) {
         if ((await http(`${REST}/${path}`, 'GET', undefined, tokens.seller)).status !== 403) throw new Error('acceptance/private-read');
       }
+      sellerMovementView(await http(`${REST}/inventoryMovements/sale-${saleKey}-0`, 'GET', undefined, tokens.seller),
+        { saleKey, actorId: `acceptance-${runId}-seller`, branchId: manifest.paths().branches[0].slice(9) });
     }));
     await t.test('administrator reprices between sales', () => manifest.execute('reprice',
       async (input) => callableSuccess(await call('reprice', input, tokens.administrator))));
