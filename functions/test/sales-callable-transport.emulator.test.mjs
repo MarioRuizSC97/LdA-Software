@@ -55,6 +55,29 @@ function saleCalculation({ invoiceRequested, lines: [{ quantity }] }, spec, pric
     ...totals, includedIvaCentavos: null }], ...totals };
 }
 
+// Exact full payment for uninvoiced denial lines at the first published price, so a business
+// denial can never be explained by a payment mismatch instead of its targeted rule.
+function denialPayment(manifest, quantities) {
+  const spec = manifest.request('create').quantitySpec;
+  const price = manifest.request('price');
+  const pricing = { listedPriceCentavos: decimal(price.listedPriceMxn, 2), priceMode: price.priceMode,
+    ivaTreatment: price.ivaTreatment };
+  const amountCentavos = quantities.reduce((total, quantity) => total
+    + saleCalculation({ invoiceRequested: false, lines: [{ quantity }] }, spec, pricing).totalCentavos, 0);
+  return { method: 'cash', amountCentavos };
+}
+
+// Server messages that identify which sales rule produced a denial.
+const SALE_DENIAL = {
+  fields: 'sale request contains missing, invalid or unsupported fields',
+  quantity: 'quantity is not representable by the product specification',
+  payment: 'full payment must equal the authoritative total',
+  stock: 'insufficient stock',
+  product: 'product does not exist',
+  unauthenticated: 'authentication is required',
+  seller: 'an assigned seller is required',
+};
+
 // Cross-collection agreement for confirmed sales; exact projections are validated separately.
 function ledger(records, { branch, other, productId, intake, sales }) {
   const at = (path) => records.get(path) ?? null;
@@ -817,6 +840,21 @@ test('offline: forged sale artifacts and foreign actors are retained, never adop
   }
 });
 
+test('offline: denial payments follow the priced product and denials match the exact rule', () => {
+  const { manifest } = specimen();
+  const total = (quantities) => denialPayment(manifest, quantities).amountCentavos;
+  assert.equal(total(['9.00']), 11106);
+  assert.equal(total(['1.00', '1.00']), 2468);
+  assert.equal(total(['0.00']), 0);
+  assert.equal(total(['0.33']), 407); // 407.22 rounds half-up per line, never fractional centavos.
+  assert.equal(total(['0.45']), 555); // 555.30 rounds half-up per line.
+  const denied = (message) => ({ status: 400, body: { error: { status: 'INVALID_ARGUMENT', message } } });
+  assert.doesNotThrow(() => callableDenied(denied(SALE_DENIAL.fields), 'INVALID_ARGUMENT', SALE_DENIAL.fields));
+  assert.throws(() => callableDenied(denied(SALE_DENIAL.payment), 'INVALID_ARGUMENT', SALE_DENIAL.fields),
+    /acceptance\/callable-denial/);
+  assert.doesNotThrow(() => callableDenied(denied(SALE_DENIAL.payment), 'INVALID_ARGUMENT'));
+});
+
 test('offline: ledger requires stock, movements, audits and receipts to agree', async () => {
   const sample = specimen();
   const { result } = await stockedProduct(sample);
@@ -1033,8 +1071,9 @@ function callableSuccess(outcome) {
   if (outcome.status !== 200 || !same(Object.keys(outcome.body), ['result'])) throw new Error('acceptance/callable-result');
   return outcome.body.result;
 }
-function callableDenied(outcome, code) {
-  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || outcome.body.error?.status !== code) {
+function callableDenied(outcome, code, message) {
+  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || outcome.body.error?.status !== code
+    || (message !== undefined && outcome.body.error.message !== message)) {
     throw new Error('acceptance/callable-denial');
   }
 }
@@ -1145,27 +1184,27 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     }));
     // FUNC-02B: seller sales over real HTTP. The seller branch comes only from token claims.
     const line = (quantity, productId = manifest.view().productId) => ({ productId, quantity });
-    // Pay the exact total so each business denial isolates its targeted rule, never a payment mismatch.
-    const unitCentavos = manifest.request('sale').payment.amountCentavos;
-    const paid = (quantities) => ({ method: 'cash', amountCentavos: quantities.reduce(
-      (total, quantity) => total + Math.round(Number(quantity) * 100) * unitCentavos / 100, 0) });
-    const denySale = (label, overrides, token, code) => t.test(`sale denial: ${label}`, () => manifest.unchanged(async () => {
+    const paid = (quantities) => denialPayment(manifest, quantities);
+    const denySale = (label, overrides, token, code, message) => t.test(`sale denial: ${label}`, () => manifest.unchanged(async () => {
       const input = { ...manifest.request('sale'), idempotencyKey: manifest.denialKey(`sale-${label}`), ...overrides };
-      callableDenied(await call('sale', input, token), code);
+      callableDenied(await call('sale', input, token), code, message);
     }));
     for (const role of ['anonymous', 'unassigned', 'client', 'administrator']) {
-      await denySale(role, {}, tokens[role], role === 'anonymous' ? 'UNAUTHENTICATED' : 'PERMISSION_DENIED');
+      await denySale(role, {}, tokens[role], ...(role === 'anonymous'
+        ? ['UNAUTHENTICATED', SALE_DENIAL.unauthenticated] : ['PERMISSION_DENIED', SALE_DENIAL.seller]));
     }
-    for (const [label, overrides, code] of [
-      ['insufficient', { lines: [line('9.00')], payment: paid(['9.00']) }, 'FAILED_PRECONDITION'],
-      ['branch', { branchId: manifest.paths().branches[1].slice(9) }, 'INVALID_ARGUMENT'],
-      ['duplicate', { lines: [line('1.00'), line('1.00')], payment: paid(['1.00', '1.00']) }, 'INVALID_ARGUMENT'],
-      ['zero', { lines: [line('0.00')], payment: paid(['0.00']) }, 'INVALID_ARGUMENT'],
-      ['precision', { lines: [line('1.001')] }, 'INVALID_ARGUMENT'],
-      ['method', { payment: { method: 'crypto', amountCentavos: 1234 } }, 'INVALID_ARGUMENT'],
-      ['payment', { payment: { method: 'cash', amountCentavos: 1233 } }, 'INVALID_ARGUMENT'],
-      ['missing', { lines: [line('1.00', `missing-${runId}`)] }, 'NOT_FOUND'],
-    ]) await denySale(label, overrides, tokens.seller, code);
+    for (const [label, overrides, code, message] of [
+      ['insufficient', { lines: [line('9.00')], payment: paid(['9.00']) }, 'FAILED_PRECONDITION', SALE_DENIAL.stock],
+      ['branch', { branchId: manifest.paths().branches[1].slice(9) }, 'INVALID_ARGUMENT', SALE_DENIAL.fields],
+      ['duplicate', { lines: [line('1.00'), line('1.00')], payment: paid(['1.00', '1.00']) }, 'INVALID_ARGUMENT',
+        SALE_DENIAL.fields],
+      ['zero', { lines: [line('0.00')], payment: paid(['0.00']) }, 'INVALID_ARGUMENT', SALE_DENIAL.fields],
+      ['precision', { lines: [line('1.001')] }, 'INVALID_ARGUMENT', SALE_DENIAL.quantity],
+      ['method', { payment: { ...paid(['1.00']), method: 'crypto' } }, 'INVALID_ARGUMENT', SALE_DENIAL.fields],
+      ['payment', { payment: { method: 'cash', amountCentavos: paid(['1.00']).amountCentavos - 1 } }, 'INVALID_ARGUMENT',
+        SALE_DENIAL.payment],
+      ['missing', { lines: [line('1.00', `missing-${runId}`)] }, 'NOT_FOUND', SALE_DENIAL.product],
+    ]) await denySale(label, overrides, tokens.seller, code, message);
     await t.test('seller sale success, replay and conflict', async () => {
       await manifest.execute('sale', async (input) => callableSuccess(await call('sale', input, tokens.seller)));
       await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
