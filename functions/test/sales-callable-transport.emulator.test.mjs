@@ -1,4 +1,4 @@
-// FUNC-02A preparation: offline discovery must never initialize an SDK or use HTTP.
+// FUNC-02A/B preparation: offline discovery must never initialize an SDK or use HTTP.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
@@ -19,9 +19,18 @@ const PINNED = {
   FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', FUNCTIONS_EMULATOR: 'true',
 };
 const copy = (value) => structuredClone(value);
+const UNCERTAIN = /acceptance\/operation-uncertain/;
+const ORDER = /acceptance\/operation-order/;
+const RETAINED = /acceptance\/firestore-retained-or-delete-unknown/;
+const TIMESTAMP = /acceptance\/timestamp-type/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const FUNCTIONS = ['createProduct', 'setProductPrice', 'stockIntake'];
+const CALLABLE = { create: 'createProduct', price: 'setProductPrice', reprice: 'setProductPrice',
+  intake: 'stockIntake', sale: 'submitSale', resale: 'submitSale' };
+const FUNCTIONS = [...new Set(Object.values(CALLABLE))];
+const SALE_KINDS = ['sale', 'resale'];
+// Each operation requires its predecessor; repricing happens between two seller sales.
+const AFTER = { price: 'create', intake: 'price', sale: 'intake', reprice: 'sale', resale: 'reprice' };
 const BASE = `http://127.0.0.1:5001/${PROJECT}/us-south1`;
 const REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
 const LOGIN = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-only';
@@ -30,6 +39,51 @@ const requireSame = (a, b) => { if (!same(a, b)) throw new Error('acceptance/con
 function decimal(value, precision) {
   const [whole, fraction = ''] = value.split('.');
   return Number(BigInt(whole) * 10n ** BigInt(precision) + BigInt(fraction.padEnd(precision, '0')));
+}
+
+// Independent mirror of the published v1 single-line sale calculation (half-up per line).
+function saleCalculation({ invoiceRequested, lines: [{ quantity }] }, spec, pricing) {
+  const half = (numerator, denominator) => (2n * numerator + denominator) / (2n * denominator);
+  const scaled = decimal(quantity, spec.precision);
+  const base = half(BigInt(scaled) * BigInt(pricing.listedPriceCentavos), 10n ** BigInt(spec.precision));
+  const iva = invoiceRequested && pricing.priceMode === 'iva-additional-on-invoice' && pricing.ivaTreatment === 'taxable'
+    ? half(base * BigInt(pricing.ivaRateBasisPoints), 10000n) : 0n;
+  const totals = { baseCentavos: Number(base), additionalIvaCentavos: Number(iva), totalCentavos: Number(base + iva) };
+  return { version: 1, currency: 'MXN', invoiceRequested, calculationPolicy: { version: 1, rounding: 'half-up',
+    roundingScope: 'per-line', additionalIvaBase: 'rounded-line-base', includedIvaExtraction: 'not-calculated' },
+  lines: [{ quantity: { version: 1, spec: copy(spec), scaled, decimal: quantity }, pricing: { version: 1, ...pricing },
+    ...totals, includedIvaCentavos: null }], ...totals };
+}
+
+// Cross-collection agreement for confirmed sales; exact projections are validated separately.
+function ledger(records, { branch, other, productId, intake, sales }) {
+  const at = (path) => records.get(path) ?? null;
+  const fail = () => { throw new Error('acceptance/ledger-inconsistent'); };
+  const movements = [intake, ...sales.map((key) => `inventoryMovements/sale-${key}-0`)];
+  let total = 0;
+  for (const path of movements) {
+    if (at(path)?.branchId !== branch || at(path).productId !== productId) fail();
+    total += at(path).quantityScaled;
+  }
+  const stock = at(`branches/${branch}/stock/${productId}`);
+  if (at(`branches/${other}/stock/${productId}`) !== null || stock?.quantityScaled !== total || total < 0
+    || `inventoryMovements/${stock.lastMovementId}` !== movements.at(-1)
+    || stock.updatedAt !== at(movements.at(-1)).occurredAt) fail();
+  for (const key of sales) {
+    const receipt = at(`saleSubmissionReceipts/${key}`);
+    const audit = at(`saleAudits/${key}`);
+    const movement = at(`inventoryMovements/sale-${key}-0`);
+    const sale = at(`sales/${key}`);
+    const lines = receipt?.result?.calculation?.lines;
+    if (!sale || !audit || !same(sale.receipt, receipt.result) || receipt.result.saleId !== key
+      || receipt.branchId !== branch || receipt.result.branchId !== branch || !same(receipt.result.productIds, [productId])
+      || audit.saleId !== key || audit.branchId !== branch || audit.actorId !== receipt.actorId
+      || movement.saleId !== key || movement.actorId !== receipt.actorId || lines?.length !== 1
+      || -movement.quantityScaled !== lines[0].quantity.scaled
+      || receipt.result.payment.amountCentavos !== receipt.result.calculation.totalCentavos
+      || ![sale.createdAt, audit.createdAt, movement.occurredAt].every((time) => time === receipt.completedAt)
+      || at(`inventoryMovements/sale-${key}-1`) !== null) fail();
+  }
 }
 
 function gate(environment, runtime = { executable: process.execPath, version: process.version }) {
@@ -72,9 +126,12 @@ function createManifest(context, adapter) {
     throw new Error('acceptance/context');
   }
   const store = Object.fromEntries(['read', 'create', 'transaction'].map((name) => [name, adapter[name].bind(adapter)]));
+  const seller = `acceptance-${runId}-seller`; // Derived from the validated runId only.
   const branch = `branch-${runId}`;
   const other = `${branch}-other`;
   const key = (label) => `http-${runId}-${label}`;
+  const saleSlots = (saleKey) => [`sales/${saleKey}`, `saleAudits/${saleKey}`, `saleSubmissionReceipts/${saleKey}`,
+    `inventoryMovements/sale-${saleKey}-0`, `inventoryMovements/sale-${saleKey}-1`];
   const paths = {
     branches: [`branches/${branch}`, `branches/${other}`],
     createReceipt: `productCreationReceipts/${key('create')}`,
@@ -83,6 +140,8 @@ function createManifest(context, adapter) {
     entry: `stockIntakeEntries/${key('intake')}`,
     movement: `inventoryMovements/${key('intake')}`,
     intakeReceipt: `stockIntakeReceipts/${key('intake')}`,
+    repriceAudit: `productPriceAudits/${key('reprice')}`,
+    repriceReceipt: `productPriceUpdateReceipts/${key('reprice')}`,
   };
   const entries = new Map();
   const plan = (path) => {
@@ -95,6 +154,10 @@ function createManifest(context, adapter) {
     for (const collection of ['productCreationReceipts', 'productPriceAudits', 'productPriceUpdateReceipts',
       'stockIntakeEntries', 'inventoryMovements', 'stockIntakeReceipts']) plan(`${collection}/${key(label)}`);
   }
+  // Sale slots are exact and planned before any write: successes and every denial key.
+  const saleDenials = ['anonymous', 'unassigned', 'client', 'administrator', 'insufficient', 'branch', 'duplicate',
+    'zero', 'precision', 'method', 'payment', 'missing', 'stale'].map((label) => `sale-${label}`);
+  for (const label of [...SALE_KINDS, ...saleDenials]) saleSlots(key(label)).forEach(plan);
   let productId = null;
   let seeded = false;
   let uncertain = false;
@@ -106,7 +169,15 @@ function createManifest(context, adapter) {
     price: { idempotencyKey: key('price'), listedPriceMxn: '12.34', priceMode: 'iva-included',
       ivaTreatment: 'taxable', ivaRatePercent: '16.00' },
     intake: { idempotencyKey: key('intake'), branchId: branch, quantity: '2.50', unitCostMxn: '3.21' },
+    sale: { idempotencyKey: key('sale'), invoiceRequested: false, lines: [{ quantity: '1.00' }],
+      payment: { method: 'cash', amountCentavos: 1234 } },
+    reprice: { idempotencyKey: key('reprice'), listedPriceMxn: '15.00', priceMode: 'iva-additional-on-invoice',
+      ivaTreatment: 'taxable', ivaRatePercent: '16.00' },
+    resale: { idempotencyKey: key('resale'), invoiceRequested: true, lines: [{ quantity: '0.50' }],
+      payment: { method: 'card', amountCentavos: 870 } },
   };
+  const scope = () => ({ branch, other, productId, intake: paths.movement,
+    sales: SALE_KINDS.filter((kind) => completed.has(kind)).map(key) });
   const read = async () => {
     const names = [...entries.keys()];
     const values = await deadline(() => store.read(names));
@@ -124,7 +195,7 @@ function createManifest(context, adapter) {
   };
   const confirm = async (kind, result, before, after) => {
     let expected = new Map();
-    const input = copy(requests[kind]);
+    const input = SALE_KINDS.includes(kind) ? request(kind) : copy(requests[kind]);
     const records = await read();
     if (kind === 'create') {
       if (!same(Object.keys(result).sort(), ['internalCode', 'productId', 'replayed'])
@@ -143,20 +214,42 @@ function createManifest(context, adapter) {
       for (const [path, entry] of entries) requireSame(dynamic.get(path), expected.has(path) ? expected.get(path) : entry.expected);
       productId = id;
     } else {
-      const timestamp = stamp(records.get(kind === 'price' ? paths.priceReceipt : paths.intakeReceipt)?.completedAt, before, after);
-      if (kind === 'price') {
+      const receiptPath = { price: paths.priceReceipt, reprice: paths.repriceReceipt, intake: paths.intakeReceipt }[kind]
+        ?? `saleSubmissionReceipts/${input.idempotencyKey}`;
+      const timestamp = stamp(records.get(receiptPath)?.completedAt, before, after);
+      const spec = requests.create.quantitySpec;
+      const stockPath = `branches/${branch}/stock/${productId}`;
+      if (kind === 'price' || kind === 'reprice') {
         const pricing = { listedPriceCentavos: decimal(input.listedPriceMxn, 2), currency: 'MXN', priceMode: input.priceMode,
           ivaTreatment: input.ivaTreatment, ivaRateBasisPoints: decimal(input.ivaRatePercent, 2) };
         const bareResult = { auditId: input.idempotencyKey, productId, pricing };
         requireSame(result, { ...bareResult, replayed: false });
-        expected.set(`products/${productId}`, { ...entries.get(`products/${productId}`).expected,
+        const prior = entries.get(`products/${productId}`).expected;
+        expected.set(`products/${productId}`, { ...prior,
           pricing, pricingUpdatedAt: timestamp, lastPricingAuditId: input.idempotencyKey });
-        expected.set(paths.priceAudit, { productId, previousAuditId: null, oldPricing: null,
+        expected.set(kind === 'price' ? paths.priceAudit : paths.repriceAudit, { productId,
+          previousAuditId: prior.lastPricingAuditId ?? null, oldPricing: prior.pricing ?? null,
           newPricing: pricing, changedAt: timestamp, actorId });
-        expected.set(paths.priceReceipt, { fingerprint: JSON.stringify({ actorId, productId, pricing }),
+        expected.set(receiptPath, { fingerprint: JSON.stringify({ actorId, productId, pricing }),
           result: bareResult, completedAt: timestamp, actorId });
+      } else if (SALE_KINDS.includes(kind)) {
+        // Sales price from the private catalog projection at submission time, never the response.
+        const saleKey = input.idempotencyKey;
+        const calculation = saleCalculation(input, spec, entries.get(`products/${productId}`).expected.pricing);
+        const receipt = { version: 1, saleId: saleKey, branchId: branch, productIds: [productId],
+          calculation, payment: input.payment };
+        requireSame(result, { receipt, replayed: false });
+        const scaled = calculation.lines[0].quantity.scaled;
+        const movementId = `sale-${saleKey}-0`;
+        expected.set(`sales/${saleKey}`, { receipt, createdAt: timestamp });
+        expected.set(`saleAudits/${saleKey}`, { saleId: saleKey, branchId: branch, actorId: seller, createdAt: timestamp });
+        expected.set(`inventoryMovements/${movementId}`, { type: 'sale', saleId: saleKey, branchId: branch, productId,
+          quantityScaled: -scaled, ...spec, actorId: seller, occurredAt: timestamp });
+        expected.set(stockPath, { quantityScaled: entries.get(stockPath).expected.quantityScaled - scaled, ...spec,
+          updatedAt: timestamp, lastMovementId: movementId });
+        expected.set(receiptPath, { actorId: seller, branchId: branch, completedAt: timestamp, result: receipt,
+          fingerprint: JSON.stringify({ actorId: seller, branchId: branch, ...input }) });
       } else {
-        const spec = requests.create.quantitySpec;
         const quantityScaled = decimal(input.quantity, spec.precision);
         const unitCostCentavos = decimal(input.unitCostMxn, 2);
         const lineTotalCentavos = Number(BigInt(quantityScaled) * BigInt(unitCostCentavos) / 10n ** BigInt(spec.precision));
@@ -168,7 +261,7 @@ function createManifest(context, adapter) {
           calculationPolicyVersion: 'mxn-unit-cost-truncate-v1', createdAt: timestamp, createdBy: actorId });
         expected.set(paths.movement, { type: 'stock-intake', branchId: branch, productId, quantityScaled,
           ...spec, entryId: input.idempotencyKey, occurredAt: timestamp, actorId });
-        expected.set(`branches/${branch}/stock/${productId}`, { quantityScaled, ...spec,
+        expected.set(stockPath, { quantityScaled, ...spec,
           updatedAt: timestamp, lastMovementId: input.idempotencyKey });
         expected.set(`costs/${productId}`, { latestUnitCostCentavos: unitCostCentavos, currency: 'MXN',
           sourceEntryId: input.idempotencyKey, updatedAt: timestamp });
@@ -176,19 +269,31 @@ function createManifest(context, adapter) {
           quantity: input.quantity, unitCostCentavos }), result: bareResult, completedAt: timestamp, actorId });
       }
       for (const [path, entry] of entries) requireSame(records.get(path), expected.has(path) ? expected.get(path) : entry.expected);
+      if (SALE_KINDS.includes(kind)) ledger(records, { ...scope(), sales: [...scope().sales, input.idempotencyKey] });
     }
     for (const [path, value] of expected) entries.set(path, { expected: copy(value), state: 'confirmed' });
     completed.add(kind);
   };
   const request = (kind) => {
     if (!Object.hasOwn(requests, kind)) throw new Error('acceptance/unknown-operation');
-    return copy({ ...requests[kind], ...(kind === 'create' ? {} : { productId }) });
+    if (kind === 'create') return copy(requests.create);
+    if (!SALE_KINDS.includes(kind)) return copy({ ...requests[kind], productId });
+    // Field order matches the server fingerprint: key, invoice intent, lines, payment.
+    const { idempotencyKey, invoiceRequested, lines, payment } = copy(requests[kind]);
+    return { idempotencyKey, invoiceRequested, lines: lines.map(({ quantity }) => ({ productId, quantity })), payment };
   };
   return Object.freeze({
     paths: () => copy(paths), request,
     view: () => ({ runId, productId, uncertain, dynamicSlots: ['product', 'cost', 'ownStock', 'foreignStock'],
       entries: [...entries].map(([path, entry]) => ({ path, ...copy(entry) })) }),
-    denialKey(label) { if (!denialLabels.includes(label)) throw new Error('acceptance/denial-plan'); return key(label); },
+    denialKey(label) {
+      if (!denialLabels.includes(label) && !saleDenials.includes(label)) throw new Error('acceptance/denial-plan');
+      return key(label);
+    },
+    receipt(kind) { // Copy of a confirmed private sale receipt, for replay comparison only.
+      if (!SALE_KINDS.includes(kind) || !completed.has(kind)) throw new Error('acceptance/operation-order');
+      return copy(entries.get(`sales/${key(kind)}`).expected.receipt);
+    },
     async seedBranches() {
       if (seeded || cleanupStarted) throw new Error('acceptance/seed-once');
       seeded = true;
@@ -206,8 +311,8 @@ function createManifest(context, adapter) {
       } catch { uncertain = true; throw new Error('acceptance/seed-uncertain'); }
     },
     async execute(kind, transport, timeoutMs = 10000) {
-      if (!seeded || uncertain || active || cleanupStarted || completed.has(kind)
-        || (kind !== 'create' && !productId) || (kind === 'intake' && !completed.has('price'))) {
+      if (!seeded || uncertain || active || cleanupStarted || completed.has(kind) || !Object.hasOwn(requests, kind)
+        || (kind !== 'create' && (!productId || !completed.has(AFTER[kind])))) {
         throw new Error('acceptance/operation-order');
       }
       const input = request(kind);
@@ -239,6 +344,7 @@ function createManifest(context, adapter) {
         const after = await read();
         requireSame([...after], [...before]);
         validate(after);
+        if (completed.has('sale')) ledger(after, scope());
         uncertain = false;
         return result;
       } catch { throw new Error('acceptance/observation-uncertain'); }
@@ -324,13 +430,13 @@ async function ownProduct(sample) {
 test('offline: gates pin executable, exact version, hosts and ambient routing', () => {
   assert.doesNotThrow(() => gate(PINNED, { executable: NODE, version: 'v24.21.0' }));
   for (const key of Object.keys(PINNED)) {
-    assert.throws(() => gate({ ...PINNED, [key]: 'wrong' }, { executable: NODE, version: 'v24.21.0' }));
+    assert.throws(() => gate({ ...PINNED, [key]: 'wrong' }, { executable: NODE, version: 'v24.21.0' }), /acceptance\/target-pin/);
   }
   for (const key of ['GOOGLE_APPLICATION_CREDENTIALS', 'FIREBASE_CONFIG', 'HTTPS_PROXY', 'NODE_OPTIONS']) {
-    assert.throws(() => gate({ ...PINNED, [key]: 'override' }, { executable: NODE, version: 'v24.21.0' }));
+    assert.throws(() => gate({ ...PINNED, [key]: 'override' }, { executable: NODE, version: 'v24.21.0' }), /acceptance\/ambient-override/);
   }
-  assert.throws(() => gate(PINNED, { executable: NODE, version: 'v24.20.0' }));
-  assert.throws(() => gate(PINNED, { executable: '/usr/bin/node', version: 'v24.21.0' }));
+  assert.throws(() => gate(PINNED, { executable: NODE, version: 'v24.20.0' }), /acceptance\/node-pin/);
+  assert.throws(() => gate(PINNED, { executable: '/usr/bin/node', version: 'v24.21.0' }), /acceptance\/node-pin/);
 });
 
 test('offline: copied plans and context cannot poison private authority', async () => {
@@ -364,8 +470,8 @@ test('offline: exact receipt and schema required, never actor/name-only adoption
       sample.store.documents.set(`products/${proof.result.productId}`, proof.product);
       sample.store.documents.set(sample.manifest.paths().createReceipt, proof.receipt);
       return proof.result;
-    }));
-    await assert.rejects(sample.manifest.cleanup());
+    }), UNCERTAIN);
+    await assert.rejects(sample.manifest.cleanup(), RETAINED);
     assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
   }
 });
@@ -415,15 +521,15 @@ test('offline: deadline does not cancel or adopt a late product write', async ()
   await sample.manifest.seedBranches();
   let finish;
   const pending = new Promise((resolve) => { finish = resolve; });
-  await assert.rejects(sample.manifest.execute('create', () => pending, 2));
+  await assert.rejects(sample.manifest.execute('create', () => pending, 2), UNCERTAIN);
   const proof = creation(sample.manifest);
   sample.store.documents.set(`products/${proof.result.productId}`, proof.product);
   sample.store.documents.set(sample.manifest.paths().createReceipt, proof.receipt);
   finish(proof.result);
   await Promise.resolve();
   assert.equal(sample.manifest.view().productId, null);
-  await assert.rejects(sample.manifest.execute('create', () => proof.result));
-  await assert.rejects(sample.manifest.cleanup());
+  await assert.rejects(sample.manifest.execute('create', () => proof.result), ORDER);
+  await assert.rejects(sample.manifest.cleanup(), RETAINED);
   assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
 });
 
@@ -435,11 +541,11 @@ test('offline: immutable projections, exact absent slots and deletion order', as
   view.productId = 'DEMO-COFFEE';
   const request = sample.manifest.request('price');
   request.productId = 'DEMO-COFFEE';
-  await assert.rejects(sample.manifest.execute('create', () => proof.result));
+  await assert.rejects(sample.manifest.execute('create', () => proof.result), ORDER);
   await sample.manifest.cleanup();
   const deletes = sample.store.events.filter(([event]) => event === 'delete').map(([, path]) => path);
   assert.deepEqual(deletes.slice(-3), [`products/${proof.result.productId}`, ...sample.manifest.paths().branches]);
-  await assert.rejects(sample.manifest.cleanup());
+  await assert.rejects(sample.manifest.cleanup(), /acceptance\/cleanup-not-retryable/);
 });
 
 test('offline: forged cost/stock slots, response additions and missing proof fail closed', async () => {
@@ -454,8 +560,8 @@ test('offline: forged cost/stock slots, response additions and missing proof fai
       if (mode === 'stock') sample.store.documents.set(`branches/branch-${RUN}/stock/${proof.result.productId}`, { foreign: true });
       if (mode === 'response') proof.result.unknown = true;
       return proof.result;
-    }));
-    await assert.rejects(sample.manifest.cleanup());
+    }), UNCERTAIN);
+    await assert.rejects(sample.manifest.cleanup(), RETAINED);
     assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
   }
 });
@@ -493,11 +599,22 @@ test('offline: cleanup of missing anchors reads everything and retains all remai
 });
 
 test('offline: live approval is mandatory even with correct target pins', () => {
-  assert.throws(() => liveApproval({ ...PINNED, LDA_SALES_HTTP_ACCEPTANCE: '0' }));
-  assert.throws(() => liveApproval({ ...PINNED, LDA_SALES_HTTP_ACCEPTANCE: '1' }));
-  assert.throws(() => normalizeRecord({ toMillis: () => 1000, nanoseconds: 1 }));
-  assert.throws(() => normalizeRecord({ createdAt: 1000 }));
-  assert.equal(normalizeRecord({ toMillis: () => 1000, nanoseconds: 0 }), 1000);
+  const runtime = { executable: NODE, version: 'v24.21.0' };
+  const approved = { ...PINNED, LDA_SALES_HTTP_ACCEPTANCE: '1',
+    LDA_SALES_FIXTURE_BASELINE_APPROVAL: 'demo-seed-eight-documents-two-identities',
+    LDA_SALES_RUNTIME_REVALIDATED: 'explicit-local-source-project-routes-reviewed' };
+  // Positive gate case uses an injected runtime; it never opens SDKs or HTTP.
+  assert.doesNotThrow(() => liveApproval(approved, runtime));
+  const required = /acceptance\/live-approval-required/;
+  assert.throws(() => liveApproval({ ...approved, LDA_SALES_HTTP_ACCEPTANCE: '0' }, runtime), required);
+  for (const key of ['LDA_SALES_FIXTURE_BASELINE_APPROVAL', 'LDA_SALES_RUNTIME_REVALIDATED']) {
+    assert.throws(() => liveApproval({ ...approved, [key]: undefined }, runtime), required);
+  }
+  assert.throws(() => liveApproval(approved, { ...runtime, version: 'v24.20.0' }), /acceptance\/node-pin/);
+  assert.throws(() => liveApproval({ ...approved, HTTPS_PROXY: 'x' }, runtime), /acceptance\/ambient-override/);
+  assert.throws(() => normalizeRecord({ toMillis: () => 1000, nanoseconds: 1 }), TIMESTAMP);
+  assert.throws(() => normalizeRecord({ createdAt: 1000 }), TIMESTAMP);
+  assert.equal(normalizeRecord({ seconds: 1, nanoseconds: 0, toMillis: () => 1000 }), 1000);
 });
 
 test('offline: independent price and intake projections reject forged business totals', async () => {
@@ -538,7 +655,7 @@ test('offline: independent price and intake projections reject forged business t
         fingerprint: JSON.stringify({ branchId: intake.branchId, productId: id, quantity: '2.50', unitCostCentavos: 321 }) });
       return { ...result, replayed: false };
     });
-    if (forged) { await assert.rejects(invoke()); await assert.rejects(sample.manifest.cleanup()); }
+    if (forged) { await assert.rejects(invoke(), UNCERTAIN); await assert.rejects(sample.manifest.cleanup(), RETAINED); }
     else { await invoke(); await sample.manifest.cleanup(); assert.equal(sample.store.documents.size, 0); }
   }
 });
@@ -568,6 +685,192 @@ test('offline: fake HTTP enforces exact URLs, redirects and response/request bou
   await assert.rejects(makeHttp(PINNED, [], fakeRequest)(LOGIN));
 });
 
+const ADMIN = `acceptance-${RUN}-administrator`;
+const SELLER = `acceptance-${RUN}-seller`;
+const OWN = `branch-${RUN}`;
+const POLICY = { version: 1, rounding: 'half-up', roundingScope: 'per-line',
+  additionalIvaBase: 'rounded-line-base', includedIvaExtraction: 'not-calculated' };
+const taxable = (cents, priceMode) => ({ listedPriceCentavos: cents, currency: 'MXN', priceMode,
+  ivaTreatment: 'taxable', ivaRateBasisPoints: 1600 });
+
+// Fake server writes use literal business values, never the manifest's projection code.
+async function fakePrice(sample, kind, pricing) {
+  const input = sample.manifest.request(kind);
+  const id = input.productId;
+  const result = { auditId: input.idempotencyKey, productId: id, pricing };
+  return sample.manifest.execute(kind, async () => {
+    const product = sample.store.documents.get(`products/${id}`);
+    sample.store.documents.set(`productPriceAudits/${input.idempotencyKey}`, { productId: id,
+      previousAuditId: product.lastPricingAuditId ?? null, oldPricing: product.pricing ?? null,
+      newPricing: pricing, changedAt: 1000, actorId: ADMIN });
+    Object.assign(product, { pricing, pricingUpdatedAt: 1000, lastPricingAuditId: input.idempotencyKey });
+    sample.store.documents.set(`productPriceUpdateReceipts/${input.idempotencyKey}`, { actorId: ADMIN,
+      completedAt: 1000, result, fingerprint: JSON.stringify({ actorId: ADMIN, productId: id, pricing }) });
+    return { ...result, replayed: false };
+  });
+}
+
+async function fakeIntake(sample) {
+  const input = sample.manifest.request('intake');
+  const id = input.productId;
+  const key = input.idempotencyKey;
+  const result = { entryId: key, movementId: key, quantityScaled: 250, stockQuantityScaled: 250,
+    unitCostCentavos: 321, lineTotalCentavos: 802 };
+  return sample.manifest.execute('intake', async () => {
+    sample.store.documents.set(`stockIntakeEntries/${key}`, { branchId: OWN, productId: id, quantityScaled: 250,
+      unit: 'kg', precision: 2, unitCostCentavos: 321, lineTotalCentavos: 802, currency: 'MXN',
+      calculationPolicyVersion: 'mxn-unit-cost-truncate-v1', createdAt: 1000, createdBy: ADMIN });
+    sample.store.documents.set(`inventoryMovements/${key}`, { type: 'stock-intake', branchId: OWN, productId: id,
+      quantityScaled: 250, unit: 'kg', precision: 2, entryId: key, occurredAt: 1000, actorId: ADMIN });
+    sample.store.documents.set(`branches/${OWN}/stock/${id}`, { quantityScaled: 250, unit: 'kg', precision: 2,
+      updatedAt: 1000, lastMovementId: key });
+    sample.store.documents.set(`costs/${id}`, { latestUnitCostCentavos: 321, currency: 'MXN',
+      sourceEntryId: key, updatedAt: 1000 });
+    sample.store.documents.set(`stockIntakeReceipts/${key}`, { actorId: ADMIN, completedAt: 1000, result,
+      fingerprint: JSON.stringify({ branchId: OWN, productId: id, quantity: '2.50', unitCostCentavos: 321 }) });
+    return { ...result, replayed: false };
+  });
+}
+
+// Mirrors the sales.js write set: sale, audit, movement, stock and replay receipt.
+async function fakeSale(sample, kind, { scaled, base, iva, stock, pricing }, forge = () => {}) {
+  const input = sample.manifest.request(kind);
+  const key = input.idempotencyKey;
+  const id = input.lines[0].productId;
+  const movementId = `sale-${key}-0`;
+  const line = { quantity: { version: 1, spec: { unit: 'kg', precision: 2 }, scaled, decimal: input.lines[0].quantity },
+    pricing: { version: 1, ...pricing }, baseCentavos: base, additionalIvaCentavos: iva,
+    includedIvaCentavos: null, totalCentavos: base + iva };
+  const receipt = { version: 1, saleId: key, branchId: OWN, productIds: [id], payment: input.payment,
+    calculation: { version: 1, currency: 'MXN', invoiceRequested: input.invoiceRequested, calculationPolicy: POLICY,
+      lines: [line], baseCentavos: base, additionalIvaCentavos: iva, totalCentavos: base + iva } };
+  const docs = new Map([
+    [`sales/${key}`, { receipt: copy(receipt), createdAt: 1000 }],
+    [`saleAudits/${key}`, { saleId: key, branchId: OWN, actorId: SELLER, createdAt: 1000 }],
+    [`inventoryMovements/${movementId}`, { type: 'sale', saleId: key, branchId: OWN, productId: id,
+      quantityScaled: -scaled, unit: 'kg', precision: 2, actorId: SELLER, occurredAt: 1000 }],
+    [`branches/${OWN}/stock/${id}`, { quantityScaled: stock, unit: 'kg', precision: 2, updatedAt: 1000,
+      lastMovementId: movementId }],
+    [`saleSubmissionReceipts/${key}`, { actorId: SELLER, branchId: OWN, result: copy(receipt), completedAt: 1000,
+      fingerprint: JSON.stringify({ actorId: SELLER, branchId: OWN, ...input }) }],
+  ]);
+  const response = { receipt: copy(receipt), replayed: false };
+  forge(docs, response, key);
+  return sample.manifest.execute(kind, async () => {
+    for (const [path, value] of docs) sample.store.documents.set(path, copy(value));
+    return response;
+  });
+}
+
+const FIRST_SALE = { scaled: 100, base: 1234, iva: 0, stock: 150, pricing: taxable(1234, 'iva-included') };
+async function stockedProduct(sample) {
+  const proof = await ownProduct(sample);
+  await fakePrice(sample, 'price', taxable(1234, 'iva-included'));
+  await fakeIntake(sample);
+  return proof;
+}
+
+test('offline: seller sale, replay and repricing follow independent sales projections', async () => {
+  const sample = specimen();
+  await stockedProduct(sample);
+  assert.deepEqual(sample.manifest.request('sale').payment, { method: 'cash', amountCentavos: 1234 });
+  const first = await fakeSale(sample, 'sale', FIRST_SALE);
+  assert.equal(first.receipt.calculation.totalCentavos, 1234);
+  const replay = sample.manifest.receipt('sale');
+  assert.deepEqual(replay, first.receipt);
+  replay.payment.amountCentavos = 1; // Copies cannot poison the private projection.
+  first.receipt.saleId = 'foreign';
+  await sample.manifest.unchanged(async () => ({ receipt: sample.manifest.receipt('sale'), replayed: true }));
+  await fakePrice(sample, 'reprice', taxable(1500, 'iva-additional-on-invoice'));
+  const repriced = sample.store.documents.get(`productPriceAudits/${sample.manifest.request('reprice').idempotencyKey}`);
+  assert.equal(repriced.previousAuditId, sample.manifest.request('price').idempotencyKey);
+  // 0.50 kg at 15.00 MXN: base 750, half-up additional IVA 120.5 -> 120 on invoice.
+  const second = await fakeSale(sample, 'resale', { scaled: 50, base: 750, iva: 120, stock: 100,
+    pricing: taxable(1500, 'iva-additional-on-invoice') });
+  assert.equal(second.receipt.calculation.totalCentavos, 870);
+  // A replay after repricing keeps the original immutable snapshot.
+  assert.equal(sample.manifest.receipt('sale').calculation.totalCentavos, 1234);
+  await sample.manifest.unchanged(async () => ({ receipt: sample.manifest.receipt('sale'), replayed: true }));
+  await sample.manifest.cleanup();
+  assert.equal(sample.store.documents.size, 0);
+});
+
+test('offline: forged sale artifacts and foreign actors are retained, never adopted', async () => {
+  const receiptOf = (docs, key) => docs.get(`saleSubmissionReceipts/${key}`);
+  for (const forge of [
+    (docs, _response, key) => { receiptOf(docs, key).actorId = `acceptance-${RUN}-seller-foreign`; },
+    (docs, _response, key) => { receiptOf(docs, key).fingerprint = 'forged'; },
+    (docs, _response, key) => { docs.get(`saleAudits/${key}`).actorId = ADMIN; },
+    (docs, _response, key) => { docs.get(`saleAudits/${key}`).createdAt = 999999999; },
+    (docs, _response, key) => { docs.get(`inventoryMovements/sale-${key}-0`).quantityScaled = -99; },
+    (docs) => { docs.get(`branches/${OWN}/stock/PRD-0123456789ABCDEF`).quantityScaled = 250; },
+    (docs, _response, key) => { docs.get(`sales/${key}`).receipt.payment.amountCentavos = 1; },
+    (_docs, response) => { response.receipt.calculation.totalCentavos = 1; },
+    (docs, _response, key) => { docs.set(`inventoryMovements/sale-${key}-1`, { saleId: key }); },
+    (docs) => { docs.set(`sales/http-${RUN}-sale-insufficient`, { receipt: null, createdAt: 1000 }); },
+  ]) {
+    const sample = specimen();
+    await stockedProduct(sample);
+    await assert.rejects(fakeSale(sample, 'sale', FIRST_SALE, forge), UNCERTAIN);
+    await assert.rejects(sample.manifest.cleanup(), RETAINED);
+    assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
+  }
+});
+
+test('offline: ledger requires stock, movements, audits and receipts to agree', async () => {
+  const sample = specimen();
+  const { result } = await stockedProduct(sample);
+  await fakeSale(sample, 'sale', FIRST_SALE);
+  const key = sample.manifest.request('sale').idempotencyKey;
+  const scope = { branch: OWN, other: `${OWN}-other`, productId: result.productId,
+    intake: `inventoryMovements/${sample.manifest.request('intake').idempotencyKey}`, sales: [key] };
+  const snapshot = () => new Map([...sample.store.documents].map(([path, value]) => [path, copy(value)]));
+  assert.doesNotThrow(() => ledger(snapshot(), scope));
+  for (const mutate of [
+    (records) => { records.get(`branches/${OWN}/stock/${result.productId}`).quantityScaled = 149; },
+    (records) => { records.get(`branches/${OWN}/stock/${result.productId}`).lastMovementId = scope.intake.slice(19); },
+    (records) => { records.get(`inventoryMovements/sale-${key}-0`).occurredAt = 1001; },
+    (records) => { records.get(`saleAudits/${key}`).actorId = ADMIN; },
+    (records) => { records.get(`sales/${key}`).receipt.payment.amountCentavos = 1; },
+    (records) => { records.set(`branches/${OWN}-other/stock/${result.productId}`, { quantityScaled: 0 }); },
+  ]) {
+    const records = snapshot();
+    mutate(records);
+    assert.throws(() => ledger(records, scope), /acceptance\/ledger-inconsistent/);
+  }
+});
+
+test('offline: sale order, denial slots and late denied artifacts fail closed', async () => {
+  const sample = specimen();
+  await ownProduct(sample);
+  await assert.rejects(fakeSale(sample, 'sale', FIRST_SALE), ORDER);
+  const key = sample.manifest.denialKey('sale-insufficient');
+  const planned = sample.manifest.view().entries.map((entry) => entry.path);
+  for (const path of [`sales/${key}`, `saleAudits/${key}`, `saleSubmissionReceipts/${key}`,
+    `inventoryMovements/sale-${key}-0`, `inventoryMovements/sale-${key}-1`]) assert.ok(planned.includes(path), path);
+  assert.throws(() => sample.manifest.denialKey('sale-foreign'), /acceptance\/denial-plan/);
+  await fakePrice(sample, 'price', taxable(1234, 'iva-included'));
+  await fakeIntake(sample);
+  await assert.rejects(fakePrice(sample, 'reprice', taxable(1500, 'iva-included')), ORDER);
+  assert.throws(() => sample.manifest.receipt('sale'), ORDER);
+  await assert.rejects(sample.manifest.unchanged(async () => {
+    sample.store.documents.set(`saleAudits/${key}`, { saleId: key, branchId: OWN, actorId: SELLER, createdAt: 1000 });
+  }), /acceptance\/observation-uncertain/);
+  await assert.rejects(sample.manifest.cleanup(), RETAINED);
+  assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
+});
+
+test('offline: Timestamps keep sub-millisecond precision without weakening type checks', () => {
+  const stamp = (seconds, nanoseconds) => ({ seconds, nanoseconds,
+    toMillis: () => seconds * 1000 + Math.floor(nanoseconds / 1e6) });
+  assert.equal(normalizeRecord(stamp(1, 123456789)), 1123);
+  assert.deepEqual(normalizeRecord({ completedAt: stamp(1, 999) }), { completedAt: 1000 });
+  for (const forged of [stamp(1, 1.5), stamp(1, -1), stamp(1, 1e9), stamp(2 ** 53, 0), stamp('1', 0),
+    { ...stamp(1, 0), toMillis: () => 2000 }, { nanoseconds: 0, toMillis: () => 1000 }]) {
+    assert.throws(() => normalizeRecord(forged), TIMESTAMP);
+  }
+});
+
 // Exact source-derived demo preservation proposal, NOT evidence of current contents.
 const BASELINE_AUTH = ['demo-local-administrator', 'demo-local-seller-north'];
 const BASELINE_DOCS = [
@@ -576,8 +879,8 @@ const BASELINE_DOCS = [
   'branches/branch-south/stock/DEMO-COFFEE', 'branches/branch-south/stock/DEMO-RIBBON',
 ];
 
-function liveApproval(environment) {
-  gate(environment);
+function liveApproval(environment, runtime) {
+  gate(environment, runtime); // undefined keeps the actual process runtime.
   if (environment.LDA_SALES_HTTP_ACCEPTANCE !== '1'
     || environment.LDA_SALES_FIXTURE_BASELINE_APPROVAL !== 'demo-seed-eight-documents-two-identities'
     || environment.LDA_SALES_RUNTIME_REVALIDATED !== 'explicit-local-source-project-routes-reviewed') {
@@ -636,8 +939,12 @@ function makeHttp(environment, documentPaths, transport = httpRequest, approve =
 
 function normalizeRecord(value) {
   if (value && typeof value.toMillis === 'function') {
+    // Emulator Timestamps may carry sub-millisecond nanoseconds; require a coherent
+    // seconds/nanoseconds pair and compare at Timestamp.toMillis (floor) precision.
+    const { seconds, nanoseconds } = value;
     const milliseconds = value.toMillis();
-    if (!Number.isSafeInteger(milliseconds) || value.nanoseconds % 1000000 !== 0) {
+    if (!Number.isSafeInteger(seconds) || !Number.isInteger(nanoseconds) || nanoseconds < 0 || nanoseconds > 999999999
+      || !Number.isSafeInteger(milliseconds) || milliseconds !== seconds * 1000 + Math.floor(nanoseconds / 1e6)) {
       throw new Error('acceptance/timestamp-type');
     }
     return milliseconds;
@@ -732,7 +1039,7 @@ function callableDenied(outcome, code) {
 
 // No live acceptance RED can be established before authorized emulator execution.
 // The skipped root contains future real transport cases, not injected service proof.
-test('live FUNC-02A HTTP/Auth/catalog/pricing/intake/client boundaries (pending authorization)',
+test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (pending authorization)',
   { skip: process.env.LDA_SALES_HTTP_ACCEPTANCE !== '1' }, async (t) => {
     liveApproval(process.env); // Fail closed BEFORE SDK imports, handles or writes.
     const runtime = await openLive(t, process.env);
@@ -771,8 +1078,7 @@ test('live FUNC-02A HTTP/Auth/catalog/pricing/intake/client boundaries (pending 
     runtime.registerPreservation(async () => { requireSame(await baseline(), before); });
     await manifest.seedBranches();
     let http = initialHttp;
-    const call = (kind, input, token) => http(`${BASE}/${FUNCTIONS[['create', 'price', 'intake'].indexOf(kind)]}`,
-      'POST', { data: input }, token);
+    const call = (kind, input, token) => http(`${BASE}/${CALLABLE[kind]}`, 'POST', { data: input }, token);
     await t.test('malformed envelope and exact absence', () => manifest.unchanged(async () => {
       callableDenied(await http(`${BASE}/createProduct`, 'POST', { unsupported: true }, tokens.administrator), 'INVALID_ARGUMENT');
     }));
@@ -835,6 +1141,47 @@ test('live FUNC-02A HTTP/Auth/catalog/pricing/intake/client boundaries (pending 
         if ((await http(`${REST}/products/${productId}`, 'GET', undefined, tokens[role])).status !== 403) throw new Error('acceptance/client-read');
       }
     }));
+    // FUNC-02B: seller sales over real HTTP. The seller branch comes only from token claims.
+    const line = (quantity, productId = manifest.view().productId) => ({ productId, quantity });
+    const denySale = (label, overrides, token, code) => t.test(`sale denial: ${label}`, () => manifest.unchanged(async () => {
+      const input = { ...manifest.request('sale'), idempotencyKey: manifest.denialKey(`sale-${label}`), ...overrides };
+      callableDenied(await call('sale', input, token), code);
+    }));
+    for (const role of ['anonymous', 'unassigned', 'client', 'administrator']) {
+      await denySale(role, {}, tokens[role], role === 'anonymous' ? 'UNAUTHENTICATED' : 'PERMISSION_DENIED');
+    }
+    for (const [label, overrides, code] of [
+      ['insufficient', { lines: [line('9.00')] }, 'FAILED_PRECONDITION'],
+      ['branch', { branchId: manifest.paths().branches[1].slice(9) }, 'INVALID_ARGUMENT'],
+      ['duplicate', { lines: [line('1.00'), line('1.00')] }, 'INVALID_ARGUMENT'],
+      ['zero', { lines: [line('0.00')] }, 'INVALID_ARGUMENT'],
+      ['precision', { lines: [line('1.001')] }, 'INVALID_ARGUMENT'],
+      ['method', { payment: { method: 'crypto', amountCentavos: 1234 } }, 'INVALID_ARGUMENT'],
+      ['payment', { payment: { method: 'cash', amountCentavos: 1233 } }, 'INVALID_ARGUMENT'],
+      ['missing', { lines: [line('1.00', `missing-${runId}`)] }, 'NOT_FOUND'],
+    ]) await denySale(label, overrides, tokens.seller, code);
+    await t.test('seller sale success, replay and conflict', async () => {
+      await manifest.execute('sale', async (input) => callableSuccess(await call('sale', input, tokens.seller)));
+      await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
+        { receipt: manifest.receipt('sale'), replayed: true }));
+      await manifest.unchanged(async () => callableDenied(await call('sale',
+        { ...manifest.request('sale'), lines: [line('0.50')] }, tokens.seller), 'ALREADY_EXISTS'));
+    });
+    await t.test('sale artifacts stay private to the seller', () => manifest.unchanged(async () => {
+      const saleKey = manifest.request('sale').idempotencyKey;
+      for (const path of [`sales/${saleKey}`, `saleAudits/${saleKey}`, `saleSubmissionReceipts/${saleKey}`,
+        `inventoryMovements/sale-${saleKey}-0`]) {
+        if ((await http(`${REST}/${path}`, 'GET', undefined, tokens.seller)).status !== 403) throw new Error('acceptance/private-read');
+      }
+    }));
+    await t.test('administrator reprices between sales', () => manifest.execute('reprice',
+      async (input) => callableSuccess(await call('reprice', input, tokens.administrator))));
+    await denySale('stale', {}, tokens.seller, 'INVALID_ARGUMENT'); // Pre-repricing payment no longer matches.
+    await t.test('repriced sale and immutable replay snapshot', async () => {
+      await manifest.execute('resale', async (input) => callableSuccess(await call('resale', input, tokens.seller)));
+      await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
+        { receipt: manifest.receipt('sale'), replayed: true }));
+    });
     // Teardown verifies Firestore exact contents transactionally, Auth privately,
     // and baseline preservation. Auth's nontransactional verify-delete race remains.
   });
