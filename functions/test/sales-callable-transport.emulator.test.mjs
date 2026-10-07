@@ -75,7 +75,7 @@ function ledger(records, { branch, other, productId, intake, sales }) {
     const movement = at(`inventoryMovements/sale-${key}-0`);
     const sale = at(`sales/${key}`);
     const lines = receipt?.result?.calculation?.lines;
-    if (!sale || !audit || !same(sale.receipt, receipt.result) || receipt.result.saleId !== key
+    if (!sale || !audit || !receipt || !movement || !same(sale.receipt, receipt.result) || receipt.result.saleId !== key
       || receipt.branchId !== branch || receipt.result.branchId !== branch || !same(receipt.result.productIds, [productId])
       || audit.saleId !== key || audit.branchId !== branch || audit.actorId !== receipt.actorId
       || movement.saleId !== key || movement.actorId !== receipt.actorId || lines?.length !== 1
@@ -833,6 +833,8 @@ test('offline: ledger requires stock, movements, audits and receipts to agree', 
     (records) => { records.get(`saleAudits/${key}`).actorId = ADMIN; },
     (records) => { records.get(`sales/${key}`).receipt.payment.amountCentavos = 1; },
     (records) => { records.set(`branches/${OWN}-other/stock/${result.productId}`, { quantityScaled: 0 }); },
+    (records) => { records.delete(`saleSubmissionReceipts/${key}`); },
+    (records) => { records.delete(`inventoryMovements/sale-${key}-0`); },
   ]) {
     const records = snapshot();
     mutate(records);
@@ -1143,6 +1145,10 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     }));
     // FUNC-02B: seller sales over real HTTP. The seller branch comes only from token claims.
     const line = (quantity, productId = manifest.view().productId) => ({ productId, quantity });
+    // Pay the exact total so each business denial isolates its targeted rule, never a payment mismatch.
+    const unitCentavos = manifest.request('sale').payment.amountCentavos;
+    const paid = (quantities) => ({ method: 'cash', amountCentavos: quantities.reduce(
+      (total, quantity) => total + Math.round(Number(quantity) * 100) * unitCentavos / 100, 0) });
     const denySale = (label, overrides, token, code) => t.test(`sale denial: ${label}`, () => manifest.unchanged(async () => {
       const input = { ...manifest.request('sale'), idempotencyKey: manifest.denialKey(`sale-${label}`), ...overrides };
       callableDenied(await call('sale', input, token), code);
@@ -1151,10 +1157,10 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
       await denySale(role, {}, tokens[role], role === 'anonymous' ? 'UNAUTHENTICATED' : 'PERMISSION_DENIED');
     }
     for (const [label, overrides, code] of [
-      ['insufficient', { lines: [line('9.00')] }, 'FAILED_PRECONDITION'],
+      ['insufficient', { lines: [line('9.00')], payment: paid(['9.00']) }, 'FAILED_PRECONDITION'],
       ['branch', { branchId: manifest.paths().branches[1].slice(9) }, 'INVALID_ARGUMENT'],
-      ['duplicate', { lines: [line('1.00'), line('1.00')] }, 'INVALID_ARGUMENT'],
-      ['zero', { lines: [line('0.00')] }, 'INVALID_ARGUMENT'],
+      ['duplicate', { lines: [line('1.00'), line('1.00')], payment: paid(['1.00', '1.00']) }, 'INVALID_ARGUMENT'],
+      ['zero', { lines: [line('0.00')], payment: paid(['0.00']) }, 'INVALID_ARGUMENT'],
       ['precision', { lines: [line('1.001')] }, 'INVALID_ARGUMENT'],
       ['method', { payment: { method: 'crypto', amountCentavos: 1234 } }, 'INVALID_ARGUMENT'],
       ['payment', { payment: { method: 'cash', amountCentavos: 1233 } }, 'INVALID_ARGUMENT'],
