@@ -1,6 +1,6 @@
 // FUNC-02A/B preparation: offline discovery must never initialize an SDK or use HTTP.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { lstatSync, realpathSync } from 'node:fs';
@@ -855,6 +855,21 @@ test('offline: denial payments follow the priced product and denials match the e
   assert.doesNotThrow(() => callableDenied(denied(SALE_DENIAL.payment), 'INVALID_ARGUMENT'));
 });
 
+test('offline: live SDK credential is a local certificate and initialization errors stay diagnosable', () => {
+  const calls = [];
+  const credential = ownedCredential((options) => { calls.push(options); return { kind: 'cert' }; },
+    (type, options) => { calls.push({ type, modulusLength: options.modulusLength }); return { privateKey: 'PEM' }; });
+  assert.deepEqual(credential, { kind: 'cert' });
+  assert.deepEqual(calls, [{ type: 'rsa', modulusLength: 2048 },
+    { projectId: PROJECT, clientEmail: `acceptance-local@${PROJECT}.iam.gserviceaccount.com`, privateKey: 'PEM' }]);
+  const wrapped = initializationError(Object.assign(new Error('secret detail'), { code: 'firestore/invalid-credential' }));
+  assert.equal(wrapped.message, 'acceptance/runtime-initialization');
+  assert.equal(wrapped.code, 'firestore/invalid-credential');
+  assert.equal(initializationError(new Error('acceptance/project')).code, 'acceptance/project');
+  assert.equal(initializationError('opaque').code, 'acceptance/unknown');
+  assert.equal(initializationError(Object.assign(new Error('x'), { code: 42 })).code, 'acceptance/unknown');
+});
+
 test('offline: ledger requires stock, movements, audits and receipts to agree', async () => {
   const sample = specimen();
   const { result } = await stockedProduct(sample);
@@ -1001,6 +1016,21 @@ function normalizeRecord(value) {
 
 // This function is called ONLY inside the validated explicitly opted-in live test.
 // Register disposal before initialization and every cleanup before any data write.
+// Admin Firestore requires a certificate credential even against the emulator; a fresh local
+// RSA key satisfies it without ADC, discovery or token refresh (ssl=false uses insecure gRPC).
+function ownedCredential(cert, keyPair = generateKeyPairSync) {
+  const { privateKey } = keyPair('rsa', { modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  return cert({ projectId: PROJECT, clientEmail: `acceptance-local@${PROJECT}.iam.gserviceaccount.com`, privateKey });
+}
+
+// Keeps only a well-formed error code (never the message) so failures stay diagnosable without leaking details.
+function initializationError(error) {
+  const source = typeof error?.code === 'string' ? error.code : error?.message;
+  const code = typeof source === 'string' && /^[a-z][a-z0-9-]*\/[a-z0-9-]+$/.test(source) ? source : 'acceptance/unknown';
+  return Object.assign(new Error('acceptance/runtime-initialization'), { code });
+}
+
 async function openLive(t, environment) {
   liveApproval(environment);
   liveApproval(process.env);
@@ -1008,7 +1038,7 @@ async function openLive(t, environment) {
   const authEntry = `${SDK_ROOT}/firebase-admin/lib/auth/index.js`;
   if (require.resolve('firebase-admin/auth') !== authEntry || realpathSync(authEntry) !== authEntry
     || !lstatSync(authEntry).isFile()) throw new Error('acceptance/auth-sdk-resolution');
-  const { initializeApp, deleteApp } = require('firebase-admin/app');
+  const { initializeApp, deleteApp, cert } = require('firebase-admin/app');
   const { getFirestore } = require('firebase-admin/firestore');
   const { getAuth } = require('firebase-admin/auth');
   const runId = randomUUID();
@@ -1034,10 +1064,8 @@ async function openLive(t, environment) {
     },
   ]));
   try {
-    // Emulator-local in-memory token provider; no cert, ADC, default app or discovery.
-    app = initializeApp({ projectId: PROJECT, credential: {
-      getAccessToken: async () => ({ access_token: 'owner', expires_in: 3600 }),
-    } }, `owned-http-${runId}`);
+    // Emulator-local certificate from a fresh in-memory key; no ADC, default app or discovery.
+    app = initializeApp({ projectId: PROJECT, credential: ownedCredential(cert) }, `owned-http-${runId}`);
     firestore = getFirestore(app);
     firestore.settings({ projectId: PROJECT, host: PINNED.FIRESTORE_EMULATOR_HOST,
       ssl: false, preferRest: false, ignoreUndefinedProperties: false,
@@ -1064,7 +1092,7 @@ async function openLive(t, environment) {
     };
     manifest = createManifest({ runId, actorId: `acceptance-${runId}-administrator` }, store);
     return { runId, authManifest, auth, manifest, registerPreservation(check) { preserve = check; } };
-  } catch { throw new Error('acceptance/runtime-initialization'); }
+  } catch (error) { throw initializationError(error); }
 }
 
 function callableSuccess(outcome) {
