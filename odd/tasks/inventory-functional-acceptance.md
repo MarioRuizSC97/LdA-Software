@@ -27,7 +27,7 @@ Keep credentials/tokens in memory; never print or persist them. Explicit project
   - [x] FUNC-02A — Gates, owned Auth/Firestore lifecycle, create/price/intake and client boundaries. The user explicitly approved a cohesive 650–850-line preparation unit, including its offline safety tests. Observe meaningful deterministic RED/GREEN; independently assess/check, review under the existing RDD switch, and close a local work-unit commit before extending it. Native review `review-09265e9ddab98e75` approved and acknowledged; closed by local work-unit commit `a7c6d4bf22d76787a80c2060c6c75b946c6ffbb8`.
   - [x] FUNC-02B — Sales, replay/repricing, business denials and extended consistency in the same file. Approved forecast: 300–400 additional lines, after FUNC-02A closes. Keep its behavior and tests together with a separate verification/review/local-commit boundary. Native review `review-bc16d89b27e378ed` approved and acknowledged; closed by local work-unit commit `2d47565d973f4062831373db0267a1a6bc4e79ad`.
 - [x] FUNC-03 — Execute authenticated local API/rules acceptance against existing services. Route: delegated verifier after source/project/endpoint/ownership gates pass. Cover administrator product/price/intake, seller catalog and sale, anonymous/unassigned/wrong-role denials, validation failures, replay, stock/movement/audit consistency, and owned cleanup. Protect baseline fixtures; no live run until teardown is prepared. Passed on live run 3 (HEAD `a73f525`): 58/58 with complete teardown and unchanged fixtures.
-- [ ] FUNC-04 — Reconcile evidence and local commits; report failed/skipped/pending checks and manual visual follow-up. Route: parent tracking/review/delivery with independent readback. No overall INV-05 closure or native approval claim without actual evidence.
+- [x] FUNC-04 — Reconcile evidence and local commits; report failed/skipped/pending checks and manual visual follow-up. Route: parent tracking/review/delivery with independent readback. No overall INV-05 closure or native approval claim without actual evidence. Closed with the final report below.
 
 ## Acceptance and review
 
@@ -116,6 +116,38 @@ Movement test fix review (`review-42751f00fe8bffda`) reported non-blocking findi
 - `R3-live-expectation-flip-without-rule-change` (WARNING): addressed by evidence; the rule already allowed the read and run 3 confirmed it.
 - `R3-brittle-identity-derivation` and `R3-validator-partial-value-checks` (SUGGESTION): derive expected identity from fixture sources; check quantity/product values in the movement view.
 
+## Final report (FUNC-04)
+
+Reconciled on 2026-10-07 at HEAD `d6fd962` (before this report commit).
+
+**Commits.** The feature range `6e096cc..HEAD` holds seven reviewed source/test work units plus tracking commits. Each source commit's tree equals its approved native review candidate:
+
+| Commit | Unit | Review lineage | Approved tree |
+| --- | --- | --- | --- |
+| `a121067` | FUNC-01 owned Auth helper | `review-9546995ace945203` | `f15b7d38` |
+| `a7c6d4b` | FUNC-02A gates and intake lifecycle | `review-09265e9ddab98e75` | `ad5c41bd` |
+| `2d47565` | FUNC-02B sales, replay, repricing | `review-bc16d89b27e378ed` | `2cba5d48` |
+| `2bf4bc9` | Denial isolation and ledger guards | `review-bcb6dbb051b2d042` | `3c59c932` |
+| `f963817` | Pricing-derived payments, rule messages | `review-518657e4b0e2af85` | `5e9acb2a` |
+| `52fa2fe` | Live Firestore certificate credential | `review-d0b4ef6597caf01a` | `acf824a1` |
+| `a73f525` | Seller own sale movement read | `review-42751f00fe8bffda` | `8e650db3` |
+
+Only the three authorized test files and this document changed (2,045 source/test additions); no product code, rules, configuration or dependencies changed. All work stays local: nothing pushed and no pull request.
+
+**Checks at closure.** Existing functions offline unit suite 50/50; owned-Auth helper 20/20 (run from the repository root); transport suite offline 23 pass, 1 skipped (the gated live root). Live acceptance run 3 at `a73f525`: 58/58 against the running local emulators, teardown complete, all 10 baseline fixtures unchanged. Working tree clean except the unrelated untracked `CLAUDE.md`.
+
+**Failed or superseded checks (honest record).** Live run 1 failed at SDK initialization (credential), and live run 2 failed on a test expectation that contradicted the published movement rule. Both are fixed and superseded by run 3. Run 2's 15 retained documents were removed by exact-path cleanup.
+
+**Not run at closure.** The broader historical offline suite (about 540 tests including the Flutter app) was not rerun, because no product code changed in this feature. The emulator suites in `npm run test:emulator` were not rerun.
+
+**Unverified, out of scope.** Browser visual sign-in, CORS, Storage and production cryptographic token verification. Documented limitations remain: RPC non-cancellation and the verify-then-delete race.
+
+**Manual visual follow-up.** Sign in through the app as an administrator and as the north seller against the local emulators and confirm catalog, intake and sale screens behave as the API acceptance shows.
+
+**Open non-blocking follow-ups.** A live negative check that a seller cannot read movements of another branch, another actor or non-sale types (`R3-own-branch-boundary-unproved-live`); minor test-hardening suggestions recorded per review above.
+
+**Size and delivery.** The original forecast was about 400 authored lines; the delivered 2,045 test lines were approved unit by unit by the user. Push and any pull request (single or chained) remain the user's decision under ordinary repository policy.
+
 ## Next step
 
-FUNC-04: reconcile evidence and local commits; report failed/skipped/pending checks and manual visual follow-up. Pending decision: optionally add a live negative movement-boundary check. Browser visual sign-in, CORS, Storage and production cryptographic verification remain unverified; RPC non-cancellation and verify-then-delete race remain documented limitations.
+Feature complete locally. Next decisions are the user's: push/PR strategy for this branch, the optional live movement-boundary check, the manual visual follow-up, and the separate `sellerProfiles/{uid}` feature.
