@@ -43,7 +43,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 ## Tasks
 
-- [ ] CORR-01 — Pure correction calculation: remaining returnable quantity per line, proportional refund at the snapshot (half-up per line, IVA charged), exchange difference against the current price, and the 15-day window check. Route: one delegated writer (new module plus tests).
+- [x] CORR-01 — Pure correction calculation: remaining returnable quantity per line, proportional refund at the snapshot (half-up per line, IVA charged), exchange difference against the current price, and the 15-day window check. Route: one delegated writer (new module plus tests). Native review `review-b1ec6ebade67d20b` approved; commit `c62ae960a3f9debd593c30e12d75c496245fa3da`, tree exactly the approved candidate `9600eb40`.
 - [ ] CORR-02 — Sale lookup for sellers: by receipt number, and the branch's recent-sales list (15 days), both server-side with branch and window enforcement. Route: delegated writer.
 - [ ] CORR-03 — Return service: partial and repeated returns, `good`/`factory-defect` conditions, refund by the original method, reason and note, invoiced flag, return ledger, compensating movements, idempotent replay. Route: delegated writer; emulator tests.
 - [ ] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer.
@@ -66,6 +66,8 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - CORR-01 writer (delegated; route trigger: new module plus tests): `functions/src/corrections-calculation.js` (266 lines) and `functions/test/corrections-calculation.test.mjs` (209 lines). Exports `CORRECTION_WINDOW_MS`, `CorrectionError`, `assertCorrectionWindow`, `calculateRemainingReturnable`, `calculateReturnRefund` and `calculateExchangeSettlement`. Author-reported RED: the module was missing (0 pass, 1 fail); GREEN 10/10. `halfUp`, `safeNumber` and `exactFields` are private in `sales.js`, so the module carries minimal local copies; it imports the `quantity.js` helpers. The returned ledger is an object map keyed by line index; CORR-03 must store it in that shape. Exchange settlement nets totals, IVA included.
 - CORR-01 parent spot check: corrections 10/10, sales calculation 11/11, whitespace check clean on both new files, hashes `b14cde67…` and `374f8af0…` match the writer report.
 
+- CORR-01 review follow-ups (non-blocking): `R3-001` (WARNING) — malformed sale lines can raise a raw TypeError instead of `CorrectionError('invalid-argument')`; fix before CORR-03 relies on persisted receipts. `R3-002`/`R3-003` (SUGGESTION) — add tests for the exchange-settlement input guards, currency, and the receipt-snapshot rejections.
+
 ## Next step
 
-Review and commit CORR-01, then start CORR-02 (sale lookup).
+CORR-02 (sale lookup), which also resolves CORR-01 follow-ups `R3-001` to `R3-003` in the calculation module.
