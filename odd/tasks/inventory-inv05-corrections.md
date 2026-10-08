@@ -184,6 +184,9 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - **Offline re-run:** 12 pass, 1 skipped. Parent readback of the log confirmed 44/44, an identical baseline and residue diff, and no failures.
   - **Limitation:** the explicit deny rules are semantically identical to the catch-all deny they precede, so neither the 403 probe nor the passing rules subtest proves whether the emulator hot-reloaded the new `firestore.rules`. Client-observable behavior is the same either way.
 
+- CORR-07 exploration (read-only): the Flutter app has no seller sale UI and no client for `submitSale` or the correction callables. Every write flow is an admin-gated inline form in `catalog_page.dart` (about 2,390 lines), with no router or dialogs. The receipt number is the client-generated `saleId` UUID, 36 characters long. Proposed split: domain plus gateway, lookup and list screen, then forms.
+- Decision (user, 2026-10-08): build the seller sale UI first, as a separate feature that defines the receipt and its number. CORR-07 is paused until it exists; CORR-07 and CORR-08 resume afterwards.
+
 ## Next step
 
-CORR-07 (seller Flutter screens: lookup and list, return, replacement and exchange).
+Paused. Start the seller sale UI feature; resume CORR-07 afterwards.
