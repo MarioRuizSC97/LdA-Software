@@ -1,0 +1,309 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { calculateSale, SaleError } from '../src/sales.js';
+import { CORRECTION_WINDOW_MS } from '../src/corrections-calculation.js';
+import * as lookup from '../src/sale-lookup.js';
+
+const environment = Object.freeze({
+  GCLOUD_PROJECT: 'demo-lda-inventory', FUNCTIONS_EMULATOR: 'true',
+  FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+});
+const auth = { uid: 'seller-one', token: { role: 'seller', branchId: 'north' } };
+const NOW = new Date('2026-06-16T12:00:00Z').getTime();
+const DAY = 24 * 60 * 60 * 1000;
+const pricing = {
+  currency: 'MXN', listedPriceCentavos: 1000, priceMode: 'iva-additional-on-invoice',
+  ivaTreatment: 'taxable', ivaRateBasisPoints: 1600,
+};
+const clone = (value) => structuredClone(value);
+
+function saleRecord(saleId, branchId, createdAtMs, invoiceRequested = true) {
+  // Detached mutable copy, as Firestore returns it, so tests can corrupt fields.
+  const calculation = clone(calculateSale({ invoiceRequested, lines: [
+    { quantity: '3', quantitySpec: { unit: 'piece', precision: 0 }, pricing },
+    { quantity: '1.250', quantitySpec: { unit: 'kg', precision: 3 }, pricing },
+  ] }));
+  return {
+    receipt: {
+      version: 1, saleId, branchId, productIds: ['p1', 'p2'], calculation,
+      payment: { method: 'card', amountCentavos: calculation.totalCentavos },
+    },
+    createdAt: new Date(createdAtMs),
+  };
+}
+
+// Serial in-memory read-only transactions with the query subset the service
+// uses. Writes are recorded so tests can prove lookups never mutate anything.
+class FakeFirestore {
+  constructor(records = []) {
+    this.records = new Map(records.map(([path, value]) => [path, clone(value)]));
+    this.events = [];
+    this.queries = [];
+    this.writes = [];
+  }
+
+  doc(path) {
+    assert.match(path, /^[^/]+\/[^/]+$/);
+    assert.ok(!/cost|audit|submission/i.test(path), `forbidden read: ${path}`);
+    return { path };
+  }
+
+  collection(name) {
+    assert.equal(name, 'sales');
+    const query = (filters, order, limit) => ({
+      kind: 'query', filters, order, limitValue: limit,
+      where: (field, op, value) => query([...filters, [field, op, value]], order, limit),
+      orderBy: (field, direction) => query(filters, [field, direction], limit),
+      limit: (value) => query(filters, order, value),
+    });
+    return query([], null, null);
+  }
+
+  async runTransaction(callback, options) {
+    this.events.push(['transaction', options]);
+    const read = (path) => {
+      const data = this.records.get(path);
+      return { id: path.split('/')[1], exists: this.records.has(path), data: () => clone(data) };
+    };
+    const transaction = {
+      get: async (target) => {
+        if (target.kind !== 'query') {
+          this.events.push(['get', target.path]);
+          return read(target.path);
+        }
+        this.queries.push(target);
+        let docs = [...this.records.keys()].filter((path) => path.startsWith('sales/')).map(read);
+        for (const [field, op, value] of target.filters) {
+          docs = docs.filter((doc) => {
+            const actual = field.split('.').reduce((node, key) => node?.[key], doc.data());
+            const compare = actual instanceof Date ? actual.getTime() : actual;
+            const expected = value instanceof Date ? value.getTime() : value;
+            return { '==': compare === expected, '>': compare > expected, '<=': compare <= expected }[op];
+          });
+        }
+        assert.deepEqual(target.order, ['createdAt', 'desc']);
+        docs.sort((a, b) => b.data().createdAt.getTime() - a.data().createdAt.getTime());
+        return { docs: docs.slice(0, target.limitValue) };
+      },
+      create: (ref) => this.writes.push(ref.path),
+      set: (ref) => this.writes.push(ref.path),
+      update: (ref) => this.writes.push(ref.path),
+      delete: (ref) => this.writes.push(ref.path),
+    };
+    return callback(transaction);
+  }
+}
+
+function fixture(records = [], options = {}) {
+  const firestore = new FakeFirestore(records);
+  const service = lookup.createSaleLookupService({
+    firestore, environment, now: () => new Date(NOW), ...options,
+  });
+  return { firestore, service };
+}
+
+async function rejectsWith(promise, code, message) {
+  await assert.rejects(promise, (error) => {
+    assert.ok(error instanceof SaleError, `unexpected ${error}`);
+    assert.equal(error.code, code);
+    if (message) assert.equal(error.message, message);
+    return true;
+  });
+}
+
+test('factory validates injected dependencies', () => {
+  assert.throws(() => lookup.createSaleLookupService(), TypeError);
+  assert.throws(() => lookup.createSaleLookupService({
+    firestore: { doc() {}, runTransaction() {} }, environment,
+  }), TypeError);
+  assert.throws(() => fixture([], { now: 1 }), TypeError);
+  const { service } = fixture();
+  assert.equal(typeof service.findSale, 'function');
+  assert.equal(typeof service.listRecentSales, 'function');
+  assert.ok(Object.isFrozen(service));
+});
+
+test('the emulator guard and seller authorization run before any read', async () => {
+  for (const env of [{}, { ...environment, FIRESTORE_EMULATOR_HOST: 'localhost:8080' }]) {
+    const { firestore, service } = fixture([], { environment: env });
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+    await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
+    assert.deepEqual(firestore.events, []);
+  }
+  for (const [candidate, code] of [
+    [undefined, 'unauthenticated'], [{ uid: '' }, 'unauthenticated'],
+    [{ uid: 'x', token: { role: 'administrator', branchId: 'north' } }, 'permission-denied'],
+    [{ uid: 'x', token: { role: 'auditor', branchId: 'north' } }, 'permission-denied'],
+    [{ uid: 'x', token: { role: 'seller' } }, 'permission-denied'],
+    [{ uid: 'x', token: { role: 'seller', branchId: '../north' } }, 'permission-denied'],
+  ]) {
+    const { firestore, service } = fixture([['sales/s1', saleRecord('s1', 'north', NOW - DAY)]]);
+    await rejectsWith(service.findSale({ auth: candidate, data: { saleId: 's1' } }), code);
+    await rejectsWith(service.listRecentSales({ auth: candidate, data: {} }), code);
+    assert.deepEqual(firestore.events, []);
+  }
+});
+
+test('requests accept only their exact fields and bounded values', async () => {
+  const { firestore, service } = fixture();
+  for (const data of [
+    undefined, null, [], {}, { saleId: '' }, { saleId: '../s1' }, { saleId: 7 },
+    { saleId: 's'.repeat(129) }, { saleId: 's1', branchId: 'north' },
+  ]) await rejectsWith(service.findSale({ auth, data }), 'invalid-argument');
+  for (const data of [
+    undefined, null, [], { limit: 0 }, { limit: 101 }, { limit: 1.5 }, { limit: '5' },
+    { limit: null }, { branchId: 'south' }, { limit: 5, since: 0 },
+  ]) await rejectsWith(service.listRecentSales({ auth, data }), 'invalid-argument');
+  assert.deepEqual(firestore.events, []);
+});
+
+test('lookup by receipt number returns only correction-relevant fields with remaining quantities', async () => {
+  const createdAt = NOW - 3 * DAY;
+  const { firestore, service } = fixture([
+    ['sales/s1', saleRecord('s1', 'north', createdAt)],
+    ['saleReturnLedgers/s1', { returned: { 1: 250 } }],
+  ]);
+  const result = await service.findSale({ auth, data: { saleId: 's1' } });
+  assert.deepEqual(Object.keys(result), ['sale']);
+  const { sale } = result;
+  const stored = firestore.records.get('sales/s1').receipt;
+  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'lines', 'receipt', 'saleId']);
+  assert.equal(sale.saleId, 's1');
+  assert.equal(sale.createdAt, createdAt);
+  assert.deepEqual(Object.keys(sale.receipt).sort(),
+    ['calculation', 'invoiceRequested', 'payment', 'productIds']);
+  assert.deepEqual(sale.receipt.calculation, stored.calculation);
+  assert.deepEqual(sale.receipt.payment, stored.payment);
+  assert.deepEqual(sale.receipt.productIds, ['p1', 'p2']);
+  assert.equal(sale.receipt.invoiceRequested, true);
+  assert.deepEqual(sale.lines, [
+    { lineIndex: 0, soldScaled: 3, returnedScaled: 0, remainingScaled: 3 },
+    { lineIndex: 1, soldScaled: 1250, returnedScaled: 250, remainingScaled: 1000 },
+  ]);
+  assert.ok(Object.isFrozen(result) && Object.isFrozen(sale.receipt.calculation.lines[0].pricing));
+  assert.ok(Object.isFrozen(sale.lines[1]) && Object.isFrozen(sale.receipt.payment));
+  const text = JSON.stringify(result);
+  for (const field of ['actorId', 'fingerprint', 'cost', 'branchId', 'uid']) {
+    assert.ok(!text.includes(field), `private field leaked: ${field}`);
+  }
+  assert.deepEqual(firestore.events, [
+    ['transaction', { readOnly: true }], ['get', 'sales/s1'], ['get', 'saleReturnLedgers/s1'],
+  ]);
+  assert.deepEqual(firestore.writes, []);
+});
+
+test('missing and foreign sales are indistinguishable; expired and future own sales fail the window', async () => {
+  const { service } = fixture([
+    ['sales/foreign', saleRecord('foreign', 'south', NOW - DAY)],
+    ['sales/expired', saleRecord('expired', 'north', NOW - CORRECTION_WINDOW_MS)],
+    ['sales/future', saleRecord('future', 'north', NOW + 1)],
+    ['sales/edge', saleRecord('edge', 'north', NOW - CORRECTION_WINDOW_MS + 1)],
+  ]);
+  const notFound = 'sale was not found in this branch';
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'missing' } }), 'not-found', notFound);
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'foreign' } }), 'not-found', notFound);
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'expired' } }), 'failed-precondition');
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'future' } }), 'failed-precondition');
+  const { sale } = await service.findSale({ auth, data: { saleId: 'edge' } });
+  assert.equal(sale.createdAt, NOW - CORRECTION_WINDOW_MS + 1);
+  const south = { uid: 'seller-two', token: { role: 'seller', branchId: 'south' } };
+  assert.equal((await service.findSale({ auth: south, data: { saleId: 'foreign' } })).sale.saleId, 'foreign');
+});
+
+test('a foreign sale is not-found even when its record is malformed', async () => {
+  const foreign = saleRecord('bad', 'south', NOW - DAY);
+  foreign.receipt.calculation.lines[0].pricing.unitCostCentavos = 1;
+  const { service } = fixture([['sales/bad', foreign]]);
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'bad' } }), 'not-found');
+});
+
+test('malformed persisted sales and ledgers fail closed without leaking extra fields', async () => {
+  const cases = [];
+  const withCost = saleRecord('s1', 'north', NOW - DAY);
+  withCost.receipt.calculation.lines[0].pricing.unitCostCentavos = 400;
+  cases.push([withCost]);
+  const extraField = saleRecord('s1', 'north', NOW - DAY);
+  extraField.actorId = 'seller-one';
+  cases.push([extraField]);
+  const otherId = saleRecord('other', 'north', NOW - DAY);
+  cases.push([otherId]);
+  const badTime = saleRecord('s1', 'north', NOW - DAY);
+  badTime.createdAt = '2026-06-15';
+  cases.push([badTime]);
+  const badLines = saleRecord('s1', 'north', NOW - DAY);
+  badLines.receipt.calculation.lines[0] = null;
+  cases.push([badLines]);
+  const badMethod = saleRecord('s1', 'north', NOW - DAY);
+  badMethod.receipt.payment.method = 'gift';
+  cases.push([badMethod]);
+  const valid = saleRecord('s1', 'north', NOW - DAY);
+  for (const ledger of [{}, { returned: [] }, { returned: { 0: 4 } }, { returned: { 5: 1 } },
+    { returned: { 0: -1 } }]) cases.push([valid, ledger]);
+  for (const [record, ledger] of cases) {
+    const records = [['sales/s1', record]];
+    if (ledger) records.push(['saleReturnLedgers/s1', ledger]);
+    const { service } = fixture(records);
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+  }
+});
+
+test('an invalid clock fails the lookup with a domain error', async () => {
+  for (const clock of [() => new Date(NaN), () => 'now', () => { throw new Error('clock'); }]) {
+    const { service } = fixture([['sales/s1', saleRecord('s1', 'north', NOW - DAY)]], { now: clock });
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+    await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
+  }
+});
+
+test('recent sales list only the seller branch inside the window, newest first', async () => {
+  const records = [
+    ['sales/old', saleRecord('old', 'north', NOW - CORRECTION_WINDOW_MS)],
+    ['sales/a', saleRecord('a', 'north', NOW - 10 * DAY, false)],
+    ['sales/b', saleRecord('b', 'north', NOW - DAY)],
+    ['sales/c', saleRecord('c', 'north', NOW - 5 * DAY)],
+    ['sales/south', saleRecord('south', 'south', NOW - DAY)],
+    ['sales/future', saleRecord('future', 'north', NOW + DAY)],
+    ['saleReturnLedgers/c', { returned: { 0: 3 } }],
+  ];
+  const { firestore, service } = fixture(records);
+  const result = await service.listRecentSales({ auth, data: {} });
+  assert.deepEqual(Object.keys(result), ['sales']);
+  assert.deepEqual(result.sales.map((sale) => sale.saleId), ['b', 'c', 'a']);
+  assert.deepEqual(result.sales.map((sale) => sale.createdAt), [NOW - DAY, NOW - 5 * DAY, NOW - 10 * DAY]);
+  assert.equal(result.sales[1].lines[0].remainingScaled, 0);
+  assert.equal(result.sales[2].receipt.invoiceRequested, false);
+  assert.ok(Object.isFrozen(result.sales) && Object.isFrozen(result.sales[0]));
+  const [query] = firestore.queries;
+  assert.deepEqual(query.filters.map(([field, op, value]) => [field, op,
+    value instanceof Date ? value.getTime() : value]), [
+    ['receipt.branchId', '==', 'north'],
+    ['createdAt', '>', NOW - CORRECTION_WINDOW_MS],
+    ['createdAt', '<=', NOW],
+  ]);
+  assert.equal(query.limitValue, 50);
+  assert.deepEqual(firestore.events[0], ['transaction', { readOnly: true }]);
+  assert.deepEqual(firestore.writes, []);
+  assert.ok(!JSON.stringify(result).includes('south'));
+});
+
+test('recent sales honor an explicit limit and return an empty list for a quiet branch', async () => {
+  const records = Array.from({ length: 5 }, (_, index) => [
+    `sales/s${index}`, saleRecord(`s${index}`, 'north', NOW - (index + 1) * DAY),
+  ]);
+  const { firestore, service } = fixture(records);
+  const limited = await service.listRecentSales({ auth, data: { limit: 2 } });
+  assert.deepEqual(limited.sales.map((sale) => sale.saleId), ['s0', 's1']);
+  await service.listRecentSales({ auth, data: { limit: 100 } });
+  assert.deepEqual(firestore.queries.map((query) => query.limitValue), [2, 100]);
+  const south = { uid: 'seller-two', token: { role: 'seller', branchId: 'south' } };
+  assert.deepEqual((await service.listRecentSales({ auth: south, data: {} })).sales, []);
+});
+
+test('one malformed sale in the branch list fails the whole list closed', async () => {
+  const broken = saleRecord('b', 'north', NOW - DAY);
+  broken.receipt.productIds = ['p1'];
+  const { service } = fixture([
+    ['sales/a', saleRecord('a', 'north', NOW - 2 * DAY)], ['sales/b', broken],
+  ]);
+  await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
+});

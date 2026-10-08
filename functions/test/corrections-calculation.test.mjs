@@ -207,3 +207,99 @@ test('exchange settlement is zero both ways for an equal amount and enforces inv
   const invoiced = calculateSale({ invoiceRequested: true, lines: [line('2', 500, {}, 0)] });
   rejects(() => calculateExchangeSettlement({ refund: returned, newItems: invoiced }), 'invalid-argument');
 });
+
+test('malformed sale lines raise CorrectionError, never a raw TypeError', () => {
+  const spec = { unit: 'kg', precision: 0 };
+  const valid = {
+    quantity: { spec, scaled: 1 }, baseCentavos: 10, additionalIvaCentavos: 0, totalCentavos: 10,
+  };
+  const throwing = (field) => {
+    const value = structuredClone(valid);
+    Object.defineProperty(field === 'scaled' ? value.quantity : value, field, {
+      enumerable: true, get() { throw new TypeError(`hostile ${field}`); },
+    });
+    return value;
+  };
+  const malformed = [
+    null, undefined, 5, 'line', true, [], [valid],
+    {}, { ...valid, quantity: undefined }, { ...valid, quantity: null }, { ...valid, quantity: 1 },
+    { ...valid, quantity: { scaled: 1 } }, { ...valid, quantity: { spec } },
+    { ...valid, quantity: { spec: null, scaled: 1 } }, { ...valid, quantity: { spec: 'kg', scaled: 1 } },
+    throwing('quantity'), throwing('scaled'), throwing('baseCentavos'), throwing('totalCentavos'),
+  ];
+  for (const bad of malformed) {
+    rejects(() => calculateRemainingReturnable({ lines: [bad], returned: {} }), 'invalid-argument');
+    rejects(() => calculateRemainingReturnable({ lines: [valid, bad], returned: {} }), 'invalid-argument');
+  }
+  const sale = receipt([line('1', 100, {}, 0)]);
+  for (const bad of malformed) {
+    const broken = { ...sale, calculation: { ...sale.calculation, lines: [bad] } };
+    rejects(() => refund(broken, [{ lineIndex: 0, quantity: '1' }]), 'invalid-argument');
+  }
+  rejects(() => calculateRemainingReturnable({ lines: [, valid], returned: {} }), 'invalid-argument');
+  rejects(() => calculateRemainingReturnable(), 'invalid-argument');
+});
+
+test('exchange settlement rejects malformed refund and new-item calculations', () => {
+  const sale = receipt([line('1', 1000, {}, 0)], true);
+  const returned = refund(sale, [{ lineIndex: 0, quantity: '1' }]);
+  const newItems = calculateSale({ invoiceRequested: true, lines: [line('1', 1500, {}, 0)] });
+  const settle = (refundValue, newValue) => () => calculateExchangeSettlement({
+    refund: refundValue, newItems: newValue,
+  });
+  for (const bad of [
+    undefined, null, 'refund', { ...returned, version: 2 }, { ...returned, version: undefined },
+    { ...returned, invoiced: 'true' }, { ...returned, invoiced: undefined },
+    { ...returned, refundMethod: 'gift' }, { ...returned, refundMethod: undefined },
+  ]) rejects(settle(bad, newItems), 'invalid-argument');
+  for (const bad of [
+    undefined, null, 7, [], { ...newItems, version: 2 },
+    { ...newItems, currency: 'USD' }, { ...newItems, currency: undefined },
+    { ...newItems, invoiceRequested: false },
+  ]) rejects(settle(returned, bad), 'invalid-argument');
+  for (const total of [-1, 1.5, NaN, Infinity, '1740', null, Number.MAX_SAFE_INTEGER + 1]) {
+    rejects(settle({ ...returned, totalCentavos: total }, newItems), 'invalid-argument');
+    rejects(settle(returned, { ...newItems, totalCentavos: total }), 'invalid-argument');
+  }
+  rejects(() => calculateExchangeSettlement(), 'invalid-argument');
+});
+
+test('refunds reject receipt snapshots that are not a valid frozen v1 sale', () => {
+  const sale = receipt([line('2', 100, {}, 0), line('1', 50, {}, 0)]);
+  const request = [{ lineIndex: 0, quantity: '1' }];
+  const { calculation } = sale;
+  for (const bad of [
+    undefined, null, 'receipt', { ...sale, version: 2 }, { ...sale, version: '1' },
+    { ...sale, calculation: null }, { ...sale, calculation: 'calc' },
+    { ...sale, calculation: { ...calculation, version: 2 } },
+    { ...sale, calculation: { ...calculation, invoiceRequested: 'no' } },
+    { ...sale, calculation: { ...calculation, invoiceRequested: undefined } },
+    { ...sale, calculation: { ...calculation, lines: [] } },
+    { ...sale, productIds: ['product-0'] },
+    { ...sale, productIds: ['product-0', 'product-1', 'product-2'] },
+    { ...sale, productIds: ['product-0', ''] }, { ...sale, productIds: ['product-0', 7] },
+    { ...sale, productIds: 'product-0' }, { ...sale, payment: null },
+    { ...sale, payment: { amountCentavos: 0 } },
+  ]) rejects(() => refund(bad, request), 'invalid-argument');
+  rejects(() => refund(sale, request, null), 'invalid-argument');
+  rejects(() => refund(sale, request, { 0: 3 }), 'failed-precondition');
+  rejects(() => calculateReturnRefund(), 'invalid-argument');
+});
+
+test('refund totals beyond the safe integer range raise out-of-range', () => {
+  const max = Number.MAX_SAFE_INTEGER;
+  const huge = {
+    quantity: { version: 1, spec: { unit: 'piece', precision: 0 }, scaled: 1, decimal: '1' },
+    baseCentavos: max, additionalIvaCentavos: 0, totalCentavos: max,
+  };
+  const sale = {
+    version: 1, saleId: 'sale-huge', branchId: 'branch-1', productIds: ['a', 'b'],
+    calculation: { version: 1, currency: 'MXN', invoiceRequested: false, lines: [huge, huge] },
+    payment: { method: 'cash', amountCentavos: 0 },
+  };
+  const single = refund(sale, [{ lineIndex: 0, quantity: '1' }]);
+  assert.equal(single.totalCentavos, max);
+  rejects(() => refund(sale, [
+    { lineIndex: 0, quantity: '1' }, { lineIndex: 1, quantity: '1' },
+  ]), 'out-of-range');
+});

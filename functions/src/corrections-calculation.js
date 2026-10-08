@@ -126,8 +126,9 @@ export function calculateExchangeSettlement({ refund, newItems } = {}) {
     || typeof refund.invoiced !== 'boolean' || !PAYMENT_METHODS.includes(refund.refundMethod)) {
     throw new CorrectionError('invalid-argument', 'a return refund calculation is required');
   }
-  if (newItems === null || typeof newItems !== 'object' || newItems.version !== 1) {
-    throw new CorrectionError('invalid-argument', 'a new-item sale calculation is required');
+  if (newItems === null || typeof newItems !== 'object' || newItems.version !== 1
+    || newItems.currency !== 'MXN') {
+    throw new CorrectionError('invalid-argument', 'a new-item MXN sale calculation is required');
   }
   if (newItems.invoiceRequested !== refund.invoiced) {
     throw new CorrectionError('invalid-argument', 'new items must keep the original invoice intent');
@@ -173,23 +174,44 @@ function soldLines(lines) {
   }
   const result = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    let spec;
-    try {
-      spec = createQuantitySpec(line?.quantity?.spec ?? {});
-    } catch {
-      throw new CorrectionError('invalid-argument', 'sale line quantity specification is invalid');
-    }
-    const { scaled } = line.quantity;
-    const { baseCentavos, additionalIvaCentavos, totalCentavos } = line;
-    if (!isNonNegativeSafe(scaled) || scaled === 0
-      || !isNonNegativeSafe(baseCentavos) || !isNonNegativeSafe(additionalIvaCentavos)
-      || totalCentavos !== baseCentavos + additionalIvaCentavos) {
-      throw new CorrectionError('invalid-argument', 'sale line amounts are invalid');
-    }
-    result.push({ spec, scaled, baseCentavos, additionalIvaCentavos });
+    result.push(soldLine(lines[index]));
   }
   return result;
+}
+
+// Persisted receipts are untrusted input: any malformed shape, including a
+// hostile accessor, surfaces as invalid-argument rather than a raw TypeError.
+function soldLine(line) {
+  let fields;
+  try {
+    const quantity = line?.quantity;
+    if (line === null || typeof line !== 'object' || Array.isArray(line)
+      || quantity === null || typeof quantity !== 'object' || Array.isArray(quantity)) {
+      throw new TypeError('sale line shape');
+    }
+    fields = {
+      spec: quantity.spec,
+      scaled: quantity.scaled,
+      baseCentavos: line.baseCentavos,
+      additionalIvaCentavos: line.additionalIvaCentavos,
+      totalCentavos: line.totalCentavos,
+    };
+  } catch {
+    throw new CorrectionError('invalid-argument', 'sale line must be an object with a quantity');
+  }
+  let spec;
+  try {
+    spec = createQuantitySpec(fields.spec ?? {});
+  } catch {
+    throw new CorrectionError('invalid-argument', 'sale line quantity specification is invalid');
+  }
+  const { scaled, baseCentavos, additionalIvaCentavos, totalCentavos } = fields;
+  if (!isNonNegativeSafe(scaled) || scaled === 0
+    || !isNonNegativeSafe(baseCentavos) || !isNonNegativeSafe(additionalIvaCentavos)
+    || totalCentavos !== baseCentavos + additionalIvaCentavos) {
+    throw new CorrectionError('invalid-argument', 'sale line amounts are invalid');
+  }
+  return { spec, scaled, baseCentavos, additionalIvaCentavos };
 }
 
 function returnedLedger(returned, lines) {
