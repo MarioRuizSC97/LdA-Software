@@ -73,6 +73,16 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 - CORR-02 review follow-ups (non-blocking, SUGGESTION): `R3-001` — add direct tests for tampered stored line amounts or totals, a `productIds` length mismatch on lookup, and a mismatched `payment.amountCentavos`. `R3-002` — one malformed sale or ledger fails the whole branch list closed; add a list-path ledger test. Fail-closed is kept, because sale records are server-written only.
 
+- CORR-03 writer (delegated; route trigger: multi-file transactional implementation): `functions/src/sale-returns.js` (419 lines) with `createSaleReturnService` → `submitReturn({ idempotencyKey, saleId, reason, note?, lines: [{ lineIndex, quantity, condition }] })`, seller-only. One transaction with all reads before writes:
+  - **Reads:** the submission receipt (exact replay; `already-exists` on ownership mismatch); the sale through the exported sale-lookup validators (missing and foreign sales get the same `not-found`; outside the window gets `failed-precondition`); the ledger (strict `{returned, lastReturnId, updatedAt}`); products and stock for `good` lines.
+  - **Writes:** `saleReturns/{key}` (v1 receipt without the note), `saleReturnAudits/{key}` (note or null), `inventoryMovements/return-{key}-{i}` (`sale-return`, which raises stock, or `sale-return-defect`, which leaves stock unchanged; no costs), the stock `set` for `good` lines, the ledger `set`, and `saleReturnSubmissionReceipts/{key}`.
+  - **Behavior:** the sale is never written. Replay validates shape and request binding instead of recomputing, because cumulative rounding depends on the ledger at submission time. Concurrency is serialized by the ledger read: the emulator case of two returns of 2 against 3 remaining gave exactly one commit. The note must be pre-trimmed; reason and condition are not coupled.
+  - **sale-lookup.js:** gains a one-line export of `isOwnBranchSale` and `validateStoredSale`, with no behavior change. The 4 CORR-02 follow-up tests were added; there was no natural RED, so the writer substituted mutation probes on a temporary copy, each detected.
+  - **Evidence:** author-reported RED (module missing), then GREEN 17/17; lookup 15/15; emulator 5/5 run once with owned ids and zero leftovers.
+  - **Size:** about 1,180 authored lines against a 600–900 forecast, because of strict replay and denial-path tests.
+- CORR-03 parent spot check: returns, lookup and calculation 46/46; sales and sales calculation 64/64; hashes of all five files match the writer report; the sale-lookup diff is only the export.
+- Notes for later tasks: CORR-04/05 must use their own movement prefixes and submission collections, and write the ledger in the same strict shape. CORR-06 needs deny-all rules for `saleReturns`, `saleReturnAudits`, `saleReturnSubmissionReceipts` and `saleReturnLedgers`.
+
 ## Next step
 
-CORR-03 (return service). Fold in the CORR-02 test follow-ups. CORR-06 must add a deny-all rule for `saleReturnLedgers` and any new correction collections.
+Review and commit CORR-03, then CORR-04 (factory-defect replacement).

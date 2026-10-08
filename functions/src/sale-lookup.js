@@ -254,3 +254,8 @@ function canonical(value) {
     || (typeof value === 'number' && Number.isFinite(value))) return JSON.stringify(value);
   throw new TypeError('unsupported snapshot value');
 }
+
+// Shared with the return service so corrections validate stored sales exactly
+// as lookups do: ownership first (missing and foreign stay indistinguishable),
+// then the strict recomputed projection.
+export { ownBranch as isOwnBranchSale, storedSale as validateStoredSale };

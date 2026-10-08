@@ -307,3 +307,53 @@ test('one malformed sale in the branch list fails the whole list closed', async 
   ]);
   await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
 });
+
+test('tampered stored amounts with untouched pricing fail findSale closed', async () => {
+  const lineAmount = saleRecord('s1', 'north', NOW - DAY);
+  lineAmount.receipt.calculation.lines[0].baseCentavos += 1;
+  lineAmount.receipt.calculation.lines[0].totalCentavos += 1;
+  lineAmount.receipt.calculation.baseCentavos += 1;
+  lineAmount.receipt.calculation.totalCentavos += 1;
+  lineAmount.receipt.payment.amountCentavos += 1;
+  const lineTotal = saleRecord('s1', 'north', NOW - DAY);
+  lineTotal.receipt.calculation.lines[1].totalCentavos -= 1;
+  const saleTotal = saleRecord('s1', 'north', NOW - DAY);
+  saleTotal.receipt.calculation.totalCentavos += 1;
+  saleTotal.receipt.payment.amountCentavos += 1;
+  for (const record of [lineAmount, lineTotal, saleTotal]) {
+    const { service } = fixture([['sales/s1', record]]);
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+  }
+});
+
+test('a productIds length mismatch fails findSale closed', async () => {
+  for (const productIds of [['p1'], ['p1', 'p2', 'p3']]) {
+    const record = saleRecord('s1', 'north', NOW - DAY);
+    record.receipt.productIds = productIds;
+    const { service } = fixture([['sales/s1', record]]);
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+  }
+});
+
+test('a payment amount that differs from the recomputed total fails closed', async () => {
+  for (const delta of [-1, 1]) {
+    const record = saleRecord('s1', 'north', NOW - DAY);
+    record.receipt.payment.amountCentavos += delta;
+    const { service } = fixture([['sales/s1', record]]);
+    await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+    await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
+  }
+});
+
+test('one malformed ledger in the branch list fails the whole list closed', async () => {
+  for (const ledger of [{ returned: { 0: 4 } }, { returned: [] }, {}]) {
+    const { firestore, service } = fixture([
+      ['sales/a', saleRecord('a', 'north', NOW - 2 * DAY)],
+      ['sales/b', saleRecord('b', 'north', NOW - DAY)],
+      ['saleReturnLedgers/a', ledger],
+    ]);
+    await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition',
+      'persisted sale return ledger is invalid');
+    assert.deepEqual(firestore.writes, []);
+  }
+});
