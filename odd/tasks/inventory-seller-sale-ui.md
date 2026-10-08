@@ -51,7 +51,7 @@ Out of scope:
 - [x] SALE-01 — Backend folio and branch code. Sales read the branch `code` (reject a missing or invalid code), derive the folio and store it on the sale. Keep replay exact. Update the strict stored-sale validation in sale lookup and corrections, the demo seed (`NTE`, `SUR`), and every test that seeds branches. Route: delegated writer.
 - [x] SALE-02 — Read-only `quoteSale` callable: seller-only, branch from claims, current pricing, exact `calculateSale` total. Report insufficient stock without writing anything. Route: delegated writer.
 - [x] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
-- [ ] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
+- [x] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
 - [ ] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
 - [ ] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
 - [ ] SALE-07 — HTTP transport acceptance for the quote, folio and folio lookup, live with user approval; then reconcile evidence and commits, and report pending checks. Route: delegated writer plus verifier, then the parent.
@@ -125,6 +125,13 @@ Out of scope:
   - Full `flutter test`: 387/387.
   - The 315 baseline was stale; HEAD had 358.
 
+- SALE-04 closure: native review `review-08f71b3fcf672526` approved; commit tree exactly the approved candidate `7f121024`. Follow-ups:
+  - `R3-sale-bootstrap-wiring-unproved` (WARNING): the bootstrap is untested for callable binding. The parent verified `quoteInvoke` is bound to `'quoteSale'` and `submitInvoke` to `'submitSale'`, correctly spelled and not swapped; a test is still missing.
+  - `R3-sale-callable-mapping-untested` (WARNING): there is no test for the translation from `FirebaseFunctionsException` to `SaleCallableException`.
+  - `R3-stale-not-applied-to-failures` (SUGGESTION): a superseded call that fails surfaces as Rejected or Uncertain instead of Stale.
+
+  Fold all three into SALE-05.
+
 ## Next step
 
-Review and commit SALE-04, then SALE-05 (cart UI on the seller catalog, Spanish copy).
+SALE-05 (cart UI on the seller catalog, Spanish copy), folding in the SALE-04 follow-ups.
