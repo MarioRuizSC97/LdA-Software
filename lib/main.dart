@@ -6,6 +6,7 @@ import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
 import 'firebase/emulator_bootstrap.dart';
+import 'firebase/emulator_sale_gateway.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
 const bool _localEmulatorsEnabled = bool.fromEnvironment('LDA_LOCAL_EMULATORS');
@@ -28,6 +29,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorProductCreationLoader,
     this.emulatorProductPricingLoader,
     this.emulatorStockIntakeLoader,
+    this.emulatorSaleLoader,
     super.key,
   });
 
@@ -38,6 +40,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final ProductCreationGatewayLoader? emulatorProductCreationLoader;
   final ProductPricingGatewayLoader? emulatorProductPricingLoader;
   final StockIntakeGatewayLoader? emulatorStockIntakeLoader;
+  final SaleGatewayLoader? emulatorSaleLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +63,8 @@ class LdaInventoryBootstrap extends StatelessWidget {
         stockIntakeGatewayLoader:
             emulatorStockIntakeLoader ??
             DemoEmulatorBootstrap.initializeStockIntakeGateway,
+        saleGatewayLoader:
+            emulatorSaleLoader ?? DemoEmulatorBootstrap.initializeSaleGateway,
       );
     }
     return const CatalogSetupApp();
@@ -73,6 +78,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     required this.productCreationGatewayLoader,
     required this.productPricingGatewayLoader,
     required this.stockIntakeGatewayLoader,
+    this.saleGatewayLoader = DemoEmulatorBootstrap.initializeSaleGateway,
     super.key,
   });
 
@@ -81,6 +87,9 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final ProductCreationGatewayLoader productCreationGatewayLoader;
   final ProductPricingGatewayLoader productPricingGatewayLoader;
   final StockIntakeGatewayLoader stockIntakeGatewayLoader;
+
+  /// Seller sale gateway loader; not wired into the shell until SALE-05.
+  final SaleGatewayLoader saleGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();

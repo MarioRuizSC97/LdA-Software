@@ -105,6 +105,26 @@ Out of scope:
 
 - SALE-02/03 closure: native review `review-c14c45cd358064fa` approved; commit tree exactly the approved candidate `e38fba6f`. Finding `R3-folio-unicode-casefold` (SUGGESTION): Unicode uppercasing before the ASCII check lets a few non-ASCII characters (the long s, the dotless i) normalize into a valid folio. This is harmless for authorization; reject non-ASCII input before uppercasing later.
 
+- SALE-04 writer (delegated, Flutter domain and gateway, no UI):
+  - **Domain (`lib/sales/`):**
+    - `sale_cart.dart`: `SaleCart`, `SaleCartLine` with BigInt validation at the product precision, and `SalePaymentMethod`. Duplicate products are rejected, not merged, because merging could change per-line rounding.
+    - `sale_quote.dart`: a strict `SaleCalculation`/`SaleQuote` parser bound to the cart, with `allAvailable` and `unavailableProductIds`.
+    - `sale_draft.dart`: `SaleDraft.fromQuote` generates the key once (lowercase UUID v4), with the amount equal to the quoted total; `saleFolio` mirrors the server.
+    - `SaleReceipt.fromCallable` validates a strict v2 receipt bound to the draft. It checks the folio equals `saleFolio(code, key)` and that payment, draft amount and calculation total are equal. v1 receipts are rejected.
+    - `SaleDraftStore` keeps one unresolved draft per seller and branch.
+  - **Gateway:** `lib/firebase/emulator_sale_gateway.dart`.
+    - It provides `quote` and `submit`, with an exact seller session check before and after, and separate stale counters.
+    - The whitelist is `invalid-argument`, `not-found`, `failed-precondition`, `out-of-range`, `permission-denied`, `unauthenticated` and `already-exists`, mapped to Rejected with the server message. `internal` maps to Uncertain.
+    - The request is built before the session check, so local validation errors are never reported as uncertain.
+  - **Bootstrap:** `initializeSaleGateway` (`quoteSale`, `submitSale`), sharing a private live-functions helper with stock intake; a loader in `main.dart`. It is not wired into the shell yet.
+  - **Receipt time:** `submitSale` returns only `{receipt, replayed}`, so `confirmedAt` is the client clock at acceptance; for a replay it is the confirmation time, not the original sale time. Follow-up candidate: return `createdAt` from the server.
+  - **Evidence (author-reported):** RED (missing files, missing bootstrap member), then GREEN; sales 19/19, gateway 9/9.
+  - **Size:** about 2,050 lines against a 600–900 forecast, because of the strict-parser forgery matrices and doc comments.
+- SALE-04 parent spot check:
+  - `flutter analyze`: no issues.
+  - Full `flutter test`: 387/387.
+  - The 315 baseline was stale; HEAD had 358.
+
 ## Next step
 
-SALE-04 (Flutter sale domain and gateway).
+Review and commit SALE-04, then SALE-05 (cart UI on the seller catalog, Spanish copy).

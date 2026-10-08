@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
+import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
 
 class _Gateway implements EmulatorSessionGateway {
   @override
@@ -489,6 +490,12 @@ void main() {
       expect(gatewaysBuilt, 0);
       expect(await attempt(), 'intake');
       expect(gatewaysBuilt, 1);
+    });
+
+    test('sale gateway initializer matches the sale loader contract', () {
+      const SaleGatewayLoader loader =
+          DemoEmulatorBootstrap.initializeSaleGateway;
+      expect(loader, same(DemoEmulatorBootstrap.initializeSaleGateway));
     });
   });
 }

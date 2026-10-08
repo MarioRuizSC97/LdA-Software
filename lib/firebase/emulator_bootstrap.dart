@@ -14,6 +14,7 @@ import 'emulator_auth_routing_platform.dart';
 import 'emulator_auth_routing_preinit.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
+import 'emulator_sale_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
 enum EmulatorClientPlatform { android, web, unsupported }
@@ -466,12 +467,40 @@ class DemoEmulatorBootstrap {
 
   static Future<EmulatorStockIntakeGateway> initializeStockIntakeGateway(
     EmulatorSession session,
+  ) {
+    return _initializeLiveFunctionsGateway<EmulatorStockIntakeGateway>(
+      (FirebaseAuth auth, FirebaseFunctions functions) =>
+          EmulatorStockIntakeGateway(
+            expectedSession: session,
+            sessionChecker: _firebaseActiveSessionChecker(auth),
+            invoke: firebaseStockIntakeCallable(functions),
+          ),
+    );
+  }
+
+  /// Seller sale gateway over the `quoteSale` and `submitSale` callables,
+  /// wired exactly like stock intake.
+  static Future<EmulatorSaleGateway> initializeSaleGateway(
+    EmulatorSession session,
+  ) {
+    return _initializeLiveFunctionsGateway<EmulatorSaleGateway>(
+      (FirebaseAuth auth, FirebaseFunctions functions) => EmulatorSaleGateway(
+        expectedSession: session,
+        sessionChecker: _firebaseActiveSessionChecker(auth),
+        quoteInvoke: firebaseSaleCallable(functions, 'quoteSale'),
+        submitInvoke: firebaseSaleCallable(functions, 'submitSale'),
+      ),
+    );
+  }
+
+  static Future<T> _initializeLiveFunctionsGateway<T>(
+    T Function(FirebaseAuth auth, FirebaseFunctions functions) create,
   ) async {
     late FirebaseApp app;
     late FirebaseAuth auth;
     late FirebaseFirestore firestore;
     late FirebaseFunctions functions;
-    return startStockIntake<EmulatorStockIntakeGateway>(
+    return startStockIntake<T>(
       platform: currentPlatform,
       initializeApp: (FirebaseOptions explicitOptions) async {
         app = await _initializeTrustedApp(explicitOptions);
@@ -520,11 +549,7 @@ class DemoEmulatorBootstrap {
             );
         return connection.ensureConnected(host, port);
       },
-      createGateway: () => EmulatorStockIntakeGateway(
-        expectedSession: session,
-        sessionChecker: _firebaseActiveSessionChecker(auth),
-        invoke: firebaseStockIntakeCallable(functions),
-      ),
+      createGateway: () => create(auth, functions),
     );
   }
 
