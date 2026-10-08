@@ -1,11 +1,12 @@
 import {
-  assertCorrectionWindow, calculateRemainingReturnable, calculateReturnRefund, CorrectionError,
-} from './corrections-calculation.js';
-import { addStockMovement, createQuantitySpec } from './quantity.js';
-import { isOwnBranchSale, validateStoredSale } from './sale-lookup.js';
+  assertCreateTargetsAbsent, assertReplayOwner, canonicalQuantity, correctableSale, correctionSeller,
+  CORRECTION_NOTE_MAX_LENGTH, denseArray, exactFields, invocationTime, optionalNote, plainObject,
+  sameDecimal, stockProjection, storedProductSpec, storedReplayResult, storedReturnLedger, validId,
+} from './correction-support.js';
+import { calculateReturnRefund, CorrectionError } from './corrections-calculation.js';
+import { addStockMovement } from './quantity.js';
 import { assertLocalSalesEmulator, SaleError } from './sales.js';
 
-const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'reason', 'lines'];
 const LINE_FIELDS = ['lineIndex', 'quantity', 'condition'];
@@ -19,7 +20,7 @@ const RECEIPT_LINE_FIELDS = [
 const AMOUNT_FIELDS = ['baseCentavos', 'additionalIvaCentavos', 'totalCentavos'];
 export const RETURN_REASONS = Object.freeze(['change-of-mind', 'wrong-product', 'factory-defect', 'other']);
 export const RETURN_CONDITIONS = Object.freeze(['good', 'factory-defect']);
-export const RETURN_NOTE_MAX_LENGTH = 500;
+export const RETURN_NOTE_MAX_LENGTH = CORRECTION_NOTE_MAX_LENGTH;
 // Only good units re-enter sellable stock (decision 4); defects are recorded only.
 const MOVEMENT_TYPES = Object.freeze({ good: 'sale-return', 'factory-defect': 'sale-return-defect' });
 
@@ -52,14 +53,14 @@ export function createSaleReturnService({
 
   return async function submitReturn(request = {}) {
     assertLocalSalesEmulator(environment);
-    const { actorId, branchId } = returnSeller(request?.auth);
+    const { actorId, branchId } = correctionSeller(request?.auth);
     // Copy every scalar before awaiting: caller mutation cannot change the
     // transaction or its actor/branch/request-bound fingerprint mid-flight.
     const input = returnInput(request?.data);
     const fingerprint = JSON.stringify({ actorId, branchId, ...input });
     const replayReference = firestore.doc(`saleReturnSubmissionReceipts/${input.idempotencyKey}`);
     // Captured once, outside retryable callbacks; replay never depends on it.
-    const clock = invocationTime(now);
+    const clock = invocationTime(now, 'return clock is invalid');
 
     return firestore.runTransaction(async (transaction) => {
       const replay = await transaction.get(replayReference);
@@ -71,21 +72,9 @@ export function createSaleReturnService({
       }
       if (clock.error) throw clock.error;
 
-      const saleSnapshot = await transaction.get(firestore.doc(`sales/${input.saleId}`));
-      const record = saleSnapshot.exists ? saleSnapshot.data() : undefined;
-      // Missing and foreign sales share one answer: existence never leaks.
-      if (!isOwnBranchSale(record, branchId)) {
-        throw new SaleError('not-found', 'sale was not found in this branch');
-      }
-      const sale = validateStoredSale(input.saleId, record);
-      try {
-        assertCorrectionWindow(sale.createdAt, clock.ms);
-      } catch {
-        throw new SaleError('failed-precondition', 'sale is outside the correction window');
-      }
-
+      const sale = await correctableSale(transaction, firestore, input.saleId, branchId, clock.ms);
       const ledgerReference = firestore.doc(`saleReturnLedgers/${input.saleId}`);
-      const previous = storedLedger(await transaction.get(ledgerReference), sale);
+      const previous = storedReturnLedger(await transaction.get(ledgerReference), sale);
       const refund = returnRefund(sale, previous, input.lines);
       const restock = restockPlan(sale, refund, input.lines);
       const stockReads = await Promise.all([...restock.values()].map(async (entry) => {
@@ -95,13 +84,18 @@ export function createSaleReturnService({
         ]);
         return { entry, product, stock };
       }));
+      const key = input.idempotencyKey;
+      await assertCreateTargetsAbsent(transaction, [
+        firestore.doc(`saleReturns/${key}`), firestore.doc(`saleReturnAudits/${key}`),
+        ...refund.lines.map((line, index) => firestore.doc(`inventoryMovements/${movementId(key, index)}`)),
+      ]);
       // All reads, including the replay ownership guard, finish before writes.
       const stockWrites = stockReads.map(({ entry, product, stock }) => {
         const productSpec = storedProductSpec(product);
+        const current = stockProjection(stock, productSpec);
         let next;
         try {
-          next = addStockMovement(currentStock(stock, productSpec), entry.scaled,
-            productSpec, entry.spec);
+          next = addStockMovement(current, entry.scaled, productSpec, entry.spec);
         } catch {
           throw new SaleError('failed-precondition', 'stock projection cannot accept the return');
         }
@@ -109,7 +103,6 @@ export function createSaleReturnService({
       });
 
       const { timestamp } = clock;
-      const key = input.idempotencyKey;
       const receipt = returnReceipt(input, branchId, refund);
       transaction.create(firestore.doc(`saleReturns/${key}`), { receipt, createdAt: timestamp });
       transaction.create(firestore.doc(`saleReturnAudits/${key}`), {
@@ -149,17 +142,6 @@ function movementId(key, index) {
   return `return-${key}-${index}`;
 }
 
-// Mirrors sales.js saleSeller: administrators and every other role are denied.
-function returnSeller(auth) {
-  if (!auth || typeof auth.uid !== 'string' || auth.uid.length === 0) {
-    throw new SaleError('unauthenticated', 'authentication is required');
-  }
-  if (auth.token?.role !== 'seller' || !validId(auth.token?.branchId)) {
-    throw new SaleError('permission-denied', 'an assigned seller is required');
-  }
-  return { actorId: auth.uid, branchId: auth.token.branchId };
-}
-
 function returnInput(data) {
   try {
     const withNote = plainObject(data) && Object.hasOwn(data, 'note');
@@ -168,11 +150,7 @@ function returnInput(data) {
       || !RETURN_REASONS.includes(data.reason)) {
       throw new TypeError('key, sale and reason are required');
     }
-    // The note is optional free text, but never blank, padded or unbounded.
-    if (withNote && (typeof data.note !== 'string' || data.note.length === 0
-      || data.note.trim() !== data.note || data.note.length > RETURN_NOTE_MAX_LENGTH)) {
-      throw new TypeError('note must be trimmed nonempty bounded text');
-    }
+    const note = optionalNote(data);
     denseArray(data.lines);
     if (data.lines.length === 0) throw new TypeError('lines are required');
     const seen = new Set();
@@ -189,44 +167,10 @@ function returnInput(data) {
     });
     return {
       idempotencyKey: data.idempotencyKey, saleId: data.saleId, reason: data.reason,
-      note: withNote ? data.note : null, lines,
+      note, lines,
     };
   } catch {
     throw new SaleError('invalid-argument', 'return request contains missing, invalid or unsupported fields');
-  }
-}
-
-// Precision and safe scaled bounds require the stored sale snapshot later.
-function canonicalQuantity(value) {
-  return typeof value === 'string' && value.length <= 18
-    && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) && /[1-9]/.test(value);
-}
-
-function invocationTime(now) {
-  try {
-    const value = now();
-    if (value instanceof Date && Number.isSafeInteger(value.getTime()) && value.getTime() >= 0) {
-      return { ms: value.getTime(), timestamp: new Date(value.getTime()) };
-    }
-  } catch {
-    // A failing clock surfaces as the same domain error as an invalid one.
-  }
-  return { error: new SaleError('failed-precondition', 'return clock is invalid') };
-}
-
-// The ledger is server-written only: anything but the exact shape fails closed.
-function storedLedger(snapshot, sale) {
-  if (!snapshot.exists) return {};
-  try {
-    const value = snapshot.data();
-    exactFields(value, ['returned', 'lastReturnId', 'updatedAt']);
-    if (!validId(value.lastReturnId) || !validTimestamp(value.updatedAt)) {
-      throw new TypeError('ledger provenance');
-    }
-    calculateRemainingReturnable({ lines: sale.calculation.lines, returned: value.returned });
-    return { ...value.returned };
-  } catch {
-    throw new SaleError('failed-precondition', 'persisted sale return ledger is invalid');
   }
 }
 
@@ -270,27 +214,6 @@ function restockPlan(sale, refund, lines) {
   return plan;
 }
 
-function storedProductSpec(snapshot) {
-  try {
-    if (!snapshot.exists) throw new TypeError('missing product');
-    const value = snapshot.data()?.quantitySpec;
-    exactFields(value, ['unit', 'precision']);
-    return createQuantitySpec(value);
-  } catch {
-    throw new SaleError('failed-precondition', 'product quantity specification is invalid');
-  }
-}
-
-function currentStock(snapshot, spec) {
-  if (!snapshot.exists) return 0;
-  const value = snapshot.data();
-  if (value?.unit !== spec.unit || value?.precision !== spec.precision
-    || !Number.isSafeInteger(value?.quantityScaled) || value.quantityScaled < 0) {
-    throw new SaleError('failed-precondition', 'stock projection is invalid');
-  }
-  return value.quantityScaled;
-}
-
 function returnReceipt(input, branchId, refund) {
   return Object.freeze({
     version: 1,
@@ -318,15 +241,9 @@ function returnReceipt(input, branchId, refund) {
 }
 
 function validatedReplay(record, input, actorId, branchId, fingerprint) {
-  // Ownership is checked before touching private result fields; a collision
-  // never reveals another seller's receipt or moves stock again.
-  if (record?.actorId !== actorId || record?.branchId !== branchId || record?.fingerprint !== fingerprint) {
-    throw new SaleError('already-exists', 'idempotency key is already owned by a different submission');
-  }
+  assertReplayOwner(record, actorId, branchId, fingerprint);
   try {
-    exactFields(record, ['actorId', 'branchId', 'fingerprint', 'result', 'completedAt']);
-    if (!validTimestamp(record.completedAt)) throw new TypeError('completedAt');
-    return replayReceipt(record.result, input, branchId);
+    return replayReceipt(storedReplayResult(record), input, branchId);
   } catch {
     throw new SaleError('failed-precondition', 'persisted return replay is invalid');
   }
@@ -348,7 +265,7 @@ function replayReceipt(receipt, input, branchId) {
     exactFields(line, RECEIPT_LINE_FIELDS);
     const requested = input.lines[index];
     if (line.lineIndex !== requested.lineIndex || line.condition !== requested.condition
-      || !validId(line.productId) || !canonicalQuantity(line.quantity)) {
+      || !validId(line.productId) || !sameDecimal(line.quantity, requested.quantity)) {
       throw new TypeError('receipt line identity');
     }
     const amounts = replayAmounts(line, receipt.invoiced);
@@ -379,41 +296,4 @@ function replayAmounts(value, invoiced) {
     throw new TypeError('receipt amounts');
   }
   return { baseCentavos, additionalIvaCentavos, totalCentavos };
-}
-
-function validTimestamp(value) {
-  // Admin reads Date writes back as Timestamp; accept both without the SDK.
-  try {
-    const date = value instanceof Date
-      ? value
-      : typeof value?.toDate === 'function' ? value.toDate() : null;
-    return date instanceof Date && Number.isFinite(date.getTime());
-  } catch {
-    return false;
-  }
-}
-
-function validId(value) {
-  return typeof value === 'string' && ID_PATTERN.test(value);
-}
-
-function plainObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function exactFields(value, expected) {
-  if (!plainObject(value)) throw new TypeError('an object is required');
-  const fields = Reflect.ownKeys(value);
-  if (fields.length !== expected.length || fields.some((field) => !expected.includes(field))) {
-    throw new TypeError('missing or unsupported fields');
-  }
-}
-
-function denseArray(value) {
-  if (!Array.isArray(value) || Reflect.ownKeys(value).length !== value.length + 1) {
-    throw new TypeError('a dense array without extra fields is required');
-  }
-  for (let index = 0; index < value.length; index++) {
-    if (!Object.hasOwn(value, index)) throw new TypeError('sparse array');
-  }
 }

@@ -20,6 +20,7 @@ Today a sale (`functions/src/sales.js`) is final. `inventory-mvp.md:6` puts part
 8. Sellers find a sale both by receipt number (server-side, same branch, within the window) and through a list of the branch's recent sales from the last 15 days.
 9. Returns from invoiced sales refund the IVA actually charged, proportionally. The correction is flagged as an invoiced sale so the administrator can handle the credit note or CFDI outside the app; CFDI emission stays out of scope.
 10. Every correction requires a reason from a fixed list (`change-of-mind`, `wrong-product`, `factory-defect`, `other`) plus an optional free-text note.
+11. A factory-defect replacement does not consume returnable quantity. The customer still holds what was bought, so a replaced unit can later be replaced again or refunded, within the original sale's 15-day window. A replacement is capped at the line's remaining returnable quantity. (user, 2026-10-08)
 
 ## Technical defaults
 
@@ -89,6 +90,27 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `R3-003`: no test for two sale lines of one product (spec mismatch guard, aggregation).
   - `R3-004`: an orphaned create collision surfaces a raw SDK error instead of a `SaleError`.
 
+- CORR-04 writer (delegated; route trigger: multi-file transactional implementation):
+  - **Replacement service:** `functions/src/sale-replacements.js` (260 lines) with `submitReplacement({ idempotencyKey, saleId, note?, lines: [{ lineIndex, quantity }] })`, seller-only, with the reason fixed to `factory-defect`.
+    - One transaction. The ledger is read and strictly validated but never written (decision 11). Each line is capped at sold minus returned (`out-of-range`). Same-product lines are aggregated. Insufficient sellable stock fails with `failed-precondition`.
+    - Writes `saleReplacements/{key}` (v1 receipt, `chargeCentavos: 0`) and `saleReplacementAudits/{key}`.
+    - Writes movements `replacement-{key}-{i}-in` (`replacement-defect-in`, no stock change) and `-{i}-out` (`replacement-out`, which decreases stock), one stock `set` per product, and `saleReplacementSubmissionReceipts/{key}`. The sale and the ledger are never written.
+  - **Shared code:** extracted to `functions/src/correction-support.js` (195 lines); `sale-returns.js` now uses it.
+  - **CORR-03 follow-ups, applied to both services:**
+    - `R3-001`: stock must match one of three exact shapes — bare, writer, or demo seed with `demoSeedVersion`, which the parent confirmed in `functions/scripts/provision-demo-identities.mjs`. Anything else fails closed.
+    - `R3-002`: replay binds each line quantity by value.
+    - `R3-003`: tests for same-product lines.
+    - `R3-004`: every create target is pre-read, and a collision returns `already-exists` before any write.
+  - **Evidence (author-reported):**
+    - Returns: RED 19/22, then GREEN 22/22.
+    - Replacements: RED (module missing), then GREEN 16/16, with six mutation probes, all detected.
+    - Support: 4/4, with five mutation probes, all detected.
+    - Emulator replacement and return tests: run once each, 11/11, no leftovers.
+  - **Concurrency:** a replacement racing a return can both legitimately commit when the replacement serializes first, since it consumes nothing. The test asserts this invariant through commit timestamps. Two replacements competing for the last stock: exactly one commits.
+  - **Size:** about 1,530 authored lines against a 600–900 forecast, because of strict replay, denial paths, race cases and the R3 work.
+- CORR-04 parent spot check: correction suites 71/71; sales and sales calculation 64/64; hashes of all seven files match the writer report.
+- Notes: CORR-05 should reuse `correction-support.js` and pre-read its create targets. CORR-06 needs deny-all rules for the replacement collections too, and must map `already-exists`.
+
 ## Next step
 
-CORR-04 (factory-defect replacement), folding in the CORR-03 follow-ups.
+Review and commit CORR-04, then CORR-05 (exchange).

@@ -483,3 +483,98 @@ test('no written document carries cost fields and caller mutation cannot alter t
     assert.ok(!/cost/i.test(JSON.stringify(value)), `cost field written at ${path}`);
   }
 });
+
+// Two lines of one product; the second line may carry a different spec.
+function sameProductSale(saleId, secondSpec, secondQuantity) {
+  const calculation = clone(calculateSale({ invoiceRequested: false, lines: [
+    { quantity: '3', quantitySpec: piece, pricing: pricing(1000) },
+    { quantity: secondQuantity, quantitySpec: secondSpec, pricing: pricing(1000) },
+  ] }));
+  return {
+    receipt: {
+      version: 1, saleId, branchId: 'north', productIds: ['p1', 'p1'], calculation,
+      payment: { method: 'cash', amountCentavos: calculation.totalCentavos },
+    },
+    createdAt: new Date(NOW - DAY),
+  };
+}
+
+test('stock is read only in a known projection shape; unknown fields fail closed', async () => {
+  const at = new Date(NOW - DAY);
+  for (const projection of [
+    { ...piece, quantityScaled: 5, reserved: 1 },
+    { ...piece, quantityScaled: 5, updatedAt: at },
+    { ...piece, quantityScaled: 5, lastMovementId: 'sale-s0-0' },
+    { ...piece, quantityScaled: 5, updatedAt: 'today', lastMovementId: 'sale-s0-0' },
+    { ...piece, quantityScaled: 5, updatedAt: at, lastMovementId: 7 },
+    { ...piece, quantityScaled: 5, demoSeedVersion: 1, updatedAt: at, lastMovementId: 'sale-s0-0' },
+  ]) {
+    const records = new Map(baseRecords());
+    records.set('branches/north/stock/p1', projection);
+    const { firestore, service } = fixture({}, [...records]);
+    await rejectsUnchanged(firestore, service(request()), 'failed-precondition',
+      'stock projection is invalid');
+  }
+  // The sale/intake writer shape and the demo seed shape are both accepted.
+  for (const projection of [
+    { ...piece, quantityScaled: 5, updatedAt: at, lastMovementId: 'sale-s0-0' },
+    { ...piece, quantityScaled: 5, demoSeedVersion: 1 },
+  ]) {
+    const records = new Map(baseRecords());
+    records.set('branches/north/stock/p1', projection);
+    const { firestore, service } = fixture({}, [...records]);
+    await service(request());
+    assert.deepEqual(stock(firestore, 'p1'), {
+      ...piece, quantityScaled: 6, updatedAt: new Date(NOW), lastMovementId: 'return-r1-0',
+    });
+  }
+});
+
+test('replay binds every stored line quantity to the request', async () => {
+  const { firestore, service } = fixture();
+  await service(request());
+  const replay = firestore.records.get('saleReturnSubmissionReceipts/r1');
+  replay.result.lines[0].quantity = '2';
+  await rejectsUnchanged(firestore, service(request()), 'failed-precondition',
+    'persisted return replay is invalid');
+  // A stored scale-padded decimal still equals the shorter request decimal.
+  const kgReturn = fixture();
+  const input = request({ lines: [{ lineIndex: 1, quantity: '0.5', condition: 'good' }] });
+  const first = await kgReturn.service(input);
+  assert.equal(first.receipt.lines[0].quantity, '0.500');
+  assert.equal((await kgReturn.service(input)).replayed, true);
+});
+
+test('two sale lines of one product aggregate into one stock write', async () => {
+  const { firestore, service } = fixture({}, [
+    ...baseRecords(), ['sales/dup', sameProductSale('dup', piece, '2')],
+  ]);
+  await service(request({ saleId: 'dup', lines: [
+    { lineIndex: 0, quantity: '3', condition: 'good' },
+    { lineIndex: 1, quantity: '2', condition: 'good' },
+  ] }));
+  assert.deepEqual(stock(firestore, 'p1'), {
+    ...piece, quantityScaled: 10, updatedAt: new Date(NOW), lastMovementId: 'return-r1-1',
+  });
+  const sets = firestore.traces.flat().filter(([kind, path]) => kind === 'set'
+    && path === 'branches/north/stock/p1');
+  assert.equal(sets.length, 1);
+});
+
+test('two sale lines of one product with different specifications fail closed', async () => {
+  const { firestore, service } = fixture({}, [
+    ...baseRecords(), ['sales/mixed', sameProductSale('mixed', kg, '1.500')],
+  ]);
+  await rejectsUnchanged(firestore, service(request({ saleId: 'mixed', lines: [
+    { lineIndex: 0, quantity: '1', condition: 'good' },
+    { lineIndex: 1, quantity: '1', condition: 'good' },
+  ] })), 'failed-precondition', 'sale lines disagree on a product specification');
+});
+
+test('an orphaned return, audit or movement document without a receipt is a stable collision', async () => {
+  for (const path of ['saleReturns/r1', 'saleReturnAudits/r1', 'inventoryMovements/return-r1-0']) {
+    const { firestore, service } = fixture({}, [...baseRecords(), [path, { orphan: true }]]);
+    await rejectsUnchanged(firestore, service(request()), 'already-exists',
+      'idempotency key collides with existing correction records');
+  }
+});
