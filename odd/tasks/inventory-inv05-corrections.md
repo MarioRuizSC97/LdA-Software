@@ -47,7 +47,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-01 — Pure correction calculation: remaining returnable quantity per line, proportional refund at the snapshot (half-up per line, IVA charged), exchange difference against the current price, and the 15-day window check. Route: one delegated writer (new module plus tests). Native review `review-b1ec6ebade67d20b` approved; commit `c62ae960a3f9debd593c30e12d75c496245fa3da`, tree exactly the approved candidate `9600eb40`.
 - [x] CORR-02 — Sale lookup for sellers: by receipt number, and the branch's recent-sales list (15 days), both server-side with branch and window enforcement. Route: delegated writer. Native review `review-6c7160b3affa3530` approved; commit `a15d1c98e115a9fd0bd708c428d8a8034c6eb4d0`, tree exactly the approved candidate `2f56597d`.
 - [x] CORR-03 — Return service: partial and repeated returns, `good`/`factory-defect` conditions, refund by the original method, reason and note, invoiced flag, return ledger, compensating movements, idempotent replay. Route: delegated writer; emulator tests. Native review `review-a18603c466e9c6c0` approved; commit recorded in Evidence.
-- [ ] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer.
+- [x] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer. Native review `review-689e0a106f145040` approved; commit recorded in Evidence.
 - [ ] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer.
 - [ ] CORR-06 — Callables, rules and HTTP transport acceptance for all corrections. Route: delegated writer; live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
@@ -111,6 +111,10 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - CORR-04 parent spot check: correction suites 71/71; sales and sales calculation 64/64; hashes of all seven files match the writer report.
 - Notes: CORR-05 should reuse `correction-support.js` and pre-read its create targets. CORR-06 needs deny-all rules for the replacement collections too, and must map `already-exists`.
 
+- CORR-04 closure: native review `review-689e0a106f145040` approved; commit tree exactly the approved candidate `cad763cf`. Findings:
+  - `R3-001` (WARNING): the strict stock shapes would reject a seeded document later merged by another writer. Resolved by evidence: the parent verified that both stock writers, `sales.js:294` and `inventory.js:129`, use a full `set` without merge, so the first write replaces the seed shape.
+  - `R3-002` (SUGGESTION): the replacement-versus-return race test accepts either order; force both orders deterministically.
+
 ## Next step
 
-Review and commit CORR-04, then CORR-05 (exchange).
+CORR-05 (exchange for a different product).
