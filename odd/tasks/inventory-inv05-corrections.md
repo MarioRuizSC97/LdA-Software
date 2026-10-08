@@ -49,7 +49,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-03 — Return service: partial and repeated returns, `good`/`factory-defect` conditions, refund by the original method, reason and note, invoiced flag, return ledger, compensating movements, idempotent replay. Route: delegated writer; emulator tests. Native review `review-a18603c466e9c6c0` approved; commit recorded in Evidence.
 - [x] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer. Native review `review-689e0a106f145040` approved; commit recorded in Evidence.
 - [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
-- [ ] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
+- [x] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
 - [ ] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
@@ -149,6 +149,11 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - CORR-06A parent spot check: corrections and sales callables 33/33 (run from `functions/`); the rules diff adds exactly 10 `if false` rules and removes nothing; the catch-all is still last; hashes match the writer report.
 - Note for CORR-06B: confirm that the running Functions emulator has loaded the five new exports and the new rules before the live run, or reload it with the user's approval.
 
+- CORR-06A closure: native review `review-7b57f6bd08ec58da` approved; commit tree exactly the approved candidate `b17209c0`. Findings:
+  - `R3-001` (WARNING): the test fakes might not match the real service factory shapes.
+  - `R3-002` (SUGGESTION): the lookup methods are detached and called unbound.
+  - Both resolved by parent evidence: instantiating the real modules shows that the return, replacement and exchange factories return functions, and that the lookup factory returns `{findSale, listRecentSales}` without `this`. This matches the wiring at `index.js:196-216`. End-to-end proof is pending CORR-06B.
+
 ## Next step
 
-Review and commit CORR-06A, then CORR-06B (HTTP transport acceptance).
+CORR-06B (HTTP transport acceptance for corrections), folding in the CORR-05 follow-ups. The live run needs user approval, plus confirmation that the running emulators loaded the new exports and rules.
