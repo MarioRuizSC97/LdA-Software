@@ -88,6 +88,9 @@ Out of scope:
   - `R3-fake-sale-folio-shape` (WARNING): the folio in the sales transport fixture is hand-written. The parent verified it is correct (key `http-12345678…` gives `HTS-HTTP-1234`), but it is brittle; compute it with `saleFolio`-equivalent normalization later.
   - `R3-live-demo-branch-code-gate` (WARNING): the live demo branches lack `code`, so live demo sales are refused until they are migrated. This is a known user decision, still pending.
 
+- Live demo branch-code migration (user-approved 2026-10-08, parent, emulator REST with an update mask on `code` only and `currentDocument.exists`): `branches/branch-north` got `code: 'NTE'` and `branches/branch-south` got `code: 'SUR'`. `name` and `demoSeedVersion` are unchanged, so both now match the seed shape exactly. This resolves `R3-live-demo-branch-code-gate` for the local emulator.
+- Routing: SALE-02 and SALE-03 go to one delegated writer as one backend work unit (both small, both server-side, related by lookup and quote reuse). Reviewed and committed together.
+
 ## Next step
 
-SALE-02 (read-only `quoteSale` callable). The live demo branch `code` migration is pending the user's decision.
+SALE-02 and SALE-03 (quote callable and folio lookup).
