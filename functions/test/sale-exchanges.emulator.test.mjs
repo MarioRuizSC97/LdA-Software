@@ -7,7 +7,7 @@ import { CORRECTION_WINDOW_MS } from '../src/corrections-calculation.js';
 import { createSaleExchangeService } from '../src/sale-exchanges.js';
 import { createSaleReturnService } from '../src/sale-returns.js';
 import {
-  canonical, namespace, observeTransactions, openRuntime,
+  canonical, namespace, openRuntime,
 } from './sales-emulator-support.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -135,10 +135,11 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
   await run.seed(stockPath(p1), { ...piece, quantityScaled: 10 });
   await run.seed(stockPath(p2), { ...piece, quantityScaled: 10 });
   const saleId = await sale('sale', a);
-  const raceSale = await sale('race-sale', a);
+  const exchangeFirstSale = await sale('race-exchange-first', a);
+  const returnFirstSale = await sale('race-return-first', a);
   const foreign = await sale('foreign', b);
   const expired = await sale('expired', a, NOW - CORRECTION_WINDOW_MS);
-  for (const id of [saleId, raceSale, foreign, expired]) run.plan(`saleReturnLedgers/${id}`);
+  for (const id of [saleId, exchangeFirstSale, returnFirstSale, foreign, expired]) run.plan(`saleReturnLedgers/${id}`);
 
   const auth = { uid: run.ns.actor, token: { role: 'seller', branchId: a } };
   const services = (firestore) => ({
@@ -150,14 +151,24 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     }),
   });
   const { exchange } = services(runtime.firestore);
-  // Every launched callback waits until all participants arrived, before any read.
-  const rendezvous = (participants) => {
-    const observer = observeTransactions(participants);
-    return services({
+  // Forces a serialization order: both submissions start together, but the
+  // second one waits inside its transaction, before its first read (so it holds
+  // no lock), until the first one has committed or failed.
+  const inOrder = async (first, second) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const held = services({
       doc: (path) => runtime.firestore.doc(path),
-      runTransaction: (callback, options) => runtime.firestore.runTransaction(
-        observer.wrap(callback), options),
+      runTransaction: (callback, options) => runtime.firestore.runTransaction(async (tx) => {
+        await gate;
+        return callback(tx);
+      }, options),
     });
+    const late = Promise.resolve().then(() => second(held));
+    const [early] = await Promise.allSettled([Promise.resolve().then(() => first(services(runtime.firestore)))]);
+    release();
+    const [settled] = await Promise.allSettled([late]);
+    return [early, settled];
   };
   const exchangeRequest = (key, returned, target, extra = {}) => ({
     auth,
@@ -259,51 +270,74 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     assert.equal(canonical(again.receipt), canonical(receipt));
   });
 
-  await t.test('an exchange racing a return for the last returnable units: exactly one commits', async () => {
-    // Four sold: an exchange of 3 and a return of 2 cannot both fit.
-    const exchangeKey = run.ns.key('race-swap');
-    const returnKey = run.ns.key('race-return');
+  // Four sold: an exchange of 3 and a return of 2 cannot both fit. Each
+  // serialization order is forced, then its exact outcome is asserted. Stock
+  // expectations are relative to the manifest's last confirmed state, so
+  // neither order depends on which subtests ran before it.
+  const restocked = async (productId, delta, lastMovementId) => {
+    const previous = run.entries.get(stockPath(productId)).expected;
+    await run.confirm(stockPath(productId), {
+      ...piece, quantityScaled: previous.quantityScaled + delta, updatedAt: AT, lastMovementId,
+    });
+  };
+
+  await t.test('an exchange serialized before a racing return: the return is out-of-range', async () => {
+    const exchangeKey = run.ns.key('ef-swap');
+    const returnKey = run.ns.key('ef-return');
     planExchange(exchangeKey);
     planReturn(returnKey);
-    const racers = rendezvous(2);
-    const [swap, back] = await Promise.allSettled([
-      Promise.resolve().then(() => racers.exchange(exchangeRequest(exchangeKey, '3', raceSale))),
-      Promise.resolve().then(() => racers.giveBack(returnRequest(returnKey, '2', raceSale))),
-    ]);
-    assert.equal([swap, back].filter((result) => result.status === 'fulfilled').length, 1,
-      'exactly one correction commits');
-    const ledgerPath = `saleReturnLedgers/${raceSale}`;
-    if (swap.status === 'fulfilled') {
-      assert.equal(back.reason?.code, 'out-of-range');
-      assert.equal(back.reason?.message, 'return exceeds the remaining sold quantity');
-      for (const path of planReturn(returnKey)) await run.absent(path);
-      assert.equal(canonical(swap.value.receipt), canonical(await confirmExchange(
-        exchangeKey, '3', raceSale, null)));
-      assert.equal(swap.value.receipt.settlement.refundCentavos, 406);
-      await run.confirm(ledgerPath, { returned: { 0: 3 }, lastReturnId: exchangeKey, updatedAt: AT });
-      await run.confirm(stockPath(p1), {
-        ...piece, quantityScaled: 14, updatedAt: AT, lastMovementId: `exchange-${exchangeKey}-in-0`,
-      });
-      await run.confirm(stockPath(p2), {
-        ...piece, quantityScaled: 8, updatedAt: AT, lastMovementId: `exchange-${exchangeKey}-out-0`,
-      });
-    } else {
-      assert.equal(swap.reason?.code, 'out-of-range');
-      assert.equal(swap.reason?.message, 'exchange exceeds the remaining sold quantity');
-      for (const path of planExchange(exchangeKey)) await run.absent(path);
-      await run.confirm(ledgerPath, { returned: { 0: 2 }, lastReturnId: returnKey, updatedAt: AT });
-      for (const path of planReturn(returnKey)) {
-        await run.confirm(path, plain((await runtime.firestore.doc(path).get()).data()));
-      }
-      assert.equal(back.value.receipt.refund.totalCentavos, 580);
-      await run.confirm(stockPath(p1), {
-        ...piece, quantityScaled: 13, updatedAt: AT, lastMovementId: `return-${returnKey}-0`,
-      });
-      await run.confirm(stockPath(p2), {
-        ...piece, quantityScaled: 9, updatedAt: AT, lastMovementId: `exchange-${run.ns.key('swap')}-out-0`,
-      });
+    const [swap, back] = await inOrder(
+      ({ exchange: first }) => first(exchangeRequest(exchangeKey, '3', exchangeFirstSale)),
+      ({ giveBack: second }) => second(returnRequest(returnKey, '2', exchangeFirstSale)),
+    );
+    assert.equal(swap.status, 'fulfilled', `the exchange fits first: ${swap.reason}`);
+    assert.equal(back.status, 'rejected');
+    assert.equal(back.reason?.code, 'out-of-range');
+    assert.equal(back.reason?.message, 'return exceeds the remaining sold quantity');
+    for (const path of planReturn(returnKey)) await run.absent(path);
+    assert.equal(canonical(swap.value.receipt), canonical(await confirmExchange(
+      exchangeKey, '3', exchangeFirstSale, null)));
+    assert.equal(swap.value.receipt.settlement.refundCentavos, 406);
+    await run.confirm(`saleReturnLedgers/${exchangeFirstSale}`,
+      { returned: { 0: 3 }, lastReturnId: exchangeKey, updatedAt: AT });
+    await restocked(p1, 3, `exchange-${exchangeKey}-in-0`);
+    await restocked(p2, -1, `exchange-${exchangeKey}-out-0`);
+  });
+
+  await t.test('a return serialized before a racing exchange: the exchange is out-of-range', async () => {
+    const exchangeKey = run.ns.key('rf-swap');
+    const returnKey = run.ns.key('rf-return');
+    planExchange(exchangeKey);
+    planReturn(returnKey);
+    const unchangedP2 = run.entries.get(stockPath(p2)).expected;
+    await run.confirm(stockPath(p2), unchangedP2);
+    const [back, swap] = await inOrder(
+      ({ giveBack: first }) => first(returnRequest(returnKey, '2', returnFirstSale)),
+      ({ exchange: second }) => second(exchangeRequest(exchangeKey, '3', returnFirstSale)),
+    );
+    assert.equal(back.status, 'fulfilled', `the return fits first: ${back.reason}`);
+    assert.equal(swap.status, 'rejected');
+    assert.equal(swap.reason?.code, 'out-of-range');
+    assert.equal(swap.reason?.message, 'exchange exceeds the remaining sold quantity');
+    for (const path of planExchange(exchangeKey)) await run.absent(path);
+    await run.confirm(`saleReturnLedgers/${returnFirstSale}`,
+      { returned: { 0: 2 }, lastReturnId: returnKey, updatedAt: AT });
+    assert.equal(back.value.receipt.refund.totalCentavos, 580);
+    const returnReceipt = {
+      version: 1, returnId: returnKey, saleId: returnFirstSale, branchId: a, reason: 'change-of-mind',
+      lines: [{ lineIndex: 0, productId: p1, quantity: '2', condition: 'good',
+        baseCentavos: 500, additionalIvaCentavos: 80, totalCentavos: 580 }],
+      refund: { method: 'cash', baseCentavos: 500, additionalIvaCentavos: 80, totalCentavos: 580 },
+      invoiced: true,
+    };
+    assert.equal(canonical(back.value.receipt), canonical(returnReceipt));
+    await run.confirm(`saleReturns/${returnKey}`, { receipt: returnReceipt, createdAt: AT });
+    for (const path of planReturn(returnKey).slice(1)) {
+      await run.confirm(path, plain((await runtime.firestore.doc(path).get()).data()));
     }
-    t.diagnostic(`exchange/return race outcome: exchange ${swap.status}, return ${back.status}`);
+    await restocked(p1, 2, `return-${returnKey}-0`);
+    // The rejected exchange never sold its new item.
+    await run.confirm(stockPath(p2), unchangedP2);
   });
 
   await t.test('foreign, expired, over-cap and same-product exchanges are refused without writes', async () => {
@@ -322,7 +356,7 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
   });
 
   await t.test('the original sale documents are unchanged', async () => {
-    for (const id of [saleId, raceSale, foreign, expired]) {
+    for (const id of [saleId, exchangeFirstSale, returnFirstSale, foreign, expired]) {
       const snapshot = await runtime.firestore.doc(`sales/${id}`).get();
       assert.equal(canonical(snapshot.data()), canonical(run.entries.get(`sales/${id}`).expected));
     }

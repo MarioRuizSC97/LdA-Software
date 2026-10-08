@@ -154,6 +154,27 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `R3-002` (SUGGESTION): the lookup methods are detached and called unbound.
   - Both resolved by parent evidence: instantiating the real modules shows that the return, replacement and exchange factories return functions, and that the lookup factory returns `{findSale, listRecentSales}` without `this`. This matches the wiring at `index.js:196-216`. End-to-end proof is pending CORR-06B.
 
+- CORR-06B writer (delegated; route trigger: large test harness plus multi-file test follow-ups):
+  - **New file:** `functions/test/corrections-callable-transport.emulator.test.mjs` (1,348 lines). It is gated by `LDA_CORRECTIONS_HTTP_ACCEPTANCE=1` together with the existing baseline and runtime approvals, the node pin, ambient-override rejection, the URL allowlist and the cert credential.
+  - **Owned setup:** a main and a foreign UUID branch; owned products `CORR-<RUN>-A..D`; two owned-auth manifests covering five Auth identities; about 120 paths planned before any write. Sales U (uninvoiced, cash) and I (invoiced, card) are created through the real `submitSale`.
+  - **Live cases:**
+    - lookup and list with the foreign seller and role denials;
+    - returns (partial good and defect, original method, invoiced IVA, replay, over-return);
+    - replacement, including insufficient stock;
+    - exchanges (exact difference payment and a wrong amount, refund, same product);
+    - seller 403 on the 10 correction collections, and seller reads of own-branch correction movements with the exact field set and no costs, while the foreign seller gets 403;
+    - final stock consistency, and the sale documents unchanged.
+  - **Teardown:** reads every planned document before deleting; products are deleted before branches; uncertainty retains everything.
+  - **Offline rehearsal:** the same `runScenario` runs against the real services on an in-memory store. Author-reported RED 0/12, then GREEN 12 with 1 skipped; four service mutation probes were detected.
+  - **CORR-05 follow-ups:** `R3-001` adds a deterministic `inOrder` exchange-versus-return race in both orders; `R3-002` and `R3-003` add unit tests for same-product merging, spec disagreement and descending mixed-condition pairing; `R3-004` makes the return-first replacement subtest independent. The exchange and replacement emulator tests ran once: 13/13, no leftovers.
+  - **Size:** about 1,570 authored lines against a 900–1,300 forecast, because of the full independent projections and the offline rehearsal.
+- CORR-06B parent spot check:
+  - Transport offline: 12 pass, 1 skipped.
+  - Correction suites: 96/96.
+  - Sales transport offline: 23 pass, 1 skipped.
+  - No source files changed; the hashes of all four files match the writer report.
+- Live-run risks, from the writer: the emulators must have loaded the new exports and rules (exports confirmed by OPTIONS 204); the newest-first order could fail on an equal millisecond; a failed projection retains everything; the list query relies on the emulator not enforcing indexes; Auth cleanup is verify-then-delete; 5 Auth users are created.
+
 ## Next step
 
-CORR-06B (HTTP transport acceptance for corrections), folding in the CORR-05 follow-ups. The live run needs user approval, plus confirmation that the running emulators loaded the new exports and rules.
+Review and commit CORR-06B, then run the live acceptance once (approved by the user on 2026-10-08) through a verifier with the fixture baseline captured before and after.

@@ -610,3 +610,80 @@ test('no written document carries cost fields and caller mutation cannot alter t
   }
   assert.deepEqual(firestore.records.get('sales/s1'), sale);
 });
+
+// A sale whose lines may repeat a product; both lines priced at 10.00 per unit.
+function repeatedProductSale(saleId, lines) {
+  const calculation = clone(calculateSale({ invoiceRequested: false, lines: lines.map(
+    ({ quantity, spec }) => ({ quantity, quantitySpec: spec, pricing: pricing(1000) })) }));
+  return {
+    receipt: {
+      version: 1, saleId, branchId: 'north', productIds: lines.map(() => 'p1'), calculation,
+      payment: { method: 'cash', amountCentavos: calculation.totalCentavos },
+    },
+    createdAt: new Date(NOW - DAY),
+  };
+}
+
+test('good returned lines of one product merge into a single restock write', async () => {
+  const { firestore, service } = fixture({}, withRecords([['sales/dup', repeatedProductSale('dup', [
+    { quantity: '3', spec: piece }, { quantity: '2', spec: piece }])]]));
+  // One p1 from line 0 and two from line 1 (30.00) for two p3 (30.00): even.
+  const { receipt } = await service(evenRequest({ saleId: 'dup', returnLines: [
+    { lineIndex: 0, quantity: '1', condition: 'good' },
+    { lineIndex: 1, quantity: '2', condition: 'good' },
+  ], newLines: [{ productId: 'p3', quantity: '2' }] }));
+  assert.equal(receipt.settlement.returnedCentavos, 3000);
+  assert.equal(receipt.settlement.customerPaysCentavos, 0);
+  assert.equal(receipt.settlement.refundCentavos, 0);
+  assert.deepEqual(stock(firestore, 'p1'),
+    { ...piece, quantityScaled: 8, updatedAt: AT, lastMovementId: 'exchange-x1-in-1' });
+  const sets = firestore.traces.flat().filter(([kind]) => kind === 'set').map(([, path]) => path);
+  assert.equal(sets.filter((path) => path === 'branches/north/stock/p1').length, 1);
+  for (const [index, quantityScaled] of [[0, 1], [1, 2]]) {
+    const movement = firestore.records.get(`inventoryMovements/exchange-x1-in-${index}`);
+    assert.equal(movement.type, 'exchange-return');
+    assert.equal(movement.lineIndex, index);
+    assert.equal(movement.quantityScaled, quantityScaled);
+  }
+  assert.deepEqual(ledger(firestore, 'dup').returned, { 0: 1, 1: 2 });
+});
+
+test('returned lines of one product with different specifications fail closed', async () => {
+  const { firestore, service } = fixture({}, withRecords([['sales/split', repeatedProductSale('split', [
+    { quantity: '3', spec: piece }, { quantity: '1.250', spec: kg }])]]));
+  // One piece (10.00) and 0.5 kg (5.00) of p1 for one p3 (15.00) would be even.
+  await rejectsUnchanged(firestore, service(evenRequest({ saleId: 'split', returnLines: [
+    { lineIndex: 0, quantity: '1', condition: 'good' },
+    { lineIndex: 1, quantity: '0.5', condition: 'good' },
+  ] })), 'failed-precondition', 'sale lines disagree on a product specification');
+});
+
+test('descending line indexes with mixed conditions keep request order and restock only good units', async () => {
+  const { firestore, service } = fixture();
+  // 0.5 kg of good p2 (5.00) then a defective p1 (10.00), for one p3 (15.00): even.
+  const { receipt } = await service(evenRequest({ reason: 'factory-defect', returnLines: [
+    { lineIndex: 1, quantity: '0.5', condition: 'good' },
+    { lineIndex: 0, quantity: '1', condition: 'factory-defect' },
+  ] }));
+  assert.deepEqual(receipt.returned.lines, [
+    { lineIndex: 1, productId: 'p2', quantity: '0.500', condition: 'good',
+      baseCentavos: 500, additionalIvaCentavos: 0, totalCentavos: 500 },
+    { lineIndex: 0, productId: 'p1', quantity: '1', condition: 'factory-defect',
+      baseCentavos: 1000, additionalIvaCentavos: 0, totalCentavos: 1000 },
+  ]);
+  assert.equal(receipt.returned.totalCentavos, 1500);
+  const movement = { exchangeId: 'x1', saleId: 's1', branchId: 'north', actorId: 'seller-one', occurredAt: AT };
+  assert.deepEqual(firestore.records.get('inventoryMovements/exchange-x1-in-0'), {
+    type: 'exchange-return', ...movement, lineIndex: 1, productId: 'p2', quantityScaled: 500, ...kg,
+  });
+  assert.deepEqual(firestore.records.get('inventoryMovements/exchange-x1-in-1'), {
+    type: 'exchange-return-defect', ...movement, lineIndex: 0, productId: 'p1', quantityScaled: 1, ...piece,
+  });
+  assert.deepEqual(stock(firestore, 'p2'),
+    { ...kg, quantityScaled: 2500, updatedAt: AT, lastMovementId: 'exchange-x1-in-0' });
+  // No factory-defect unit re-enters sellable stock: p1 keeps its seeded projection.
+  assert.deepEqual(stock(firestore, 'p1'), { ...piece, quantityScaled: 5 });
+  const sets = firestore.traces.flat().filter(([kind]) => kind === 'set').map(([, path]) => path);
+  assert.ok(!sets.includes('branches/north/stock/p1'));
+  assert.deepEqual(ledger(firestore).returned, { 0: 1, 1: 500 });
+});

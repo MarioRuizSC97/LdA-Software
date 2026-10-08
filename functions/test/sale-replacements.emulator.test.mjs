@@ -287,6 +287,10 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
 
   await t.test('a return serialized before a racing replacement: the replacement is out-of-range', async () => {
     const { prior, replaceKey, returnKey } = await raceSetup(returnFirstSale, 'tf');
+    // Whatever stock state earlier subtests confirmed, this order must not move it:
+    // assert it before and after the race instead of assuming a prior outcome.
+    const unchanged = run.entries.get(stockPath(p2)).expected;
+    await run.confirm(stockPath(p2), unchanged);
     const [back, swap] = await inOrder(
       ({ giveBack: first }) => first(giveBackRequest(returnKey, '1', returnFirstSale)),
       ({ replace: second }) => second(replacement(replaceKey, '2', returnFirstSale)),
@@ -297,11 +301,8 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
     assert.equal(swap.reason?.message, 'replacement exceeds the remaining returnable quantity');
     for (const path of planReplacement(replaceKey)) await run.absent(path);
     await confirmRaceReturns(returnFirstSale, prior, returnKey);
-    // Unchanged since the replacement that committed in the previous order.
-    const previous = run.ns.key('rf-swap');
-    await run.confirm(stockPath(p2), {
-      ...piece, quantityScaled: 3, updatedAt: AT, lastMovementId: `replacement-${previous}-0-out`,
-    });
+    // Factory-defect returns and a rejected replacement leave sellable stock as it was.
+    await run.confirm(stockPath(p2), unchanged);
   });
 
   await t.test('two replacements racing for the last stock: exactly one commits', async () => {
