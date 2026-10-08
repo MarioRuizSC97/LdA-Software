@@ -132,6 +132,31 @@ Out of scope:
 
   Fold all three into SALE-05.
 
+- SALE-05 writer (delegated, Flutter cart UI):
+  - **New files:**
+    - `lib/sales/sale_cart_controller.dart`: `SaleCheckout`, plus `SaleCartController` (a `ChangeNotifier` holding quote status, generation, pending, locked draft and receipt).
+    - `lib/sales/sale_cart_panel.dart`: add control, quantity entry, cart button, completed notice and panel.
+    - `lib/sales/sale_format.dart`: the formatters, moved verbatim from the catalog page.
+  - **Catalog page (+79/−31):** optional `saleCheckout` and `onSaleCompleted` parameters. The controller exists only for sellers with a checkout. The cart button sits in `bottomNavigationBar`. "Agregar" appears only on priced products.
+  - **Shell:** `saleGatewayLoader` plus a shell-level `SaleDraftStore`, and one cached gateway per exact seller and branch. Begin, submit and resolve stay inside the shell, following the intake pattern; the page sees only `unresolvedDraft()`. Administrators get no checkout.
+  - **Spanish UI copy:** for example "Agregar", "Carrito", "Factura", "Método de pago", "Efectivo/Tarjeta/Transferencia", "Cobrar", "Sin existencias suficientes", "No se pudo calcular el total", "Reintentar", "Venta registrada · Folio …".
+  - **Outcome handling:**
+    - Stale results (success or failure) are ignored.
+    - A payment mismatch re-quotes, and the next charge uses a new key.
+    - Uncertain locks the cart, and "Reintentar" resubmits the identical draft.
+    - A session error locks the draft or shows a re-login message.
+  - **SALE-04 follow-ups resolved:**
+    - a `createSaleGateway` seam proves the `quoteSale` and `submitSale` binding;
+    - `saleCallableFromInvoker` tests the code and null-message mapping;
+    - `_staleAware` makes superseded failures stale.
+  - **Evidence (author-reported):** compile and behavior RED, then GREEN; 20 mutation probes, all killed.
+  - **Incident during probing:** an early probe loop ran `git checkout --`, which reverted the writer's own two uncommitted Task B lib edits. The writer re-applied them identically and switched to backup-and-restore. The parent confirmed the follow-up edits are present and HEAD is unchanged at `973c270`.
+  - **Size:** about 2,520 lines against a 900–1,400 forecast, mostly tests and fixtures.
+- SALE-05 parent spot check:
+  - `flutter analyze`: no issues.
+  - Full `flutter test`: 418/418.
+  - The follow-up symbols (`saleCallableFromInvoker`, `_staleAware`, `createSaleGateway`) are present.
+
 ## Next step
 
-SALE-05 (cart UI on the seller catalog, Spanish copy), folding in the SALE-04 follow-ups.
+Review and commit SALE-05, then SALE-06 (receipt screen, with the server returning `createdAt` proposed).

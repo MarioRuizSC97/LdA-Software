@@ -3,6 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
+import 'package:lda_inventory/sales/sale_cart.dart';
+import 'package:lda_inventory/sales/sale_draft.dart';
+import 'package:lda_inventory/sales/sale_quote.dart';
+
+import '../sales/sale_fixtures.dart';
 
 class _Gateway implements EmulatorSessionGateway {
   @override
@@ -497,5 +502,51 @@ void main() {
           DemoEmulatorBootstrap.initializeSaleGateway;
       expect(loader, same(DemoEmulatorBootstrap.initializeSaleGateway));
     });
+
+    test(
+      'sale gateway binds quoteSale to quote and submitSale to submit',
+      () async {
+        const EmulatorSession seller = EmulatorSession(
+          userId: 'seller-1',
+          email: 'seller@demo.invalid',
+          role: InventoryRole.seller,
+          branchId: saleBranchId,
+        );
+        final List<String> requested = <String>[];
+        final List<String> invoked = <String>[];
+        final EmulatorSaleGateway gateway =
+            DemoEmulatorBootstrap.createSaleGateway(
+              session: seller,
+              sessionChecker: () async => seller,
+              callable: (String name) {
+                requested.add(name);
+                return (Map<String, Object?> request) async {
+                  invoked.add(name);
+                  return name == 'quoteSale'
+                      ? quoteResponse()
+                      : submitResponse();
+                };
+              },
+            );
+
+        expect(requested, unorderedEquals(<String>['quoteSale', 'submitSale']));
+        expect(gateway.expectedSession, same(seller));
+        expect((await gateway.quote(invoicedCart())).totalCentavos, 3650);
+        expect(invoked, <String>['quoteSale']);
+        final SaleReceipt receipt = await gateway.submit(
+          SaleDraft.fromQuote(
+            quote: SaleQuote.fromCallable(
+              quoteResponse(),
+              cart: invoicedCart(),
+            ),
+            branchId: saleBranchId,
+            paymentMethod: SalePaymentMethod.card,
+            createKey: () => saleKey,
+          ),
+        );
+        expect(receipt.folio, 'NTE-3F2A-9C1B');
+        expect(invoked, <String>['quoteSale', 'submitSale']);
+      },
+    );
   });
 }

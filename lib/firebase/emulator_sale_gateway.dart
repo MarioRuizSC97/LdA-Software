@@ -25,6 +25,12 @@ class SaleRejectedException implements Exception {
   const SaleRejectedException({required this.code, required this.message});
   final String code;
   final String message;
+
+  /// The submitted amount no longer equals the authoritative total (prices
+  /// changed after the quote): re-quote and let the seller confirm again.
+  bool get isPaymentMismatch =>
+      code == 'invalid-argument' &&
+      message == 'full payment must equal the authoritative total';
 }
 
 /// The outcome is unknown. For a submission, retry the same draft.
@@ -77,8 +83,10 @@ class EmulatorSaleGateway {
   Future<SaleQuote> quote(SaleCart cart) async {
     final Map<String, Object?> request = cart.toQuoteRequest();
     final int generation = ++_quoteGeneration;
-    final Object? response = await _call(quoteInvoke, request);
-    if (generation != _quoteGeneration) throw const SaleStaleException();
+    final Object? response = await _staleAware(
+      _call(quoteInvoke, request),
+      () => generation != _quoteGeneration,
+    );
     try {
       return SaleQuote.fromCallable(response, cart: cart);
     } on SaleProtocolException {
@@ -92,8 +100,10 @@ class EmulatorSaleGateway {
       throw const SaleSessionException();
     }
     final int generation = ++_submitGeneration;
-    final Object? response = await _call(submitInvoke, request);
-    if (generation != _submitGeneration) throw const SaleStaleException();
+    final Object? response = await _staleAware(
+      _call(submitInvoke, request),
+      () => generation != _submitGeneration,
+    );
     try {
       return SaleReceipt.fromCallable(
         response,
@@ -103,6 +113,27 @@ class EmulatorSaleGateway {
     } on SaleProtocolException {
       throw const SaleUncertainException();
     }
+  }
+
+  /// A superseded call is stale whatever its outcome: a late rejection or
+  /// uncertainty must not reach a UI that already moved on. Session failures
+  /// still surface, because they are not about this call's result.
+  Future<Object?> _staleAware(
+    Future<Object?> call,
+    bool Function() superseded,
+  ) async {
+    final Object? response;
+    try {
+      response = await call;
+    } on SaleRejectedException {
+      if (superseded()) throw const SaleStaleException();
+      rethrow;
+    } on SaleUncertainException {
+      if (superseded()) throw const SaleStaleException();
+      rethrow;
+    }
+    if (superseded()) throw const SaleStaleException();
+    return response;
   }
 
   /// Runs one call between two seller checks. A failed post-call check makes
@@ -152,12 +183,21 @@ class EmulatorSaleGateway {
 
 SaleCallable firebaseSaleCallable(FirebaseFunctions functions, String name) {
   final HttpsCallable callable = functions.httpsCallable(name);
+  return saleCallableFromInvoker((Map<String, Object?> request) async {
+    final HttpsCallableResult<Object?> result = await callable.call<Object?>(
+      request,
+    );
+    return result.data;
+  });
+}
+
+/// Translates SDK callable failures into [SaleCallableException], keeping the
+/// server code and turning a missing message into an empty one. Any other
+/// failure passes through unchanged (the gateway treats it as uncertain).
+SaleCallable saleCallableFromInvoker(SaleCallable invoke) {
   return (Map<String, Object?> request) async {
     try {
-      final HttpsCallableResult<Object?> result = await callable.call<Object?>(
-        request,
-      );
-      return result.data;
+      return await invoke(request);
     } on FirebaseFunctionsException catch (error) {
       throw SaleCallableException(
         code: error.code,

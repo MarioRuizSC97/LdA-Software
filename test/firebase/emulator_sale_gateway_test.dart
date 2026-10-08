@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
@@ -322,4 +323,133 @@ void main() {
     expect(current.replayed, isTrue);
     await expectLater(old, throwsA(isA<SaleStaleException>()));
   });
+
+  test('a superseded quote or submit that fails is stale', () async {
+    for (final Object failure in <Object>[
+      const SaleCallableException(code: 'invalid-argument', message: 'bad'),
+      const SaleCallableException(code: 'internal', message: ''),
+      StateError('transport'),
+    ]) {
+      final Completer<Object?> firstQuote = Completer<Object?>();
+      final Completer<Object?> firstSubmit = Completer<Object?>();
+      var quoteCalls = 0;
+      var submitCalls = 0;
+      final EmulatorSaleGateway gateway = _gateway(
+        quoteInvoke: (_) {
+          quoteCalls += 1;
+          return quoteCalls == 1
+              ? firstQuote.future
+              : Future<Object?>.value(quoteResponse());
+        },
+        submitInvoke: (_) {
+          submitCalls += 1;
+          return submitCalls == 1
+              ? firstSubmit.future
+              : Future<Object?>.value(submitResponse());
+        },
+      );
+
+      final Future<SaleQuote> oldQuote = gateway.quote(invoicedCart());
+      final Future<SaleReceipt> oldSubmit = gateway.submit(_draft());
+      await gateway.quote(invoicedCart());
+      await gateway.submit(_draft());
+      firstQuote.completeError(failure);
+      firstSubmit.completeError(failure);
+
+      await expectLater(oldQuote, throwsA(isA<SaleStaleException>()));
+      await expectLater(oldSubmit, throwsA(isA<SaleStaleException>()));
+    }
+  });
+
+  test('a current failure is still rejected or uncertain', () async {
+    final EmulatorSaleGateway gateway = _gateway(
+      quoteInvoke: (_) => throw const SaleCallableException(
+        code: 'failed-precondition',
+        message: 'stock',
+      ),
+    );
+    await expectLater(
+      gateway.quote(invoicedCart()),
+      throwsA(
+        isA<SaleRejectedException>().having(
+          (SaleRejectedException error) => error.message,
+          'message',
+          'stock',
+        ),
+      ),
+    );
+  });
+
+  group('saleCallableFromInvoker', () {
+    test('returns the callable data unchanged', () async {
+      final Object data = <String, Object?>{'ok': true};
+      Map<String, Object?>? seen;
+      final SaleCallable callable = saleCallableFromInvoker((
+        Map<String, Object?> request,
+      ) async {
+        seen = request;
+        return data;
+      });
+      expect(await callable(<String, Object?>{'a': 1}), same(data));
+      expect(seen, <String, Object?>{'a': 1});
+    });
+
+    test('maps FirebaseFunctionsException keeping the code', () async {
+      final SaleCallable callable = saleCallableFromInvoker(
+        (_) => throw _FunctionsException(
+          code: 'failed-precondition',
+          message: 'full payment must equal the authoritative total',
+        ),
+      );
+      await expectLater(
+        callable(<String, Object?>{}),
+        throwsA(
+          isA<SaleCallableException>()
+              .having(
+                (SaleCallableException e) => e.code,
+                'code',
+                'failed-precondition',
+              )
+              .having(
+                (SaleCallableException e) => e.message,
+                'message',
+                'full payment must equal the authoritative total',
+              ),
+        ),
+      );
+    });
+
+    test('a null message becomes empty', () async {
+      final SaleCallable callable = saleCallableFromInvoker(
+        (_) => throw _FunctionsException(code: 'internal', message: null),
+      );
+      await expectLater(
+        callable(<String, Object?>{}),
+        throwsA(
+          isA<SaleCallableException>()
+              .having((SaleCallableException e) => e.code, 'code', 'internal')
+              .having((SaleCallableException e) => e.message, 'message', ''),
+        ),
+      );
+    });
+
+    test('other errors pass through unchanged', () async {
+      final StateError failure = StateError('transport');
+      final SaleCallable callable = saleCallableFromInvoker(
+        (_) => throw failure,
+      );
+      await expectLater(callable(<String, Object?>{}), throwsA(same(failure)));
+    });
+  });
+}
+
+class _FunctionsException extends FirebaseFunctionsException {
+  _FunctionsException({required super.code, required String? message})
+    : _message = message,
+      super(message: message ?? '');
+
+  final String? _message;
+
+  @override
+  String? get message => _message;
 }

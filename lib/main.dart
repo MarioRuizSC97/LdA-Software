@@ -88,7 +88,6 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final ProductPricingGatewayLoader productPricingGatewayLoader;
   final StockIntakeGatewayLoader stockIntakeGatewayLoader;
 
-  /// Seller sale gateway loader; not wired into the shell until SALE-05.
   final SaleGatewayLoader saleGatewayLoader;
 
   @override
@@ -121,6 +120,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       productCreationGatewayLoader: widget.productCreationGatewayLoader,
       productPricingGatewayLoader: widget.productPricingGatewayLoader,
       stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
+      saleGatewayLoader: widget.saleGatewayLoader,
     ),
   );
 }

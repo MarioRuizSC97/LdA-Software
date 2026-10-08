@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../auth/emulator_session.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
+import '../sales/sale_cart_controller.dart';
+import '../sales/sale_cart_panel.dart';
+import '../sales/sale_draft.dart';
+import '../sales/sale_format.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
@@ -121,6 +125,8 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.submitStockIntake,
     this.createIntakeId,
     this.unresolvedIntakeDraftFor,
+    this.saleCheckout,
+    this.onSaleCompleted,
     super.key,
   });
 
@@ -137,6 +143,12 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final StockIntakeSubmit? submitStockIntake;
   final StockIntakeIdFactory? createIntakeId;
   final StockIntakeDraftLookup? unresolvedIntakeDraftFor;
+
+  /// Seller-only sale operations; null hides the cart.
+  final SaleCheckout? saleCheckout;
+
+  /// Receives each confirmed sale (the receipt screen consumes it).
+  final ValueChanged<SaleReceipt>? onSaleCompleted;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -194,11 +206,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   int _presentationRevision = 0;
   int _pricingGeneration = 0;
   int _intakeGeneration = 0;
+  SaleCartController? _sale;
+  bool _cartVisible = false;
 
   @override
   void initState() {
     super.initState();
     _configureCreation();
+    _configureSale();
     _requestCatalog(initial: true);
   }
 
@@ -255,7 +270,30 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _intakeGeneration += 1;
       _clearIntakePresentation();
     }
+    final SaleCheckout? checkout = widget.saleCheckout;
+    if (sessionChanged ||
+        (checkout == null) != (oldWidget.saleCheckout == null)) {
+      _sale?.dispose();
+      _cartVisible = false;
+      _configureSale();
+    } else if (checkout != null) {
+      _sale?.checkout = checkout;
+    }
     if (sessionChanged) _requestCatalog();
+  }
+
+  void _configureSale() {
+    final SaleCheckout? checkout = widget.saleCheckout;
+    _sale = widget.session.role == InventoryRole.seller && checkout != null
+        ? SaleCartController(checkout: checkout, onCompleted: _saleCompleted)
+        : null;
+  }
+
+  void _saleCompleted(SaleReceipt receipt) {
+    if (!mounted) return;
+    setState(() => _cartVisible = false);
+    _requestCatalog();
+    widget.onSaleCompleted?.call(receipt);
   }
 
   void _cancelSuccessNotice(String category) {
@@ -284,6 +322,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _creationGeneration += 1;
     _pricingGeneration += 1;
     _intakeGeneration += 1;
+    _sale?.dispose();
     _name.dispose();
     _unit.dispose();
     _listedPrice.dispose();
@@ -462,7 +501,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   @override
   Widget build(BuildContext context) {
+    final SaleCartController? sale = _sale;
     return Scaffold(
+      bottomNavigationBar: sale != null && !_cartVisible
+          ? SaleCartButton(
+              controller: sale,
+              onPressed: () => setState(() => _cartVisible = true),
+            )
+          : null,
       appBar: AppBar(
         title: const Text('LDA Inventory'),
         actions: <Widget>[
@@ -488,12 +534,18 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _PricingSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
+            if (sale != null) SaleCompletedNotice(controller: sale),
             if (_creationCoordinator != null)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: _creationVisible
+              child: sale != null && _cartVisible
+                  ? SaleCartPanel(
+                      controller: sale,
+                      onClose: () => setState(() => _cartVisible = false),
+                    )
+                  : _creationVisible
                   ? _creationForm()
                   : _pricingProduct != null
                   ? _pricingForm()
@@ -811,7 +863,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       if (unresolved != null) {
         _lockPricingDraft(unresolved);
       } else if (pricing != null) {
-        _listedPrice.text = _formatPricingCentavos(pricing.listedPriceCentavos);
+        _listedPrice.text = formatCentavos(pricing.listedPriceCentavos);
         _priceMode = pricing.priceMode;
         _ivaTreatment = pricing.ivaTreatment;
         _ivaRate.text = pricing.ivaRateBasisPoints == null
@@ -1274,7 +1326,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           precision: product.quantitySpec.precision,
         ),
       );
-      return '${_formatPricingCentavos(preview.lineTotalCentavos)} MXN';
+      return '${formatCentavos(preview.lineTotalCentavos)} MXN';
     } on StockIntakeValidationException {
       return null;
     }
@@ -1587,9 +1639,18 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               widget.submitStockIntake != null
           ? _showIntake
           : null,
+      saleAction: switch (_sale) {
+        final SaleCartController sale =>
+          (CatalogProduct product) => product.pricing == null
+              ? null
+              : SaleAddControl(controller: sale, product: product),
+        null => null,
+      },
     );
   }
 }
+
+typedef _SaleActionBuilder = Widget? Function(CatalogProduct product);
 
 String _sessionIdentity(EmulatorSession session) =>
     '${session.userId}|${session.role.name}|${session.branchId ?? ''}';
@@ -1759,13 +1820,6 @@ InputDecoration _requiredErrorDecoration(
     errorBorder: outline.copyWith(borderSide: errorSide),
     focusedErrorBorder: outline.copyWith(borderSide: errorSide),
   );
-}
-
-String _formatPricingCentavos(int centavos) {
-  final int absolute = centavos.abs();
-  final String sign = centavos < 0 ? '-' : '';
-  final String fraction = (absolute % 100).toString().padLeft(2, '0');
-  return '$sign${absolute ~/ 100}.$fraction';
 }
 
 String _formatBasisPoints(int basisPoints) {
@@ -2022,6 +2076,7 @@ class _CatalogList extends StatelessWidget {
     this.role,
     this.onConfigurePricing,
     this.onRecordIntake,
+    this.saleAction,
   });
 
   final List<CatalogItem> items;
@@ -2030,6 +2085,7 @@ class _CatalogList extends StatelessWidget {
   final InventoryRole? role;
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
+  final _SaleActionBuilder? saleAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2071,6 +2127,7 @@ class _CatalogList extends StatelessWidget {
                   branchChoices: branchChoices,
                   onConfigurePricing: onConfigurePricing,
                   onRecordIntake: onRecordIntake,
+                  saleAction: saleAction,
                 ),
               ),
             ),
@@ -2087,7 +2144,7 @@ String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
   final CatalogProductCost? cost = snapshot.costs[productId];
   if (cost == null) return 'No cost recorded';
   return 'Latest unit cost: '
-      '${_formatPricingCentavos(cost.latestUnitCostCentavos)} MXN';
+      '${formatCentavos(cost.latestUnitCostCentavos)} MXN';
 }
 
 class _ProductCard extends StatelessWidget {
@@ -2098,6 +2155,7 @@ class _ProductCard extends StatelessWidget {
     required this.branchChoices,
     required this.onConfigurePricing,
     required this.onRecordIntake,
+    this.saleAction,
   });
 
   final CatalogItem item;
@@ -2105,6 +2163,7 @@ class _ProductCard extends StatelessWidget {
   final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
+  final _SaleActionBuilder? saleAction;
 
   final String? costLabel;
 
@@ -2117,6 +2176,7 @@ class _ProductCard extends StatelessWidget {
       branchChoices: branchChoices,
       onConfigurePricing: onConfigurePricing,
       onRecordIntake: onRecordIntake,
+      saleAction: saleAction,
     );
     final Widget qr = ProductQrView(product: item.product);
 
@@ -2159,6 +2219,7 @@ class _ProductDetails extends StatelessWidget {
     required this.branchChoices,
     required this.onConfigurePricing,
     required this.onRecordIntake,
+    this.saleAction,
   });
 
   final CatalogItem item;
@@ -2166,6 +2227,7 @@ class _ProductDetails extends StatelessWidget {
   final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
+  final _SaleActionBuilder? saleAction;
 
   final String? costLabel;
 
@@ -2197,7 +2259,7 @@ class _ProductDetails extends StatelessWidget {
         if (product.pricing case final CatalogPricing pricing) ...<Widget>[
           const SizedBox(height: 4),
           Text(
-            'Listed price: ${_formatPricingCentavos(pricing.listedPriceCentavos)} '
+            'Listed price: ${formatCentavos(pricing.listedPriceCentavos)} '
             '${pricing.currency}',
           ),
           const SizedBox(height: 4),
@@ -2241,6 +2303,10 @@ class _ProductDetails extends StatelessWidget {
             label: const Text('Record stock intake'),
           ),
         ],
+        if (saleAction?.call(product) case final Widget action) ...<Widget>[
+          const SizedBox(height: 12),
+          action,
+        ],
       ],
     );
   }
@@ -2277,7 +2343,7 @@ class _ProductDetails extends StatelessWidget {
   }
 
   Widget _holdingRow(CatalogHolding holding) {
-    final String quantity = _formatQuantity(
+    final String quantity = formatScaledQuantity(
       holding.quantityScaled,
       product.quantitySpec.precision,
     );
@@ -2295,24 +2361,6 @@ class _ProductDetails extends StatelessWidget {
           Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
       ],
     );
-  }
-
-  String _formatQuantity(int scaled, int precision) {
-    if (precision == 0) return scaled.toString();
-    final int divisor = _powerOfTen(precision);
-    final String fraction = (scaled % divisor).toString().padLeft(
-      precision,
-      '0',
-    );
-    return '${scaled ~/ divisor}.$fraction';
-  }
-
-  int _powerOfTen(int exponent) {
-    var result = 1;
-    for (var index = 0; index < exponent; index += 1) {
-      result *= 10;
-    }
-    return result;
   }
 }
 

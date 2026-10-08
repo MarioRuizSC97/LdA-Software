@@ -6,7 +6,12 @@ import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
 import '../catalog/stock_intake.dart';
+import '../firebase/emulator_sale_gateway.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
+import '../sales/sale_cart.dart';
+import '../sales/sale_cart_controller.dart';
+import '../sales/sale_draft.dart';
+import '../sales/sale_quote.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
@@ -28,6 +33,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.productCreationGatewayLoader,
     this.productPricingGatewayLoader,
     this.stockIntakeGatewayLoader,
+    this.saleGatewayLoader,
     this.retryLoader,
     super.key,
   });
@@ -37,6 +43,9 @@ class EmulatorLoginShell extends StatefulWidget {
   final ProductCreationGatewayLoader? productCreationGatewayLoader;
   final ProductPricingGatewayLoader? productPricingGatewayLoader;
   final StockIntakeGatewayLoader? stockIntakeGatewayLoader;
+
+  /// Seller sale gateway loader; null hides the cart for every role.
+  final SaleGatewayLoader? saleGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -70,6 +79,16 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // intake request survive closing the intake presentation, logout, role
   // replacement, and same-UID administrator reentry on this live shell.
   final StockIntakeDraftStore _stockIntakeDrafts = StockIntakeDraftStore();
+
+  // Same volatile, live-shell-only retention for sales: an uncertain sale
+  // survives closing the cart, logout and same-seller reentry on this shell,
+  // so its retry reuses the frozen draft and idempotency key.
+  final SaleDraftStore _saleDrafts = SaleDraftStore();
+
+  // One sale gateway per exact seller session, so quote staleness spans the
+  // whole cart. A failed initialization is dropped and retried next call.
+  String? _saleGatewayOwner;
+  Future<EmulatorSaleGateway>? _saleGateway;
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -417,6 +436,91 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     );
   }
 
+  bool _isExactSeller(EmulatorSession? session) =>
+      session != null &&
+      session.role == InventoryRole.seller &&
+      session.branchId != null;
+  bool _isSameCurrentSeller(EmulatorSession originatingSession) {
+    final EmulatorSession? current = _session;
+    return _isExactSeller(current) &&
+        current!.userId == originatingSession.userId &&
+        current.branchId == originatingSession.branchId;
+  }
+
+  Future<EmulatorSaleGateway> _saleGatewayFor(EmulatorSession session) async {
+    final String owner = '${session.userId}|${session.branchId}';
+    if (_saleGatewayOwner != owner) {
+      _saleGatewayOwner = owner;
+      _saleGateway = null;
+    }
+    final Future<EmulatorSaleGateway> pending = _saleGateway ??=
+        widget.saleGatewayLoader!(session);
+    try {
+      return await pending;
+    } catch (_) {
+      if (identical(_saleGateway, pending)) _saleGateway = null;
+      rethrow;
+    }
+  }
+
+  /// Seller quote: the exact current seller, before and after the call.
+  Future<SaleQuote> _quoteSale(SaleCart cart) async {
+    final EmulatorSession? session = _session;
+    if (!_isExactSeller(session) || widget.saleGatewayLoader == null) {
+      throw const SaleSessionException();
+    }
+    final EmulatorSaleGateway gateway = await _saleGatewayFor(session!);
+    final SaleQuote quote = await gateway.quote(cart);
+    if (!_isSameCurrentSeller(session)) throw const SaleSessionException();
+    return quote;
+  }
+
+  /// Seller submit, mirroring intake: freezes ownership and the draft before
+  /// gateway initialization or transport, and resolves only the current
+  /// attempt's proven success or deterministic rejection. Anything else
+  /// keeps the draft stored for a same-key retry.
+  Future<SaleReceipt> _submitSale(SaleDraft draft) async {
+    final EmulatorSession? session = _session;
+    if (!_isExactSeller(session) ||
+        widget.saleGatewayLoader == null ||
+        draft.branchId != session!.branchId) {
+      throw const SaleSessionException();
+    }
+    final SaleAttempt attempt = _saleDrafts.begin(
+      ownerUserId: session.userId,
+      draft: draft,
+    );
+    try {
+      final EmulatorSaleGateway gateway = await _saleGatewayFor(session);
+      final SaleReceipt receipt = await gateway.submit(draft);
+      if (!_isSameCurrentSeller(session)) {
+        throw const SaleUncertainException();
+      }
+      if (!_saleDrafts.resolve(attempt)) throw const SaleStaleException();
+      return receipt;
+    } on SaleRejectedException {
+      if (!_isSameCurrentSeller(session)) {
+        throw const SaleUncertainException();
+      }
+      if (!_saleDrafts.resolve(attempt)) throw const SaleStaleException();
+      rethrow;
+    }
+  }
+
+  SaleCheckout? _saleCheckoutFor(EmulatorSession session) {
+    if (!_isExactSeller(session) || widget.saleGatewayLoader == null) {
+      return null;
+    }
+    return SaleCheckout(
+      branchId: session.branchId!,
+      quote: _quoteSale,
+      submit: _submitSale,
+      unresolvedDraft: () => _isSameCurrentSeller(session)
+          ? _saleDrafts.unresolvedFor(session.userId, session.branchId!)
+          : null,
+    );
+  }
+
   bool _isExactAdministrator(EmulatorSession? session) =>
       session != null &&
       session.role == InventoryRole.administrator &&
@@ -510,6 +614,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             ? (String productId, String branchId) =>
                   _unresolvedIntakeDraftFor(session, productId, branchId)
             : null,
+        saleCheckout: _saleCheckoutFor(session),
         onLogout: _logout,
       );
     }

@@ -484,14 +484,27 @@ class DemoEmulatorBootstrap {
     EmulatorSession session,
   ) {
     return _initializeLiveFunctionsGateway<EmulatorSaleGateway>(
-      (FirebaseAuth auth, FirebaseFunctions functions) => EmulatorSaleGateway(
-        expectedSession: session,
+      (FirebaseAuth auth, FirebaseFunctions functions) => createSaleGateway(
+        session: session,
         sessionChecker: _firebaseActiveSessionChecker(auth),
-        quoteInvoke: firebaseSaleCallable(functions, 'quoteSale'),
-        submitInvoke: firebaseSaleCallable(functions, 'submitSale'),
+        callable: (String name) => firebaseSaleCallable(functions, name),
       ),
     );
   }
+
+  /// Binds the `quoteSale` and `submitSale` callables by name. Separate from
+  /// [initializeSaleGateway] so the binding is testable without Firebase.
+  @visibleForTesting
+  static EmulatorSaleGateway createSaleGateway({
+    required EmulatorSession session,
+    required SaleSessionChecker sessionChecker,
+    required SaleCallable Function(String name) callable,
+  }) => EmulatorSaleGateway(
+    expectedSession: session,
+    sessionChecker: sessionChecker,
+    quoteInvoke: callable('quoteSale'),
+    submitInvoke: callable('submitSale'),
+  );
 
   static Future<T> _initializeLiveFunctionsGateway<T>(
     T Function(FirebaseAuth auth, FirebaseFunctions functions) create,
