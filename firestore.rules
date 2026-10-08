@@ -188,6 +188,52 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Sale returns, their audits, idempotency receipts and the per-sale returned
+    // ledger are server-owned. Clients reach corrections only through callables.
+    match /saleReturns/{returnId} {
+      allow read, write: if false;
+    }
+
+    match /saleReturnAudits/{returnId} {
+      allow read, write: if false;
+    }
+
+    match /saleReturnSubmissionReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    match /saleReturnLedgers/{saleId} {
+      allow read, write: if false;
+    }
+
+    // Factory-defect replacements, their audits and idempotency receipts are
+    // server-owned. Clients reach corrections only through callables.
+    match /saleReplacements/{replacementId} {
+      allow read, write: if false;
+    }
+
+    match /saleReplacementAudits/{replacementId} {
+      allow read, write: if false;
+    }
+
+    match /saleReplacementSubmissionReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    // Exchanges, their audits and idempotency receipts are server-owned.
+    // Clients reach corrections only through callables.
+    match /saleExchanges/{exchangeId} {
+      allow read, write: if false;
+    }
+
+    match /saleExchangeAudits/{exchangeId} {
+      allow read, write: if false;
+    }
+
+    match /saleExchangeSubmissionReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
     // New paths remain closed until their access contract has tests.
     match /{document=**} {
       allow read, write: if false;

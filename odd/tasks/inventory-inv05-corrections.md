@@ -49,7 +49,8 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-03 — Return service: partial and repeated returns, `good`/`factory-defect` conditions, refund by the original method, reason and note, invoiced flag, return ledger, compensating movements, idempotent replay. Route: delegated writer; emulator tests. Native review `review-a18603c466e9c6c0` approved; commit recorded in Evidence.
 - [x] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer. Native review `review-689e0a106f145040` approved; commit recorded in Evidence.
 - [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
-- [ ] CORR-06 — Callables, rules and HTTP transport acceptance for all corrections. Route: delegated writer; live run with user approval.
+- [ ] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
+- [ ] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
@@ -139,6 +140,15 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `R3-003`: test descending `lineIndex` with mixed conditions, to prove refund-line pairing. CORR-01 documents that refund lines keep request order.
   - `R3-004`: the return-first replacement subtest depends on the previous subtest's stock state.
 
+- CORR-06A writer (delegated; route trigger: multi-file wiring plus tests):
+  - **`functions/src/index.js` (+64 lines):** a shared `saleCorrectionCallable` helper exports `findCorrectableSale`, `listRecentCorrectableSales`, `submitSaleReturn`, `submitSaleReplacement` and `submitSaleExchange`. It follows the `submitSale` pattern exactly: guard first with a fixed `failed-precondition`, lazy `initializeApp`, `SaleError` mapped to `HttpsError`, and anything else to a fixed per-callable `internal` message.
+  - **`CorrectionError` cannot escape the services:** every calculation call is caught and converted to `SaleError`, so it is not mapped. A test pins that an escaped one becomes `internal`.
+  - **`firestore.rules` (+46 lines):** explicit deny-all for the 10 correction collections, before the catch-all. `inventoryMovements` and the other rules are unchanged.
+  - **Movement audit:** every new movement type carries `branchId` and `actorId` and no cost or price field, so the existing `isSellerFor` rule exposes them to branch sellers, which is intended.
+  - **Tests:** `functions/test/corrections-callable.test.mjs` (185 lines), using the `registerHooks` seam from sales-callable. Author-reported RED 0/5, then GREEN.
+- CORR-06A parent spot check: corrections and sales callables 33/33 (run from `functions/`); the rules diff adds exactly 10 `if false` rules and removes nothing; the catch-all is still last; hashes match the writer report.
+- Note for CORR-06B: confirm that the running Functions emulator has loaded the five new exports and the new rules before the live run, or reload it with the user's approval.
+
 ## Next step
 
-CORR-06 (callables, deny-all rules for all correction collections, and HTTP transport acceptance), folding in the CORR-05 follow-ups.
+Review and commit CORR-06A, then CORR-06B (HTTP transport acceptance).
