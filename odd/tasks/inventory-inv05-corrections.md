@@ -175,6 +175,8 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - No source files changed; the hashes of all four files match the writer report.
 - Live-run risks, from the writer: the emulators must have loaded the new exports and rules (exports confirmed by OPTIONS 204); the newest-first order could fail on an equal millisecond; a failed projection retains everything; the list query relies on the emulator not enforcing indexes; Auth cleanup is verify-then-delete; 5 Auth users are created.
 
+- CORR-06B closure (offline part): native review `review-d9fbbb425a9a215c` approved; commit tree exactly the approved candidate `f1a5b3d9`. Finding `R3-001` (WARNING): one offline fake-HTTP assertion expects `live-approval-required`, but on a non-pinned Node, `gate` throws `node-pin` first, so the check is not portable. It passes on the pinned Node 24.21.0 used here. Fix later by passing an explicit pinned runtime.
+
 ## Next step
 
-Review and commit CORR-06B, then run the live acceptance once (approved by the user on 2026-10-08) through a verifier with the fixture baseline captured before and after.
+Run the CORR-06B live acceptance once (user-approved 2026-10-08) through a verifier, with the fixture baseline captured before and after.
