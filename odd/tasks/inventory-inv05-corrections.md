@@ -50,7 +50,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer. Native review `review-689e0a106f145040` approved; commit recorded in Evidence.
 - [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
 - [x] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
-- [ ] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
+- [x] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
@@ -177,6 +177,13 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 - CORR-06B closure (offline part): native review `review-d9fbbb425a9a215c` approved; commit tree exactly the approved candidate `f1a5b3d9`. Finding `R3-001` (WARNING): one offline fake-HTTP assertion expects `live-approval-required`, but on a non-pinned Node, `gate` throws `node-pin` first, so the check is not portable. It passes on the pinned Node 24.21.0 used here. Fix later by passing an explicit pinned runtime.
 
+- CORR-06B live run 1 (user-approved, exactly once, HEAD `387e1e5`, verifier):
+  - **Runtime revalidated:** Auth 9099, Firestore 8080, Functions 5001 and hub 4400 listening; OPTIONS 204 for all six routes; project `demo-lda-inventory`.
+  - **Result:** exit 0; 44 tests, 44 pass, 0 fail, 0 skipped (~2.6 s), including the live root covering lookup, list, returns, replacements, exchanges, seller rules and final consistency.
+  - **Fixtures and residue:** all 10 baseline fixtures unchanged, with hashes matching FUNC-03 run 3. Firestore stayed at 104 documents with a byte-identical UUID listing; 0 `acceptance-*` Auth users before and after. No retention.
+  - **Offline re-run:** 12 pass, 1 skipped. Parent readback of the log confirmed 44/44, an identical baseline and residue diff, and no failures.
+  - **Limitation:** the explicit deny rules are semantically identical to the catch-all deny they precede, so neither the 403 probe nor the passing rules subtest proves whether the emulator hot-reloaded the new `firestore.rules`. Client-observable behavior is the same either way.
+
 ## Next step
 
-Run the CORR-06B live acceptance once (user-approved 2026-10-08) through a verifier, with the fixture baseline captured before and after.
+CORR-07 (seller Flutter screens: lookup and list, return, replacement and exchange).
