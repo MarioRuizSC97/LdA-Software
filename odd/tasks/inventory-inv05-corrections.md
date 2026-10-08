@@ -48,7 +48,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-02 — Sale lookup for sellers: by receipt number, and the branch's recent-sales list (15 days), both server-side with branch and window enforcement. Route: delegated writer. Native review `review-6c7160b3affa3530` approved; commit `a15d1c98e115a9fd0bd708c428d8a8034c6eb4d0`, tree exactly the approved candidate `2f56597d`.
 - [x] CORR-03 — Return service: partial and repeated returns, `good`/`factory-defect` conditions, refund by the original method, reason and note, invoiced flag, return ledger, compensating movements, idempotent replay. Route: delegated writer; emulator tests. Native review `review-a18603c466e9c6c0` approved; commit recorded in Evidence.
 - [x] CORR-04 — Factory-defect replacement: same product, no charge, requires sellable stock, linked movements. Route: delegated writer. Native review `review-689e0a106f145040` approved; commit recorded in Evidence.
-- [ ] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer.
+- [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
 - [ ] CORR-06 — Callables, rules and HTTP transport acceptance for all corrections. Route: delegated writer; live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
@@ -133,6 +133,12 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - CORR-05 parent spot check: correction suites 93/93; sales and sales calculation 64/64; hashes of all four files match the writer report.
 - Notes for CORR-06: deny-all rules for `saleExchanges`, `saleExchangeAudits` and `saleExchangeSubmissionReceipts`, in addition to the return and replacement collections and `saleReturnLedgers`. Map `invalid-argument`, `out-of-range`, `failed-precondition`, `not-found`, `already-exists`, `permission-denied` and `unauthenticated`.
 
+- CORR-05 closure: native review `review-fe7aec16af968495` approved; commit tree exactly the approved candidate `31837b5d`. Non-blocking SUGGESTION follow-ups:
+  - `R3-001`: force both orders in the exchange-versus-return race, as `inOrder` does for replacements.
+  - `R3-002`: test same-product restock merging and the spec-disagreement error in exchanges.
+  - `R3-003`: test descending `lineIndex` with mixed conditions, to prove refund-line pairing. CORR-01 documents that refund lines keep request order.
+  - `R3-004`: the return-first replacement subtest depends on the previous subtest's stock state.
+
 ## Next step
 
-Review and commit CORR-05, then CORR-06 (callables, rules and HTTP transport acceptance).
+CORR-06 (callables, deny-all rules for all correction collections, and HTTP transport acceptance), folding in the CORR-05 follow-ups.
