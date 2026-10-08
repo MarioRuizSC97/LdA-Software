@@ -115,6 +115,24 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `R3-001` (WARNING): the strict stock shapes would reject a seeded document later merged by another writer. Resolved by evidence: the parent verified that both stock writers, `sales.js:294` and `inventory.js:129`, use a full `set` without merge, so the first write replaces the seed shape.
   - `R3-002` (SUGGESTION): the replacement-versus-return race test accepts either order; force both orders deterministically.
 
+- CORR-05 writer (delegated; route trigger: multi-file transactional implementation): `functions/src/sale-exchanges.js` (546 lines) with `submitExchange({ idempotencyKey, saleId, reason, note?, returnLines, newLines, differencePayment? })`, seller-only, in one transaction.
+  - **Returned part:** behaves as a return — it consumes the ledger with cumulative refunds and caps at the remaining quantity (`out-of-range`).
+  - **New items:** must differ from the returned products, including `factory-defect` lines (`invalid-argument`). They are priced at current pricing through `calculateSale` with the original `invoiceRequested`, and need sellable stock. A missing product returns `not-found`, as in sales.
+  - **Settlement:** through `calculateExchangeSettlement`. `differencePayment` is required, with the exact amount and any of cash, card or transfer, when the customer owes; it must be absent otherwise.
+  - **Writes:**
+    - `saleExchanges/{key}`: a v1 receipt with returned lines and amounts, the new-item `productIds` and calculation, the settlement and the `invoiced` flag.
+    - `saleExchangeAudits/{key}`.
+    - Movements `exchange-{key}-in-{i}` (`exchange-return`, which restocks, or `exchange-return-defect`) and `exchange-{key}-out-{j}` (`exchange-out`, carrying `newLineIndex`).
+    - Stock `set`s and the ledger `set`; `lastReturnId` now holds the exchange key.
+    - `saleExchangeSubmissionReceipts/{key}`.
+  - **Replay:** recomputes the new-item calculation and settlement; returned amounts are checked for shape, sums and binding.
+  - **Local pricing validator:** it mirrors the private validator in `sales.js`. There is a drift risk if `sales.js` changes.
+  - **CORR-04 follow-up `R3-002`:** the replacement-versus-return race is now deterministic in both orders. Replacement first: both commit. Return first: the replacement fails with `out-of-range` and writes nothing.
+  - **Evidence (author-reported):** RED (module missing), then GREEN 22/22, with 14 mutation probes all detected. Emulator exchange and replacement tests ran once: 12/12, no leftovers. In the exchange-versus-return race, the return committed and the exchange was rejected.
+  - **Size:** about 1,600 authored lines against a 700–1,000 forecast, because of strict replay, the required cases and the race rewrite.
+- CORR-05 parent spot check: correction suites 93/93; sales and sales calculation 64/64; hashes of all four files match the writer report.
+- Notes for CORR-06: deny-all rules for `saleExchanges`, `saleExchangeAudits` and `saleExchangeSubmissionReceipts`, in addition to the return and replacement collections and `saleReturnLedgers`. Map `invalid-argument`, `out-of-range`, `failed-precondition`, `not-found`, `already-exists`, `permission-denied` and `unauthenticated`.
+
 ## Next step
 
-CORR-05 (exchange for a different product).
+Review and commit CORR-05, then CORR-06 (callables, rules and HTTP transport acceptance).

@@ -105,10 +105,6 @@ const plain = (value) => {
   return value;
 };
 
-// Strict commit order between two Firestore Timestamps.
-const committedBefore = (left, right) => left.seconds < right.seconds
-  || (left.seconds === right.seconds && left.nanoseconds < right.nanoseconds);
-
 test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => {
   const runtime = await openRuntime();
   const run = new OwnedCorrectionRun(runtime.firestore);
@@ -139,7 +135,8 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
   await run.seed(stockPath(p1), { ...piece, quantityScaled: 3 });
   await run.seed(stockPath(p2), { ...piece, quantityScaled: 5 });
   const saleId = await sale('sale', a, p1);
-  const raceSale = await sale('race-sale', a, p2);
+  const replaceFirstSale = await sale('race-replace-first', a, p2);
+  const returnFirstSale = await sale('race-return-first', a, p2);
   const foreign = await sale('foreign', b, p1);
   const expired = await sale('expired', a, p1, NOW - CORRECTION_WINDOW_MS);
 
@@ -161,6 +158,25 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
       runTransaction: (callback, options) => runtime.firestore.runTransaction(
         observer.wrap(callback), options),
     });
+  };
+  // Forces a serialization order: both submissions start together, but the
+  // second one waits inside its transaction, before its first read (so it holds
+  // no lock), until the first one has committed or failed.
+  const inOrder = async (first, second) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const held = services({
+      doc: (path) => runtime.firestore.doc(path),
+      runTransaction: (callback, options) => runtime.firestore.runTransaction(async (tx) => {
+        await gate;
+        return callback(tx);
+      }, options),
+    });
+    const late = Promise.resolve().then(() => second(held));
+    const [early] = await Promise.allSettled([Promise.resolve().then(() => first(services(runtime.firestore)))]);
+    release();
+    const [settled] = await Promise.allSettled([late]);
+    return [early, settled];
   };
   const replacement = (key, quantity, target = saleId) => ({
     auth, data: { idempotencyKey: key, saleId: target, lines: [{ lineIndex: 0, quantity }] },
@@ -209,7 +225,7 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
     });
     return receipt;
   };
-  for (const id of [saleId, raceSale, foreign, expired]) run.plan(`saleReturnLedgers/${id}`);
+  for (const id of [saleId, replaceFirstSale, returnFirstSale, foreign, expired]) run.plan(`saleReturnLedgers/${id}`);
 
   await t.test('a replacement moves sellable stock out at no charge and replays exactly', async () => {
     const key = run.ns.key('swap');
@@ -228,49 +244,64 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
     assert.deepEqual(again.receipt, receipt);
   });
 
-  await t.test('a replacement racing a return never over-commits the returnable quantity', async () => {
-    // Remaining 2 after this return: a replacement of 2 and a return of 1 cannot both
-    // fit unless the replacement serializes first (it consumes nothing, decision 11).
-    const prior = run.ns.key('prior');
+  // Remaining 2 after a prior return: a replacement of 2 and a return of 1 both
+  // fit only when the replacement serializes first (it consumes nothing,
+  // decision 11). Each order is forced, then its outcome asserted exactly.
+  const raceSetup = async (target, label) => {
+    const prior = run.ns.key(`${label}-prior`);
     planReturn(prior);
-    await giveBack(giveBackRequest(prior, '2', raceSale));
-    const replaceKey = run.ns.key('race-swap');
-    const returnKey = run.ns.key('race-return');
+    await giveBack(giveBackRequest(prior, '2', target));
+    const replaceKey = run.ns.key(`${label}-swap`);
+    const returnKey = run.ns.key(`${label}-return`);
     planReplacement(replaceKey);
     planReturn(returnKey);
-    const racers = rendezvous(2);
-    const [swap, back] = await Promise.allSettled([
-      Promise.resolve().then(() => racers.replace(replacement(replaceKey, '2', raceSale))),
-      Promise.resolve().then(() => racers.giveBack(giveBackRequest(returnKey, '1', raceSale))),
-    ]);
-    assert.equal(back.status, 'fulfilled', `the return always fits: ${back.reason}`);
-    const ledgerPath = `saleReturnLedgers/${raceSale}`;
-    const ledger = await runtime.firestore.doc(ledgerPath).get();
-    assert.equal(canonical(ledger.data()),
-      canonical({ returned: { 0: 3 }, lastReturnId: returnKey, updatedAt: AT }));
+    return { prior, replaceKey, returnKey };
+  };
+  const confirmRaceReturns = async (target, prior, returnKey) => {
+    const ledgerPath = `saleReturnLedgers/${target}`;
     await run.confirm(ledgerPath, { returned: { 0: 3 }, lastReturnId: returnKey, updatedAt: AT });
-    for (const [key, quantity] of [[prior, 2], [returnKey, 1]]) {
+    for (const [key, quantity] of [[prior, '2'], [returnKey, '1']]) {
       const returnReceipt = plain((await runtime.firestore.doc(`saleReturns/${key}`).get()).data());
+      assert.equal(returnReceipt.receipt.lines[0].quantity, quantity);
       await run.confirm(`saleReturns/${key}`, returnReceipt);
-      assert.equal(returnReceipt.receipt.lines[0].quantity, String(quantity));
       for (const path of planReturn(key).slice(1)) {
         await run.confirm(path, plain((await runtime.firestore.doc(path).get()).data()));
       }
     }
-    if (swap.status === 'fulfilled') {
-      const created = await runtime.firestore.doc(`saleReplacements/${replaceKey}`).get();
-      assert.ok(committedBefore(created.createTime, ledger.updateTime),
-        'a committed replacement must serialize before the return it would exceed');
-      await confirmReplacement(replaceKey, '2', raceSale, p2);
-      await run.confirm(stockPath(p2), {
-        ...piece, quantityScaled: 3, updatedAt: AT, lastMovementId: `replacement-${replaceKey}-0-out`,
-      });
-    } else {
-      assert.equal(swap.reason?.code, 'out-of-range');
-      for (const path of planReplacement(replaceKey)) await run.absent(path);
-      await run.confirm(stockPath(p2), { ...piece, quantityScaled: 5 });
-    }
-    t.diagnostic(`replacement/return race outcome: replacement ${swap.status}`);
+  };
+
+  await t.test('a replacement serialized before a racing return: both commit', async () => {
+    const { prior, replaceKey, returnKey } = await raceSetup(replaceFirstSale, 'rf');
+    const [swap, back] = await inOrder(
+      ({ replace: first }) => first(replacement(replaceKey, '2', replaceFirstSale)),
+      ({ giveBack: second }) => second(giveBackRequest(returnKey, '1', replaceFirstSale)),
+    );
+    assert.equal(swap.status, 'fulfilled', `the replacement fits first: ${swap.reason}`);
+    assert.equal(back.status, 'fulfilled', `the return still fits: ${back.reason}`);
+    assert.deepEqual(swap.value.receipt, await confirmReplacement(replaceKey, '2', replaceFirstSale, p2));
+    await confirmRaceReturns(replaceFirstSale, prior, returnKey);
+    await run.confirm(stockPath(p2), {
+      ...piece, quantityScaled: 3, updatedAt: AT, lastMovementId: `replacement-${replaceKey}-0-out`,
+    });
+  });
+
+  await t.test('a return serialized before a racing replacement: the replacement is out-of-range', async () => {
+    const { prior, replaceKey, returnKey } = await raceSetup(returnFirstSale, 'tf');
+    const [back, swap] = await inOrder(
+      ({ giveBack: first }) => first(giveBackRequest(returnKey, '1', returnFirstSale)),
+      ({ replace: second }) => second(replacement(replaceKey, '2', returnFirstSale)),
+    );
+    assert.equal(back.status, 'fulfilled', `the return fits first: ${back.reason}`);
+    assert.equal(swap.status, 'rejected');
+    assert.equal(swap.reason?.code, 'out-of-range');
+    assert.equal(swap.reason?.message, 'replacement exceeds the remaining returnable quantity');
+    for (const path of planReplacement(replaceKey)) await run.absent(path);
+    await confirmRaceReturns(returnFirstSale, prior, returnKey);
+    // Unchanged since the replacement that committed in the previous order.
+    const previous = run.ns.key('rf-swap');
+    await run.confirm(stockPath(p2), {
+      ...piece, quantityScaled: 3, updatedAt: AT, lastMovementId: `replacement-${previous}-0-out`,
+    });
   });
 
   await t.test('two replacements racing for the last stock: exactly one commits', async () => {
@@ -308,7 +339,7 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
   });
 
   await t.test('the original sale documents are unchanged', async () => {
-    for (const id of [saleId, raceSale, foreign, expired]) {
+    for (const id of [saleId, replaceFirstSale, returnFirstSale, foreign, expired]) {
       const snapshot = await runtime.firestore.doc(`sales/${id}`).get();
       assert.equal(canonical(snapshot.data()), canonical(run.entries.get(`sales/${id}`).expected));
     }
