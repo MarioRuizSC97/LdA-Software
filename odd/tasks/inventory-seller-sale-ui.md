@@ -52,7 +52,7 @@ Out of scope:
 - [x] SALE-02 — Read-only `quoteSale` callable: seller-only, branch from claims, current pricing, exact `calculateSale` total. Report insufficient stock without writing anything. Route: delegated writer.
 - [x] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
 - [x] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
-- [ ] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
+- [x] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
 - [ ] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
 - [ ] SALE-07 — HTTP transport acceptance for the quote, folio and folio lookup, live with user approval; then reconcile evidence and commits, and report pending checks. Route: delegated writer plus verifier, then the parent.
 
@@ -157,6 +157,12 @@ Out of scope:
   - Full `flutter test`: 418/418.
   - The follow-up symbols (`saleCallableFromInvoker`, `_staleAware`, `createSaleGateway`) are present.
 
+- SALE-05 closure: high-risk four-lens native review `review-ea327713c7f6e843` (risk, resilience, readability, reliability) approved; commit tree exactly the approved candidate `23f4c98b`. Non-blocking follow-ups:
+  - **Payment mismatch is detected from the English server message.** Found as `R4-payment-mismatch-recovery`, `R2-payment-mismatch-string-match` and `R3-payment-mismatch-contract`: the client matches code `invalid-argument` plus an exact English message, which is fragile and unproven against the real server. Fix with a structured signal, for example HttpsError `details` with a reason code, or by re-quoting after any submit rejection.
+  - **`R3-stale-quote-after-rejection`:** after a non-mismatch rejection, such as insufficient stock, the old ready quote keeps "Cobrar" enabled. Re-quote after every rejection.
+  - **`R2-quantity-error-message-coupling`:** Spanish quantity errors are mapped by matching English domain messages. Use typed validation reasons instead.
+  - **`R3-shell-gateway-retry-untested`:** the shell does not test a failed gateway initialization being dropped and retried, or session changes during submit.
+
 ## Next step
 
-Review and commit SALE-05, then SALE-06 (receipt screen, with the server returning `createdAt` proposed).
+SALE-06 (receipt screen; the server returns `createdAt`), folding in the SALE-05 follow-ups.
