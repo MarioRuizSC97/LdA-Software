@@ -472,7 +472,7 @@ function createManifest(context, adapter) {
   const lookup = (label) => {
     const { receipt, createdAt } = sales.get(label);
     const returned = ledgers.get(receipt.saleId) ?? {};
-    return { saleId: receipt.saleId, createdAt,
+    return { saleId: receipt.saleId, folio: receipt.folio ?? null, createdAt,
       receipt: { calculation: receipt.calculation, payment: receipt.payment, productIds: receipt.productIds,
         invoiceRequested: receipt.calculation.invoiceRequested },
       lines: receipt.calculation.lines.map((line, lineIndex) => ({ lineIndex, soldScaled: line.quantity.scaled,

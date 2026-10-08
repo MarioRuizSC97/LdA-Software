@@ -6,6 +6,12 @@ import {
 } from './sales.js';
 
 const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+// The receipt folio as sales.js saleFolio builds it. Input is trimmed and
+// uppercased before this check; raw input is capped so trimming stays bounded.
+const FOLIO_PATTERN = /^[A-Z]{2,4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+const FOLIO_INPUT_MAX_LENGTH = 32;
+// More than one match is already ambiguous; read one extra as evidence only.
+const FOLIO_MATCH_LIMIT = 3;
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const RECEIPT_V1_FIELDS = ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment'];
 const RECEIPT_V2_FIELDS = [...RECEIPT_V1_FIELDS, 'branchCode', 'folio'];
@@ -21,21 +27,26 @@ export const RECENT_SALES_MAX_LIMIT = 100;
  * may look up sales, and only those of the token's branch inside the 15-day
  * correction window. Reads run in one read-only transaction and never write.
  *
- * findSale: request.data is exactly { saleId }. A missing sale and another
- * branch's sale both fail with the same not-found error; an own-branch sale
- * outside the window fails with failed-precondition.
+ * findSale: request.data is exactly { saleId } or exactly { folio }. A missing
+ * sale and another branch's sale both fail with the same not-found error; an
+ * own-branch sale outside the window fails with failed-precondition. A folio
+ * (for example NTE-3F2A-9C1B) is trimmed and uppercased, then matched by one
+ * query on the seller's branch inside the window, newest first: no match is
+ * that same not-found (so a foreign or expired folio reveals nothing), two or
+ * more matches fail with failed-precondition as ambiguous, and the single
+ * match is validated and returned exactly like a saleId lookup.
  * listRecentSales: request.data is {} or { limit } (1..100, default 50); the
  * branch's in-window sales, newest first.
  *
- * Each sale is a detached, deeply frozen { saleId, createdAt (epoch ms),
- * receipt: { calculation, payment, productIds, invoiceRequested }, lines }
+ * Each sale is a detached, deeply frozen { saleId, folio (null for legacy v1
+ * receipts), createdAt (epoch ms), receipt: { calculation, payment, productIds, invoiceRequested }, lines }
  * where lines are calculateRemainingReturnable results against the optional
  * saleReturnLedgers/{saleId} { returned: { [lineIndex]: scaled } } document.
  * The calculation is recomputed from its stored policy and must match exactly,
  * so audits, actors, provenance and acquisition costs can never be exposed.
  * Stored receipts are v1 (legacy, no folio) or v2 (with branchCode and the
  * folio derived from it); both stay readable and each must match its exact
- * shape. The response shape does not expose the folio yet.
+ * shape; only the folio is exposed, never the stored branch code or branch.
  */
 export function createSaleLookupService({
   firestore, now = () => new Date(), environment = process.env,
@@ -49,24 +60,46 @@ export function createSaleLookupService({
   async function findSale(request = {}) {
     assertLocalSalesEmulator(environment);
     const { branchId } = lookupSeller(request?.auth);
-    const saleId = findInput(request?.data);
+    const { saleId, folio } = findInput(request?.data);
     const nowMs = invocationMs(now);
     return firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(firestore.doc(`sales/${saleId}`));
-      const record = snapshot.exists ? snapshot.data() : undefined;
-      // Missing and foreign sales share one answer: existence never leaks.
-      if (!ownBranch(record, branchId)) {
-        throw new SaleError('not-found', 'sale was not found in this branch');
+      if (saleId !== undefined) {
+        const snapshot = await transaction.get(firestore.doc(`sales/${saleId}`));
+        return correctableSale(transaction, saleId, snapshot.exists ? snapshot.data() : undefined);
       }
-      const sale = storedSale(saleId, record);
+      const { docs } = await transaction.get(
+        branchWindowQuery(branchId, nowMs, folio).limit(FOLIO_MATCH_LIMIT));
+      if (docs.length === 0) throw notFound();
+      if (docs.length > 1) {
+        throw new SaleError('failed-precondition',
+          'folio is ambiguous; use the full receipt id or the recent list');
+      }
+      return correctableSale(transaction, docs[0].id, docs[0].data());
+    }, { readOnly: true });
+
+    async function correctableSale(transaction, id, record) {
+      // Missing and foreign sales share one answer: existence never leaks.
+      if (!ownBranch(record, branchId)) throw notFound();
+      const sale = storedSale(id, record);
       try {
         assertCorrectionWindow(sale.createdAt, nowMs);
       } catch {
         throw new SaleError('failed-precondition', 'sale is outside the correction window');
       }
-      const ledger = await transaction.get(firestore.doc(`saleReturnLedgers/${saleId}`));
+      const ledger = await transaction.get(firestore.doc(`saleReturnLedgers/${id}`));
       return Object.freeze({ sale: lookupResult(sale, ledger) });
-    }, { readOnly: true });
+    }
+  }
+
+  // The seller's branch inside the correction window, newest first, optionally
+  // narrowed to one folio. Each filter set matches a declared composite index.
+  function branchWindowQuery(branchId, nowMs, folio) {
+    let query = firestore.collection('sales').where('receipt.branchId', '==', branchId);
+    if (folio !== undefined) query = query.where('receipt.folio', '==', folio);
+    return query
+      .where('createdAt', '>', new Date(nowMs - CORRECTION_WINDOW_MS))
+      .where('createdAt', '<=', new Date(nowMs))
+      .orderBy('createdAt', 'desc');
   }
 
   async function listRecentSales(request = {}) {
@@ -74,12 +107,7 @@ export function createSaleLookupService({
     const { branchId } = lookupSeller(request?.auth);
     const limit = listInput(request?.data);
     const nowMs = invocationMs(now);
-    const query = firestore.collection('sales')
-      .where('receipt.branchId', '==', branchId)
-      .where('createdAt', '>', new Date(nowMs - CORRECTION_WINDOW_MS))
-      .where('createdAt', '<=', new Date(nowMs))
-      .orderBy('createdAt', 'desc')
-      .limit(limit);
+    const query = branchWindowQuery(branchId, nowMs).limit(limit);
     return firestore.runTransaction(async (transaction) => {
       const { docs } = await transaction.get(query);
       const sales = docs.map((doc) => {
@@ -117,11 +145,22 @@ function lookupSeller(auth) {
   return { branchId: auth.token.branchId };
 }
 
+// Exactly one of { saleId } (verbatim) or { folio } (trimmed and uppercased,
+// so a dictated 'nte-3f2a-9c1b' works). Both together are rejected.
 function findInput(data) {
-  if (!plainObject(data) || !sameFields(data, ['saleId']) || !validId(data.saleId)) {
-    throw new SaleError('invalid-argument', 'sale lookup requires exactly a valid saleId');
+  if (plainObject(data)) {
+    if (sameFields(data, ['saleId']) && validId(data.saleId)) return { saleId: data.saleId };
+    if (sameFields(data, ['folio']) && typeof data.folio === 'string'
+      && data.folio.length <= FOLIO_INPUT_MAX_LENGTH) {
+      const folio = data.folio.trim().toUpperCase();
+      if (FOLIO_PATTERN.test(folio)) return { folio };
+    }
   }
-  return data.saleId;
+  throw new SaleError('invalid-argument', 'sale lookup requires exactly one valid saleId or folio');
+}
+
+function notFound() {
+  return new SaleError('not-found', 'sale was not found in this branch');
 }
 
 function listInput(data) {
@@ -214,6 +253,7 @@ function lookupResult(sale, ledger) {
   }
   return Object.freeze({
     saleId: sale.saleId,
+    folio: sale.folio,
     createdAt: sale.createdAt,
     receipt: Object.freeze({
       calculation: sale.calculation,

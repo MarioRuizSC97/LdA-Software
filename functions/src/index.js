@@ -25,6 +25,7 @@ import { createSaleReturnService } from './sale-returns.js';
 import {
   SaleError,
   assertLocalSalesEmulator,
+  createSaleQuoteService,
   createSaleService,
 } from './sales.js';
 
@@ -127,6 +128,13 @@ export const submitSale = onCall(
   },
 );
 
+/** Read-only cart quote: exactly what submitSale would charge right now. */
+export const quoteSale = localSaleCallable(
+  'sales are restricted to the local demo emulator',
+  (firestore) => createSaleQuoteService({ firestore }),
+  'sale quote is temporarily unavailable',
+);
+
 export const stockIntake = onCall(
   { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
   async (request) => {
@@ -158,22 +166,27 @@ export const stockIntake = onCall(
 );
 
 /**
- * Emulator-only sale correction callable. The sales guard runs before Admin SDK
+ * Emulator-only seller callable. The sales guard runs before Admin SDK
  * initialization; the service receives the whole request, so only trusted
  * request.auth assigns the seller and branch. Services translate calculation
  * errors into SaleError, so anything else is an internal fault and is masked.
  */
 function saleCorrectionCallable(createOperation, unavailableMessage) {
+  return localSaleCallable(
+    'sale corrections are restricted to the local demo emulator',
+    createOperation,
+    unavailableMessage,
+  );
+}
+
+function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
   return onCall(
     { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
     async (request) => {
       try {
         assertLocalSalesEmulator();
       } catch {
-        throw new HttpsError(
-          'failed-precondition',
-          'sale corrections are restricted to the local demo emulator',
-        );
+        throw new HttpsError('failed-precondition', guardMessage);
       }
 
       try {

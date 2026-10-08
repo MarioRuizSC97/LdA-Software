@@ -91,6 +91,18 @@ Out of scope:
 - Live demo branch-code migration (user-approved 2026-10-08, parent, emulator REST with an update mask on `code` only and `currentDocument.exists`): `branches/branch-north` got `code: 'NTE'` and `branches/branch-south` got `code: 'SUR'`. `name` and `demoSeedVersion` are unchanged, so both now match the seed shape exactly. This resolves `R3-live-demo-branch-code-gate` for the local emulator.
 - Routing: SALE-02 and SALE-03 go to one delegated writer as one backend work unit (both small, both server-side, related by lookup and quote reuse). Reviewed and committed together.
 
+- SALE-02/03 writer (delegated, one backend work unit):
+  - **`quoteSale`** (new callable): request exactly `{invoiceRequested, lines:[{productId, quantity}]}`, seller-only; response `{calculation, totalCentavos, lines:[{productId, available}]}`. Short stock is reported per line, never thrown. It is read-only and exposes no costs, branch or code.
+  - **Shared quote code:** `createSaleQuoteService` lives in `sales.js`. `submitSale` was refactored onto shared helpers (`saleLinesInput`, `readSaleLines`, `prepareSaleLine`, `authoritativeCalculation`) that the quote reuses, so there is no duplicated pricing validator. `submitSale` error precedence is unchanged and locked by a test. The CORR-05 exchange copy of the validator is untouched; that drift risk still stands.
+  - **`findCorrectableSale` folio lookup:** accepts exactly one of `{saleId}` or `{folio}`. The folio is trimmed and uppercased, then matched against `^[A-Z]{2,4}-[A-Z0-9]{4}-[A-Z0-9]{4}$`. The query filters on the branch, the folio and the window, newest first, `limit(3)`, using the SALE-01 index.
+    - 0 matches → `not-found`, also for foreign or expired folios. Unlike the `saleId` path, an expired own sale by folio is `not-found`.
+    - 2 or more matches → `failed-precondition` "folio is ambiguous".
+  - **Lookup and list responses** now include `folio` (null for v1).
+  - **index.js:** the shared `localSaleCallable` helper serves `quoteSale` and the corrections.
+  - **Evidence (author-reported):** RED then GREEN for quote 9/9, lookup 23/23 and callables 39/39; 15 mutation probes, all killed. The quote and lookup emulator tests ran once: 14/14, owned branches with codes, no residue.
+  - **Size:** about 940 lines against a 500–800 forecast, mostly parity and consistency tests.
+- SALE-02/03 parent spot check: all offline unit tests run from the repository root pass 297/297; transport offline 35 pass, 2 skipped; the source hashes match the writer report.
+
 ## Next step
 
-SALE-02 and SALE-03 (quote callable and folio lookup).
+Review and commit SALE-02/03, then SALE-04 (Flutter sale domain and gateway).

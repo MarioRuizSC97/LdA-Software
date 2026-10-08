@@ -56,6 +56,7 @@ const seams = {
   SaleError: sales.SaleError,
   assertLocalSalesEmulator: () => { events.push('guard'); sales.assertLocalSalesEmulator(environment); },
   createSaleService: () => { throw new Error('sale service must not be used by corrections'); },
+  createSaleQuoteService: () => { throw new Error('quote service must not be used by corrections'); },
   createSaleLookupService: factory('createSaleLookupService', (name) => Object.freeze({
     findSale: operation(name, 'findSale'), listRecentSales: operation(name, 'listRecentSales'),
   })),
@@ -73,7 +74,7 @@ const replacements = new Map([
   ['firebase-admin/app', ['getApps', 'initializeApp']],
   ['firebase-admin/firestore', ['getFirestore']],
   ['firebase-functions/v2/https', ['HttpsError', 'onCall']],
-  ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService']],
+  ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService', 'createSaleQuoteService']],
   ['./sale-lookup.js', ['createSaleLookupService']],
   ['./sale-returns.js', ['createSaleReturnService']],
   ['./sale-replacements.js', ['createSaleReplacementService']],
@@ -182,4 +183,14 @@ test('unknown initialization, Firestore, factory and operation errors are saniti
     failure = { at: 'operation', error: { code: 'permission-denied', message: 'private diagnostic' } };
     await rejects(invoke(name), 'internal', unavailable);
   }
+});
+
+test('findCorrectableSale forwards a folio request unchanged to the lookup service', async () => {
+  reset();
+  const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'branch-north' } },
+    data: { folio: 'nte-3f2a-9c1b' } };
+  assert.equal(await invoke('findCorrectableSale', request), safeResult);
+  assert.equal(forwarded, request);
+  assert.deepEqual(forwarded.data, { folio: 'nte-3f2a-9c1b' });
+  assert.equal(events.at(-1), 'createSaleLookupService.findSale');
 });

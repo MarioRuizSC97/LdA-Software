@@ -29,6 +29,7 @@ class HttpsError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 const safeResult = Object.freeze({ receipt: { saleId: 'key-one' }, replayed: true });
+const safeQuote = Object.freeze({ calculation: {}, totalCentavos: 0, lines: [] });
 const seams = {
   HttpsError,
   onCall: (options, handler) => ({ options, handler }),
@@ -48,6 +49,19 @@ const seams = {
         ? sales.createSaleService({ ...options, environment })(request) : safeResult;
     };
   },
+  createSaleQuoteService: (options) => {
+    events.push('quote-service');
+    assert.equal(options.firestore, firestore);
+    assert.deepEqual(Object.keys(options), ['firestore']);
+    if (failure?.at === 'factory') throw failure.error;
+    return async (request) => {
+      events.push('quote');
+      forwarded = request;
+      if (failure?.at === 'submit') throw failure.error;
+      return useRealService
+        ? sales.createSaleQuoteService({ ...options, environment })(request) : safeQuote;
+    };
+  },
 };
 // Load the real entrypoint with virtual dependency modules. No SDK is imported;
 // the real pure sale module above supplies guard, error and authorization logic.
@@ -57,7 +71,7 @@ const replacements = new Map([
   ['firebase-admin/app', ['getApps', 'initializeApp']],
   ['firebase-admin/firestore', ['getFirestore']],
   ['firebase-functions/v2/https', ['HttpsError', 'onCall']],
-  ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService']],
+  ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService', 'createSaleQuoteService']],
 ]);
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -208,4 +222,72 @@ test('unknown initialization, Firestore, factory and submission errors are sanit
   reset();
   failure = { at: 'submit', error: { code: 'permission-denied', message: 'private diagnostic' } };
   await rejects(invoke(), 'internal', 'sale submission is temporarily unavailable');
+});
+
+function invokeQuote(request = {}) {
+  assert.equal(typeof entry.quoteSale?.handler, 'function', 'quoteSale must be registered');
+  return entry.quoteSale.handler(request);
+}
+
+test('quote registration uses the existing region and local-only origins', () => {
+  assert.equal(entry.quoteSale.options.region, 'us-south1');
+  assert.equal(entry.quoteSale.options.cors, entry.LOCAL_WEB_ORIGINS);
+});
+
+test('every quote guard failure is the fixed sales precondition before SDK or service access', async () => {
+  for (const patch of [
+    { GCLOUD_PROJECT: 'production' }, { FUNCTIONS_EMULATOR: 'false' },
+    { FIRESTORE_EMULATOR_HOST: '' }, { FIRESTORE_EMULATOR_HOST: 'firestore.googleapis.com:443' },
+    { GOOGLE_CLOUD_PROJECT: 'production' }, { FIREBASE_CONFIG: '{"projectId":"production"}' },
+  ]) {
+    for (const existing of [[], [{}]]) {
+      reset(); apps = existing; environment = { ...demo, ...patch };
+      await rejects(invokeQuote(), 'failed-precondition', 'sales are restricted to the local demo emulator');
+      assert.deepEqual(events, ['guard']);
+    }
+  }
+});
+
+test('the quote request reaches only the quote service, with lazy Admin initialization', async () => {
+  for (const existing of [[], [{}]]) {
+    reset(); apps = existing;
+    const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
+      data: { invoiceRequested: true, lines: [{ productId: 'p1', quantity: '1' }] } };
+    assert.equal(await invokeQuote(request), safeQuote);
+    assert.equal(forwarded, request);
+    assert.deepEqual(events, ['guard', 'apps', ...(existing.length ? [] : ['initialize']), 'firestore',
+      'quote-service', 'quote']);
+  }
+});
+
+test('the real quote service answers through the callable without writing', async () => {
+  reset(); useRealService = true;
+  const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
+    data: { invoiceRequested: true, lines: [{ productId: 'p1', quantity: '3' }] } };
+  const quote = await invokeQuote(request);
+  assert.equal(quote.totalCentavos, 300);
+  assert.deepEqual(quote.lines, [{ productId: 'p1', available: true }]);
+  await rejects(invokeQuote({ ...request, data: { ...request.data, payment: { method: 'cash', amountCentavos: 300 } } }),
+    'invalid-argument', 'quote request contains missing, invalid or unsupported fields');
+  await rejects(invokeQuote({ ...request, auth: { uid: 'admin', token: { role: 'admin', branchId: 'north' } } }),
+    'permission-denied', 'an assigned seller is required');
+  await rejects(invokeQuote({ ...request, auth: null }), 'unauthenticated', 'authentication is required');
+});
+
+test('quote SaleErrors keep their public message and unknown faults are sanitized', async () => {
+  for (const code of ['unauthenticated', 'permission-denied', 'invalid-argument',
+    'not-found', 'failed-precondition', 'out-of-range']) {
+    reset();
+    const error = new sales.SaleError(code, 'public quote failure');
+    error.details = 'private provenance';
+    failure = { at: 'submit', error };
+    await rejects(invokeQuote(), code, 'public quote failure');
+  }
+  for (const at of ['initialize', 'firestore', 'factory', 'submit']) {
+    reset(); failure = { at, error: new Error('private infrastructure diagnostic') };
+    await rejects(invokeQuote(), 'internal', 'sale quote is temporarily unavailable');
+  }
+  reset();
+  failure = { at: 'submit', error: { code: 'permission-denied', message: 'private diagnostic' } };
+  await rejects(invokeQuote(), 'internal', 'sale quote is temporarily unavailable');
 });

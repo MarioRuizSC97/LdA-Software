@@ -277,49 +277,15 @@ export function createSaleService({
       } catch {
         throw new SaleError('invalid-argument', 'sale key must contain at least eight alphanumeric characters');
       }
-      const branch = await transaction.get(firestore.doc(`branches/${branchId}`));
-      if (!branch.exists) throw new SaleError('not-found', 'branch does not exist');
-      const branchCode = branch.data()?.code;
-      if (!isValidBranchCode(branchCode)) {
-        throw new SaleError('failed-precondition', 'branch code is missing or invalid');
-      }
-      const inputs = await Promise.all(input.lines.map(async (line) => {
-        const stockReference = firestore.doc(`branches/${branchId}/stock/${line.productId}`);
-        const [product, stock] = await Promise.all([
-          transaction.get(firestore.doc(`products/${line.productId}`)),
-          transaction.get(stockReference),
-        ]);
-        return { line, product, stock, stockReference };
-      }));
+      const { branchCode, inputs } = await readSaleLines(firestore, transaction, branchId, input.lines);
       // All reads, including the replay ownership guard, finish before writes.
-      const prepared = inputs.map(({ line, product, stock, stockReference }) => {
-        if (!product.exists) throw new SaleError('not-found', 'product does not exist');
-        const data = product.data();
-        const quantitySpec = saleStoredSpec(data?.quantitySpec);
-        const scaled = saleQuantity(line.quantity, quantitySpec);
-        const pricing = saleStoredPricing(data?.pricing);
-        const current = saleCurrentStock(stock, quantitySpec);
-        let next;
-        try {
-          next = addStockMovement(current, -scaled, quantitySpec, quantitySpec);
-        } catch {
-          throw new SaleError('failed-precondition', 'insufficient stock');
-        }
-        return { line, quantitySpec, pricing, scaled, next, stockReference };
+      // Line by line, so the first failing line decides the error, as before.
+      const prepared = inputs.map((read) => {
+        const line = prepareSaleLine(read);
+        if (line.next === null) throw new SaleError('failed-precondition', 'insufficient stock');
+        return line;
       });
-      let calculation;
-      try {
-        calculation = calculateSale({
-          invoiceRequested: input.invoiceRequested,
-          lines: prepared.map(({ line, quantitySpec, pricing }) => ({
-            quantity: line.quantity, quantitySpec, pricing,
-          })),
-        });
-      } catch {
-        // Quantity and stored policies were validated separately above; the
-        // remaining calculation failure is an unsafe monetary result.
-        throw new SaleError('out-of-range', 'sale calculation exceeds safe bounds');
-      }
+      const calculation = authoritativeCalculation(input.invoiceRequested, prepared);
       if (input.payment.amountCentavos !== calculation.totalCentavos) {
         throw new SaleError('invalid-argument', 'full payment must equal the authoritative total');
       }
@@ -353,6 +319,106 @@ export function createSaleService({
   };
 }
 
+/**
+ * Injected Admin-Firestore-compatible read service, not a callable registration.
+ * Request.data has exactly { invoiceRequested, lines: [{ productId, quantity }] },
+ * validated with the same line rules as submitSale. Only trusted auth.token
+ * { role: 'seller', branchId } assigns the branch.
+ *
+ * In one read-only transaction it reads the branch (whose code must be valid,
+ * as for a sale), each product and its branch stock through the same helpers
+ * submitSale uses, so `calculation` is exactly what a sale would charge now.
+ * Returns a deeply frozen { calculation, totalCentavos, lines: [{ productId,
+ * available }] }: insufficient or absent stock is reported per line instead of
+ * thrown. It never writes, and never reads or returns costs or the branch.
+ */
+export function createSaleQuoteService({ firestore, environment = process.env } = {}) {
+  if (!firestore || typeof firestore.doc !== 'function' || typeof firestore.runTransaction !== 'function') {
+    throw new TypeError('an Admin Firestore-compatible instance is required');
+  }
+
+  return async function quoteSale(request = {}) {
+    assertLocalSalesEmulator(environment);
+    const { branchId } = saleSeller(request?.auth);
+    const input = quoteInput(request?.data);
+    return firestore.runTransaction(async (transaction) => {
+      const { inputs } = await readSaleLines(firestore, transaction, branchId, input.lines);
+      const prepared = inputs.map(prepareSaleLine);
+      const calculation = authoritativeCalculation(input.invoiceRequested, prepared);
+      return Object.freeze({
+        calculation,
+        totalCentavos: calculation.totalCentavos,
+        lines: Object.freeze(prepared.map(({ line, next }) => Object.freeze({
+          productId: line.productId, available: next !== null,
+        }))),
+      });
+    }, { readOnly: true });
+  };
+}
+
+function quoteInput(data) {
+  try {
+    exactFields(data, ['invoiceRequested', 'lines'], 'request');
+    if (typeof data.invoiceRequested !== 'boolean') throw new TypeError('invoice intent is required');
+    return { invoiceRequested: data.invoiceRequested, lines: saleLinesInput(data.lines) };
+  } catch {
+    throw new SaleError('invalid-argument', 'quote request contains missing, invalid or unsupported fields');
+  }
+}
+
+// Shared sale and quote reads: the branch and its code first, then every
+// product with its branch stock.
+async function readSaleLines(firestore, transaction, branchId, lines) {
+  const branch = await transaction.get(firestore.doc(`branches/${branchId}`));
+  if (!branch.exists) throw new SaleError('not-found', 'branch does not exist');
+  const branchCode = branch.data()?.code;
+  if (!isValidBranchCode(branchCode)) {
+    throw new SaleError('failed-precondition', 'branch code is missing or invalid');
+  }
+  const inputs = await Promise.all(lines.map(async (line) => {
+    const stockReference = firestore.doc(`branches/${branchId}/stock/${line.productId}`);
+    const [product, stock] = await Promise.all([
+      transaction.get(firestore.doc(`products/${line.productId}`)),
+      transaction.get(stockReference),
+    ]);
+    return { line, product, stock, stockReference };
+  }));
+  return { branchCode, inputs };
+}
+
+// Validates one read line with the stored product policies. `next` is the
+// stock after selling the line, or null when the stock cannot cover it.
+function prepareSaleLine({ line, product, stock, stockReference }) {
+  if (!product.exists) throw new SaleError('not-found', 'product does not exist');
+  const data = product.data();
+  const quantitySpec = saleStoredSpec(data?.quantitySpec);
+  const scaled = saleQuantity(line.quantity, quantitySpec);
+  const pricing = saleStoredPricing(data?.pricing);
+  const current = saleCurrentStock(stock, quantitySpec);
+  let next = null;
+  try {
+    next = addStockMovement(current, -scaled, quantitySpec, quantitySpec);
+  } catch {
+    // Reported by the caller: a sale fails, a quote marks the line unavailable.
+  }
+  return { line, quantitySpec, pricing, scaled, next, stockReference };
+}
+
+function authoritativeCalculation(invoiceRequested, prepared) {
+  try {
+    return calculateSale({
+      invoiceRequested,
+      lines: prepared.map(({ line, quantitySpec, pricing }) => ({
+        quantity: line.quantity, quantitySpec, pricing,
+      })),
+    });
+  } catch {
+    // Quantity and stored policies were validated separately above; the
+    // remaining calculation failure is an unsafe monetary result.
+    throw new SaleError('out-of-range', 'sale calculation exceeds safe bounds');
+  }
+}
+
 function saleSeller(auth) {
   if (!auth || typeof auth.uid !== 'string' || auth.uid.length === 0) {
     throw new SaleError('unauthenticated', 'authentication is required');
@@ -367,29 +433,35 @@ function saleValidId(value) {
   return typeof value === 'string' && SALE_ID_PATTERN.test(value);
 }
 
+// Shared by sales and quotes: a dense, nonempty list of unique products with
+// canonical positive decimal quantities. Throws TypeError; callers map it.
+function saleLinesInput(value) {
+  saleDenseArray(value);
+  if (value.length === 0) throw new TypeError('lines are required');
+  const seen = new Set();
+  return value.map((line) => {
+    exactFields(line, ['productId', 'quantity'], 'request line');
+    if (!saleValidId(line.productId) || seen.has(line.productId)) {
+      throw new TypeError('product must be unique and valid');
+    }
+    seen.add(line.productId);
+    // Precision and safe scaled bounds require the authoritative spec later.
+    if (typeof line.quantity !== 'string' || line.quantity.length > 18
+      || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(line.quantity)
+      || !/[1-9]/.test(line.quantity)) {
+      throw new TypeError('quantity must be a canonical positive decimal string');
+    }
+    return { productId: line.productId, quantity: line.quantity };
+  });
+}
+
 function saleInput(data) {
   try {
     exactFields(data, ['idempotencyKey', 'invoiceRequested', 'lines', 'payment'], 'request');
     if (!saleValidId(data.idempotencyKey) || typeof data.invoiceRequested !== 'boolean') {
       throw new TypeError('key and invoice intent are required');
     }
-    saleDenseArray(data.lines);
-    if (data.lines.length === 0) throw new TypeError('lines are required');
-    const seen = new Set();
-    const lines = data.lines.map((line) => {
-      exactFields(line, ['productId', 'quantity'], 'request line');
-      if (!saleValidId(line.productId) || seen.has(line.productId)) {
-        throw new TypeError('product must be unique and valid');
-      }
-      seen.add(line.productId);
-      // Precision and safe scaled bounds require the authoritative spec later.
-      if (typeof line.quantity !== 'string' || line.quantity.length > 18
-        || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(line.quantity)
-        || !/[1-9]/.test(line.quantity)) {
-        throw new TypeError('quantity must be a canonical positive decimal string');
-      }
-      return { productId: line.productId, quantity: line.quantity };
-    });
+    const lines = saleLinesInput(data.lines);
     exactFields(data.payment, ['method', 'amountCentavos'], 'payment');
     if (!['cash', 'card', 'transfer'].includes(data.payment.method)
       || !Number.isSafeInteger(data.payment.amountCentavos) || data.payment.amountCentavos < 0) {

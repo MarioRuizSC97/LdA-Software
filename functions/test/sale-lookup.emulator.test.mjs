@@ -2,7 +2,7 @@
 // Firestore emulator only; never callable/Auth transport or demo fixtures.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateSale } from '../src/sales.js';
+import { calculateSale, saleFolio } from '../src/sales.js';
 import { CORRECTION_WINDOW_MS } from '../src/corrections-calculation.js';
 import { createSaleLookupService } from '../src/sale-lookup.js';
 import { canonical, namespace, openRuntime } from './sales-emulator-support.mjs';
@@ -35,18 +35,21 @@ class OwnedLookupRun {
     await this.firestore.doc(path).create(structuredClone(data));
     this.entries.get(path).state = 'confirmed';
   }
-  async sale(label, branchId, createdAtMs) {
+  // branchCode undefined seeds a legacy v1 receipt; a code seeds a v2 receipt
+  // whose folio derives from it, exactly as submitSale stores it.
+  async sale(label, branchId, createdAtMs, branchCode) {
     const saleId = this.ns.key(label);
     const calculation = calculateSale({ invoiceRequested: true, lines: [
       { quantity: '2', quantitySpec: { unit: 'piece', precision: 0 }, pricing },
     ] });
-    await this.seed(`sales/${saleId}`, {
-      receipt: {
-        version: 1, saleId, branchId, productIds: [`INV05-${this.ns.id.toUpperCase()}-P1`],
-        calculation, payment: { method: 'cash', amountCentavos: calculation.totalCentavos },
-      },
-      createdAt: new Date(createdAtMs),
-    });
+    const receipt = {
+      version: 1, saleId, branchId, productIds: [`INV05-${this.ns.id.toUpperCase()}-P1`],
+      calculation, payment: { method: 'cash', amountCentavos: calculation.totalCentavos },
+    };
+    if (branchCode !== undefined) {
+      Object.assign(receipt, { version: 2, branchCode, folio: saleFolio(branchCode, saleId) });
+    }
+    await this.seed(`sales/${saleId}`, { receipt, createdAt: new Date(createdAtMs) });
     return saleId;
   }
   async cleanup() {
@@ -120,6 +123,63 @@ test('INV05 real Firestore sale lookup for sellers (CORR-02)', async (t) => {
   });
 
   await t.test('lookups never write: seeded documents are unchanged', async () => {
+    for (const [path, entry] of run.entries) {
+      const snapshot = await runtime.firestore.doc(path).get();
+      assert.equal(canonical(snapshot.data()), canonical(entry.expected));
+    }
+  });
+});
+
+test('INV05 real Firestore folio lookup for sellers (SALE-03)', async (t) => {
+  const runtime = await openRuntime();
+  const run = new OwnedLookupRun(runtime.firestore);
+  t.after(async () => {
+    try { await run.cleanup(); }
+    finally { await runtime.dispose(); }
+  });
+  const [a, b] = run.ns.branches;
+  // Every key in one run starts with the same eight alphanumerics, so sales
+  // with the same code share one folio: realistic collisions on demand.
+  const unique = await run.sale('unique', a, NOW - 2 * DAY, 'INVF');
+  await run.sale('expired', a, NOW - CORRECTION_WINDOW_MS, 'INVF');
+  const legacy = await run.sale('legacy', a, NOW - DAY);
+  const twinOne = await run.sale('twin-one', b, NOW - DAY, 'INVF');
+  await run.sale('twin-two', b, NOW - 3 * DAY, 'INVF');
+  const folio = saleFolio('INVF', unique);
+
+  const service = createSaleLookupService({
+    firestore: runtime.firestore, environment: runtime.environment, now: () => new Date(NOW),
+  });
+  const seller = (branchId) => ({ uid: run.ns.actor, token: { role: 'seller', branchId } });
+
+  await t.test('the one in-window own-branch match equals its saleId lookup', async () => {
+    const bySaleId = await service.findSale({ auth: seller(a), data: { saleId: unique } });
+    assert.equal(bySaleId.sale.folio, folio);
+    for (const input of [folio, ` ${folio.toLowerCase()} `]) {
+      const byFolio = await service.findSale({ auth: seller(a), data: { folio: input } });
+      assert.equal(canonical(byFolio), canonical(bySaleId));
+    }
+    const { sales } = await service.listRecentSales({ auth: seller(a), data: {} });
+    assert.deepEqual(sales.map((sale) => [sale.saleId, sale.folio]), [[legacy, null], [unique, folio]]);
+  });
+
+  await t.test('two in-window matches in a branch are ambiguous', async () => {
+    await assert.rejects(service.findSale({ auth: seller(b), data: { folio } }),
+      (error) => error.code === 'failed-precondition'
+        && error.message === 'folio is ambiguous; use the full receipt id or the recent list');
+    const { sale } = await service.findSale({ auth: seller(b), data: { saleId: twinOne } });
+    assert.equal(sale.folio, folio);
+  });
+
+  await t.test('unknown folios and other branches are the same not-found', async () => {
+    const other = { uid: run.ns.actor, token: { role: 'seller', branchId: `${a}-none` } };
+    for (const [auth, input] of [[seller(a), 'INVF-0000-0000'], [seller(a), 'INVX-0000-0000'], [other, folio]]) {
+      await assert.rejects(service.findSale({ auth, data: { folio: input } }),
+        (error) => error.code === 'not-found' && error.message === 'sale was not found in this branch');
+    }
+  });
+
+  await t.test('folio lookups never write: seeded documents are unchanged', async () => {
     for (const [path, entry] of run.entries) {
       const snapshot = await runtime.firestore.doc(path).get();
       assert.equal(canonical(snapshot.data()), canonical(entry.expected));

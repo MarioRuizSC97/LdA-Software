@@ -148,7 +148,11 @@ test('requests accept only their exact fields and bounded values', async () => {
   const { firestore, service } = fixture();
   for (const data of [
     undefined, null, [], {}, { saleId: '' }, { saleId: '../s1' }, { saleId: 7 },
-    { saleId: 's'.repeat(129) }, { saleId: 's1', branchId: 'north' },
+    { saleId: 's'.repeat(129) }, { saleId: 's1', branchId: 'north' }, { saleId: 's1', folio: 'NTE-3F2A-9C1B' },
+    { folio: '' }, { folio: 7 }, { folio: null }, { folio: 'NTE-3F2A' }, { folio: 'N-3F2A-9C1B' },
+    { folio: 'NORTE-3F2A-9C1B' }, { folio: 'NTE_3F2A_9C1B' }, { folio: 'NTE-3F2A-9C1B-0' }, { folio: 'NTE-3F2A-9C1' },
+    { folio: 'NTE-3F2A-9C1B', limit: 1 }, { folio: 'N1E-3F2A-9C1B' }, { folio: 'NTE-3F2A-9C\u00c9B' },
+    { folio: `${' '.repeat(40)}NTE-3F2A-9C1B` },
   ]) await rejectsWith(service.findSale({ auth, data }), 'invalid-argument');
   for (const data of [
     undefined, null, [], { limit: 0 }, { limit: 101 }, { limit: 1.5 }, { limit: '5' },
@@ -167,8 +171,9 @@ test('lookup by receipt number returns only correction-relevant fields with rema
   assert.deepEqual(Object.keys(result), ['sale']);
   const { sale } = result;
   const stored = firestore.records.get('sales/s1').receipt;
-  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'lines', 'receipt', 'saleId']);
+  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'folio', 'lines', 'receipt', 'saleId']);
   assert.equal(sale.saleId, 's1');
+  assert.equal(sale.folio, null, 'legacy sales have no folio');
   assert.equal(sale.createdAt, createdAt);
   assert.deepEqual(Object.keys(sale.receipt).sort(),
     ['calculation', 'invoiceRequested', 'payment', 'productIds']);
@@ -366,17 +371,19 @@ function folioSaleRecord(saleId = FOLIO_KEY, branchId = 'north', createdAtMs = N
   return record;
 }
 
-test('folio sales validate exactly and keep the response shape of legacy sales', async () => {
+test('folio sales validate exactly and expose their folio in the shared response shape', async () => {
   const { service } = fixture([
     [`sales/${FOLIO_KEY}`, folioSaleRecord()], ['sales/s1', saleRecord('s1', 'north', NOW - 2 * DAY)],
   ]);
   const { sale } = await service.findSale({ auth, data: { saleId: FOLIO_KEY } });
   assert.equal(sale.saleId, FOLIO_KEY);
-  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'lines', 'receipt', 'saleId']);
+  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'folio', 'lines', 'receipt', 'saleId']);
   assert.deepEqual(Object.keys(sale.receipt).sort(),
     ['calculation', 'invoiceRequested', 'payment', 'productIds']);
   const { sales } = await service.listRecentSales({ auth, data: {} });
   assert.deepEqual(sales.map((item) => item.saleId), [FOLIO_KEY, 's1']);
+  assert.equal(sale.folio, 'NTE-3F2A-9C1B');
+  assert.deepEqual(sales.map((item) => item.folio), ['NTE-3F2A-9C1B', null]);
   assert.ok(!JSON.stringify(sales).includes('branchCode'));
 });
 
@@ -417,4 +424,107 @@ test('the validated projection carries the folio for legacy-aware correction cal
   const legacy = lookup.validateStoredSale('s1', saleRecord('s1', 'north', NOW - DAY));
   assert.equal(legacy.folio, null);
   assert.equal(legacy.branchCode, null);
+});
+
+const TWIN_KEY = '3f2a9c1b-0000-4000-8000-00000000000b';
+const folioFilters = (query) => query.filters.map(([field, op, value]) => [field, op,
+  value instanceof Date ? value.getTime() : value]);
+
+test('a folio resolves the one matching sale of the seller branch exactly like its saleId', async () => {
+  const records = [
+    [`sales/${FOLIO_KEY}`, folioSaleRecord(FOLIO_KEY, 'north', NOW - 2 * DAY)],
+    [`saleReturnLedgers/${FOLIO_KEY}`, { returned: { 0: 1 } }],
+    ['sales/s1', saleRecord('s1', 'north', NOW - DAY)],
+    // The same folio in another branch, or outside the window, never matches.
+    [`sales/${TWIN_KEY}`, folioSaleRecord(TWIN_KEY, 'south', NOW - DAY)],
+    ['sales/3f2a9c1b-old', folioSaleRecord('3f2a9c1b-old', 'north', NOW - CORRECTION_WINDOW_MS)],
+  ];
+  const { firestore, service } = fixture(records);
+  const bySaleId = await service.findSale({ auth, data: { saleId: FOLIO_KEY } });
+  firestore.events.length = 0;
+  // Normalized before validation: surrounding spaces and lowercase are accepted.
+  for (const folio of ['NTE-3F2A-9C1B', ' nte-3f2a-9c1b\n', 'Nte-3F2a-9c1B']) {
+    const byFolio = await service.findSale({ auth, data: { folio } });
+    assert.deepEqual(byFolio, bySaleId);
+    assert.equal(byFolio.sale.folio, 'NTE-3F2A-9C1B');
+    assert.equal(byFolio.sale.lines[0].remainingScaled, 2);
+    assert.ok(Object.isFrozen(byFolio) && Object.isFrozen(byFolio.sale));
+  }
+  assert.equal(firestore.queries.length, 3);
+  for (const query of firestore.queries) {
+    assert.deepEqual(folioFilters(query), [
+      ['receipt.branchId', '==', 'north'],
+      ['receipt.folio', '==', 'NTE-3F2A-9C1B'],
+      ['createdAt', '>', NOW - CORRECTION_WINDOW_MS],
+      ['createdAt', '<=', NOW],
+    ]);
+    assert.deepEqual(query.order, ['createdAt', 'desc']);
+    assert.equal(query.limitValue, 3);
+  }
+  assert.deepEqual(firestore.events.slice(0, 2), [
+    ['transaction', { readOnly: true }], ['get', `saleReturnLedgers/${FOLIO_KEY}`],
+  ]);
+  assert.deepEqual(firestore.writes, []);
+  const south = { uid: 'seller-two', token: { role: 'seller', branchId: 'south' } };
+  const foreign = await service.findSale({ auth: south, data: { folio: 'NTE-3F2A-9C1B' } });
+  assert.equal(foreign.sale.saleId, TWIN_KEY);
+});
+
+test('an unknown, foreign or expired folio is the same not-found as a missing saleId', async () => {
+  const notFound = 'sale was not found in this branch';
+  const { firestore, service } = fixture([
+    [`sales/${TWIN_KEY}`, folioSaleRecord(TWIN_KEY, 'south', NOW - DAY)],
+    [`sales/${FOLIO_KEY}`, folioSaleRecord(FOLIO_KEY, 'north', NOW - CORRECTION_WINDOW_MS)],
+    ['sales/3f2a9c1b-future', folioSaleRecord('3f2a9c1b-future', 'north', NOW + 1)],
+  ]);
+  for (const folio of ['NTE-3F2A-9C1B', 'NTE-0000-0000', 'SUR-3F2A-9C1B']) {
+    await rejectsWith(service.findSale({ auth, data: { folio } }), 'not-found', notFound);
+  }
+  assert.deepEqual(firestore.writes, []);
+});
+
+test('two or more in-window folio matches are ambiguous and reveal no sale', async () => {
+  for (const count of [2, 3, 4]) {
+    const keys = [FOLIO_KEY, TWIN_KEY, '3f2a9c1b-third', '3f2a9c1b-fourth'].slice(0, count);
+    const { firestore, service } = fixture(keys.map((key, index) => [
+      `sales/${key}`, folioSaleRecord(key, 'north', NOW - (index + 1) * DAY),
+    ]));
+    await rejectsWith(service.findSale({ auth, data: { folio: 'nte-3f2a-9c1b' } }), 'failed-precondition',
+      'folio is ambiguous; use the full receipt id or the recent list');
+    assert.ok(!firestore.events.some(([kind, path]) => kind === 'get' && path.startsWith('saleReturnLedgers/')));
+    assert.deepEqual(firestore.writes, []);
+  }
+});
+
+test('the single folio match is validated as strictly as a saleId lookup', async () => {
+  const mutations = [
+    (r) => { r.receipt.calculation.lines[0].pricing.unitCostCentavos = 1; },
+    (r) => { r.receipt.payment.amountCentavos += 1; },
+    (r) => { r.actorId = 'seller-one'; },
+    (r) => { r.receipt.saleId = TWIN_KEY; },
+  ];
+  for (const mutate of mutations) {
+    const record = folioSaleRecord();
+    mutate(record);
+    const { service } = fixture([[`sales/${FOLIO_KEY}`, record]]);
+    await rejectsWith(service.findSale({ auth, data: { folio: 'NTE-3F2A-9C1B' } }), 'failed-precondition',
+      'persisted sale is invalid');
+  }
+  const { service } = fixture([
+    [`sales/${FOLIO_KEY}`, folioSaleRecord()], [`saleReturnLedgers/${FOLIO_KEY}`, { returned: { 0: 9 } }],
+  ]);
+  await rejectsWith(service.findSale({ auth, data: { folio: 'NTE-3F2A-9C1B' } }), 'failed-precondition',
+    'persisted sale return ledger is invalid');
+});
+
+test('a folio lookup runs the guard, seller check and clock check before any read', async () => {
+  const { firestore, service } = fixture([[`sales/${FOLIO_KEY}`, folioSaleRecord()]], { environment: {} });
+  await rejectsWith(service.findSale({ auth, data: { folio: 'NTE-3F2A-9C1B' } }), 'failed-precondition');
+  const denied = fixture([[`sales/${FOLIO_KEY}`, folioSaleRecord()]]);
+  await rejectsWith(denied.service.findSale({ auth: { uid: 'x', token: { role: 'administrator', branchId: 'north' } },
+    data: { folio: 'NTE-3F2A-9C1B' } }), 'permission-denied');
+  const clock = fixture([[`sales/${FOLIO_KEY}`, folioSaleRecord()]], { now: () => new Date(NaN) });
+  await rejectsWith(clock.service.findSale({ auth, data: { folio: 'NTE-3F2A-9C1B' } }), 'failed-precondition',
+    'lookup clock is invalid');
+  for (const db of [firestore, denied.firestore, clock.firestore]) assert.deepEqual(db.events, []);
 });
