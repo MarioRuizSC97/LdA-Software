@@ -48,7 +48,7 @@ Out of scope:
 
 ## Tasks
 
-- [ ] SALE-01 — Backend folio and branch code. Sales read the branch `code` (reject a missing or invalid code), derive the folio and store it on the sale. Keep replay exact. Update the strict stored-sale validation in sale lookup and corrections, the demo seed (`NTE`, `SUR`), and every test that seeds branches. Route: delegated writer.
+- [x] SALE-01 — Backend folio and branch code. Sales read the branch `code` (reject a missing or invalid code), derive the folio and store it on the sale. Keep replay exact. Update the strict stored-sale validation in sale lookup and corrections, the demo seed (`NTE`, `SUR`), and every test that seeds branches. Route: delegated writer.
 - [ ] SALE-02 — Read-only `quoteSale` callable: seller-only, branch from claims, current pricing, exact `calculateSale` total. Report insufficient stock without writing anything. Route: delegated writer.
 - [ ] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
 - [ ] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
@@ -84,6 +84,10 @@ Out of scope:
   - **Evidence (author-reported):** RED, then GREEN across `sales`, `sale-lookup`, `correction-support`/`returns`, `provision`, `sales-callable` and the corrections transport rehearsal. The emulator suites (sales, lookup, returns, replacements, exchanges) ran once: 32/32 with owned cleanup. The provision emulator test was not run, because it writes demo data.
 - SALE-01 parent spot check: offline unit suite from `functions/`: 277 tests, 275 pass. The 2 failures are the known owned-Auth deadline child tests, which resolve paths from the repository root; from the root they pass 20/20. Transport offline: 35 pass, 2 skipped.
 
+- SALE-01 closure: native review `review-5b58bdfec9ef5de2` approved; commit tree exactly the approved candidate `89bad557`. Findings:
+  - `R3-fake-sale-folio-shape` (WARNING): the folio in the sales transport fixture is hand-written. The parent verified it is correct (key `http-12345678…` gives `HTS-HTTP-1234`), but it is brittle; compute it with `saleFolio`-equivalent normalization later.
+  - `R3-live-demo-branch-code-gate` (WARNING): the live demo branches lack `code`, so live demo sales are refused until they are migrated. This is a known user decision, still pending.
+
 ## Next step
 
-Review and commit SALE-01. The user decides whether to add `code` to the live demo branches (`NTE`, `SUR`) before any live sale.
+SALE-02 (read-only `quoteSale` callable). The live demo branch `code` migration is pending the user's decision.
