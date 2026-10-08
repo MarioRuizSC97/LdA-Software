@@ -236,6 +236,28 @@ test('seed manifest is deterministic, seller-safe, and includes assigned-branch 
   assert.ok(first.some(({ path }) => path === 'branches/branch-south'));
 });
 
+test('demo branches carry their unique sale folio codes', () => {
+  const branches = Object.fromEntries(buildDemoSeed()
+    .filter(({ path }) => /^branches\/[^/]+$/.test(path)).map(({ path, data }) => [path, data]));
+  assert.deepEqual(branches, {
+    'branches/branch-north': { name: 'North Demo Branch', code: 'NTE', demoSeedVersion: 1 },
+    'branches/branch-south': { name: 'South Demo Branch', code: 'SUR', demoSeedVersion: 1 },
+  });
+});
+
+test('seed branches with duplicate or invalid codes are rejected before any write', () => {
+  for (const branches of [
+    [['branch-a', 'A', 'NTE'], ['branch-b', 'B', 'NTE']],
+    [['branch-a', 'A', 'NTE'], ['branch-b', 'B', 'SUR'], ['branch-c', 'C', 'SUR']],
+  ]) {
+    assert.throws(() => buildDemoSeed({ branches }), /duplicate branch code/);
+  }
+  for (const code of [undefined, '', 'N', 'NORTE', 'nte', 'N1E', ' NTE']) {
+    assert.throws(() => buildDemoSeed({ branches: [['branch-a', 'A', code]] }), /invalid branch code/);
+  }
+  assert.equal(buildDemoSeed({ branches: [['branch-a', 'A', 'AB']] })[0].data.code, 'AB');
+});
+
 test('provisioning creates deterministic local identities and records once without touching unrelated state', async () => {
   const auth = new MemoryAuth();
   const firestore = new MemoryFirestore({

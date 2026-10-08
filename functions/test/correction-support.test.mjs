@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { SaleError } from '../src/sales.js';
+import { calculateSale, SaleError } from '../src/sales.js';
 import {
-  assertCreateTargetsAbsent, optionalNote, sameDecimal, stockProjection,
+  assertCreateTargetsAbsent, correctableSale, optionalNote, sameDecimal, stockProjection,
 } from '../src/correction-support.js';
 
 const piece = { unit: 'piece', precision: 0 };
@@ -59,4 +59,34 @@ test('any existing create target is an orphan collision', async () => {
   await assertCreateTargetsAbsent(transaction([]), references);
   await assert.rejects(assertCreateTargetsAbsent(transaction(['b/1']), references),
     (error) => error instanceof SaleError && error.code === 'already-exists');
+});
+
+test('correctable sales accept exact legacy and folio receipts and refuse forged folios', async () => {
+  const NOW = new Date('2026-06-16T12:00:00Z').getTime();
+  const key = '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab';
+  const pricing = { currency: 'MXN', listedPriceCentavos: 1000, priceMode: 'iva-included',
+    ivaTreatment: 'taxable', ivaRateBasisPoints: 1600 };
+  const calculation = structuredClone(calculateSale({ invoiceRequested: false,
+    lines: [{ quantity: '2', quantitySpec: piece, pricing }] }));
+  const record = (receipt) => ({ receipt: { saleId: key, branchId: 'north', productIds: ['p1'], calculation,
+    payment: { method: 'cash', amountCentavos: 2000 }, ...receipt }, createdAt: new Date(NOW - 1000) });
+  const load = (value) => correctableSale({ get: async () => snapshot(value) },
+    { doc: (path) => ({ path }) }, key, 'north', NOW);
+  const legacy = await load(record({ version: 1 }));
+  assert.equal(legacy.folio, null);
+  const folio = await load(record({ version: 2, branchCode: 'NTE', folio: 'NTE-3F2A-9C1B' }));
+  assert.equal(folio.folio, 'NTE-3F2A-9C1B');
+  assert.deepEqual(folio.calculation, legacy.calculation);
+  for (const receipt of [
+    { version: 2, branchCode: 'NTE', folio: 'NTE-0000-0000' },
+    { version: 2, branchCode: 'NTE' },
+    { version: 2, branchCode: 'Nte', folio: 'Nte-3F2A-9C1B' },
+    { version: 1, branchCode: 'NTE', folio: 'NTE-3F2A-9C1B' },
+    { version: 2, branchCode: 'NTE', folio: 'NTE-3F2A-9C1B', unitCostCentavos: 1 },
+  ]) {
+    await assert.rejects(load(record(receipt)), (error) => error instanceof SaleError
+      && error.code === 'failed-precondition' && error.message === 'persisted sale is invalid');
+  }
+  await assert.rejects(load(record({ version: 2, branchCode: 'SUR', folio: 'SUR-3F2A-9C1B', branchId: 'south' })),
+    (error) => error.code === 'not-found');
 });

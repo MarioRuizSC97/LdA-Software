@@ -40,7 +40,13 @@ async function assertArtifacts(run, request, result, timestamp) {
   assert.equal(audit.branchId, request.auth.token.branchId);
   assert.equal(replay.completedAt.toDate().getTime(), timestamp.getTime());
   assert.deepEqual(Object.keys(result.receipt).sort(),
-    ['branchId', 'calculation', 'payment', 'productIds', 'saleId', 'version']);
+    ['branchCode', 'branchId', 'calculation', 'folio', 'payment', 'productIds', 'saleId', 'version']);
+  // Independent folio projection: the owned code and the key's first eight alphanumerics.
+  const code = run.entries.get(`branches/${request.auth.token.branchId}`).expected.code;
+  const head = key.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+  assert.equal(result.receipt.version, 2);
+  assert.equal(result.receipt.branchCode, code);
+  assert.equal(result.receipt.folio, `${code}-${head.slice(0, 4)}-${head.slice(4)}`);
   const publicText = JSON.stringify(result.receipt);
   for (const privateField of ['actorId', 'fingerprint', 'cost', 'provenance', 'createdAt']) {
     assert.ok(!publicText.includes(privateField), `private field leaked: ${privateField}`);
@@ -58,7 +64,7 @@ test('INV05 real isolated atomic Firestore sales (REAL-06 invocation only)', asy
   const [a, b] = run.ns.branches;
   const [p1, p2] = run.ns.products;
   for (const branchId of [a, b]) {
-    await run.seed(`branches/${branchId}`, { name: branchId, createdAt: seedTime });
+    await run.seed(`branches/${branchId}`, { name: branchId, code: branchId === a ? 'INVA' : 'INVB', createdAt: seedTime });
   }
   for (const [productId, quantitySpec, pricing] of [[p1, spec1, pricing1], [p2, spec2, pricing2]]) {
     await run.seed(`products/${productId}`, {

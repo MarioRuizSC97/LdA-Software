@@ -578,3 +578,26 @@ test('an orphaned return, audit or movement document without a receipt is a stab
       'idempotency key collides with existing correction records');
   }
 });
+
+test('a folio sale is corrected exactly like a legacy sale and a forged folio refuses the return', async () => {
+  const key = '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab';
+  const folioSale = (folio) => {
+    const record = saleRecord(key, 'north', NOW - DAY);
+    record.receipt = { ...record.receipt, version: 2, branchCode: 'NTE', folio };
+    return record;
+  };
+  const input = (saleId) => ({ auth: clone(auth), data: { idempotencyKey: `ret-${saleId.slice(0, 8)}`,
+    saleId, reason: 'change-of-mind', lines: [{ lineIndex: 0, quantity: '1', condition: 'good' }] } });
+  const legacy = new FakeFirestore();
+  const folio = new FakeFirestore([...baseRecords(), [`sales/${key}`, folioSale('NTE-3F2A-9C1B')]]);
+  const now = () => new Date(NOW);
+  const legacyResult = await returns.createSaleReturnService({ firestore: legacy, environment, now })(input('s1'));
+  const folioResult = await returns.createSaleReturnService({ firestore: folio, environment, now })(input(key));
+  assert.deepEqual(folioResult.receipt.refund, legacyResult.receipt.refund);
+  assert.equal(folio.records.get('saleReturnLedgers/' + key).returned[0], 1);
+  const forged = new FakeFirestore([...baseRecords(), [`sales/${key}`, folioSale('NTE-FFFF-FFFF')]]);
+  const before = clone([...forged.records]);
+  await assert.rejects(returns.createSaleReturnService({ firestore: forged, environment, now })(input(key)),
+    (error) => error instanceof SaleError && error.code === 'failed-precondition');
+  assert.deepEqual([...forged.records], before);
+});

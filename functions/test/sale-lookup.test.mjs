@@ -357,3 +357,64 @@ test('one malformed ledger in the branch list fails the whole list closed', asyn
     assert.deepEqual(firestore.writes, []);
   }
 });
+
+const FOLIO_KEY = '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab';
+function folioSaleRecord(saleId = FOLIO_KEY, branchId = 'north', createdAtMs = NOW - DAY) {
+  const record = saleRecord(saleId, branchId, createdAtMs);
+  // Field order mirrors nothing in particular: Firestore maps are unordered.
+  record.receipt = { ...record.receipt, version: 2, branchCode: 'NTE', folio: 'NTE-3F2A-9C1B' };
+  return record;
+}
+
+test('folio sales validate exactly and keep the response shape of legacy sales', async () => {
+  const { service } = fixture([
+    [`sales/${FOLIO_KEY}`, folioSaleRecord()], ['sales/s1', saleRecord('s1', 'north', NOW - 2 * DAY)],
+  ]);
+  const { sale } = await service.findSale({ auth, data: { saleId: FOLIO_KEY } });
+  assert.equal(sale.saleId, FOLIO_KEY);
+  assert.deepEqual(Object.keys(sale).sort(), ['createdAt', 'lines', 'receipt', 'saleId']);
+  assert.deepEqual(Object.keys(sale.receipt).sort(),
+    ['calculation', 'invoiceRequested', 'payment', 'productIds']);
+  const { sales } = await service.listRecentSales({ auth, data: {} });
+  assert.deepEqual(sales.map((item) => item.saleId), [FOLIO_KEY, 's1']);
+  assert.ok(!JSON.stringify(sales).includes('branchCode'));
+});
+
+test('forged, inconsistent or cost-carrying folio sales fail closed', async () => {
+  const mutations = [
+    (r) => { r.receipt.folio = 'NTE-3F2A-9C1C'; },
+    (r) => { r.receipt.folio = 'nte-3f2a-9c1b'; },
+    (r) => { delete r.receipt.folio; },
+    (r) => { delete r.receipt.branchCode; },
+    (r) => { r.receipt.branchCode = 'SUR'; },
+    (r) => { r.receipt.branchCode = 'nte'; r.receipt.folio = 'nte-3F2A-9C1B'; },
+    (r) => { r.receipt.branchCode = 'NORTE'; r.receipt.folio = 'NORTE-3F2A-9C1B'; },
+    (r) => { r.receipt.version = 1; },
+    (r) => { r.receipt.version = 3; },
+    (r) => { r.receipt.unitCostCentavos = 1; },
+    (r) => { r.receipt.calculation.lines[0].pricing.unitCostCentavos = 1; },
+    (r) => { r.folio = r.receipt.folio; },
+  ];
+  for (const mutate of mutations) {
+    const record = folioSaleRecord();
+    mutate(record);
+    const { service } = fixture([[`sales/${FOLIO_KEY}`, record]]);
+    await rejectsWith(service.findSale({ auth, data: { saleId: FOLIO_KEY } }), 'failed-precondition',
+      'persisted sale is invalid');
+    await rejectsWith(service.listRecentSales({ auth, data: {} }), 'failed-precondition');
+  }
+  // A legacy receipt never gains folio fields piecemeal.
+  const legacy = saleRecord('s1', 'north', NOW - DAY);
+  legacy.receipt.folio = 'NTE-S1S1-S1S1';
+  const { service } = fixture([['sales/s1', legacy]]);
+  await rejectsWith(service.findSale({ auth, data: { saleId: 's1' } }), 'failed-precondition');
+});
+
+test('the validated projection carries the folio for legacy-aware correction callers', () => {
+  const folio = lookup.validateStoredSale(FOLIO_KEY, folioSaleRecord());
+  assert.equal(folio.folio, 'NTE-3F2A-9C1B');
+  assert.equal(folio.branchCode, 'NTE');
+  const legacy = lookup.validateStoredSale('s1', saleRecord('s1', 'north', NOW - DAY));
+  assert.equal(legacy.folio, null);
+  assert.equal(legacy.branchCode, null);
+});

@@ -148,6 +148,37 @@ function safeNumber(value, label) {
 }
 
 const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+// Branch codes are 2-4 uppercase ASCII letters. Their uniqueness across
+// branches is a seeding invariant (provision-demo-identities rejects
+// duplicates); sales cannot cheaply prove it, so folio lookups must always be
+// scoped by branchId and must treat several matches as ambiguous.
+const BRANCH_CODE_PATTERN = /^[A-Z]{2,4}$/;
+const RECEIPT_V1_FIELDS = ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment'];
+const RECEIPT_V2_FIELDS = [...RECEIPT_V1_FIELDS, 'branchCode', 'folio'];
+
+export function isValidBranchCode(value) {
+  return typeof value === 'string' && BRANCH_CODE_PATTERN.test(value);
+}
+
+/**
+ * Short receipt number: <branch code>-<XXXX>-<XXXX> from the first eight
+ * alphanumeric characters of the sale key, uppercased. For the UUID keys the
+ * app sends this is exactly the first eight hex digits (NTE-3F2A-9C1B). It is
+ * a human-friendly label, not an identity: collisions are possible and the
+ * saleId stays the only unique key. Throws TypeError for an invalid code or a
+ * key with fewer than eight alphanumeric characters.
+ */
+export function saleFolio(branchCode, saleId) {
+  if (!isValidBranchCode(branchCode)) throw new TypeError('branch code is invalid');
+  const head = folioHead(saleId);
+  return `${branchCode}-${head.slice(0, 4)}-${head.slice(4)}`;
+}
+
+function folioHead(saleId) {
+  const characters = typeof saleId === 'string' ? saleId.replace(/[^a-zA-Z0-9]/g, '') : '';
+  if (characters.length < 8) throw new TypeError('sale key has fewer than eight alphanumeric characters');
+  return characters.slice(0, 8).toUpperCase();
+}
 
 export class SaleError extends Error {
   constructor(code, message) {
@@ -190,9 +221,16 @@ export function assertLocalSalesEmulator(environment = process.env) {
  * Only trusted auth.token { role: 'seller', branchId } assigns the branch.
  * Duplicate products are rejected: merging could change per-line rounding.
  *
- * Returns { receipt, replayed }; receipt is a detached deeply frozen v1
- * { saleId, branchId, productIds, calculation, payment, version } snapshot.
- * sales stores that internal receipt; saleAudits and saleSubmissionReceipts
+ * Returns { receipt, replayed }; receipt is a detached deeply frozen v2
+ * { version: 2, saleId, branchId, branchCode, folio, productIds, calculation,
+ * payment } snapshot. branchCode is read from branches/{branchId}.code at
+ * sale time (a missing or invalid code fails closed) and folio is
+ * saleFolio(branchCode, saleId); new sale keys therefore need at least eight
+ * alphanumeric characters. Replays return the stored snapshot exactly,
+ * including legacy v1 receipts written before folios existed, and never
+ * depend on the current branch code.
+ * sales stores { receipt, createdAt } (query receipt.branchId + receipt.folio
+ * for folio lookups); saleAudits and saleSubmissionReceipts
  * hold private provenance. None of these collections grants client access.
  * Identifiers derive from the validated key/index, never callback randomness.
  */
@@ -233,8 +271,18 @@ export function createSaleService({
         };
       }
 
+      // A legacy key may replay above, but a new sale must yield a folio.
+      try {
+        folioHead(input.idempotencyKey);
+      } catch {
+        throw new SaleError('invalid-argument', 'sale key must contain at least eight alphanumeric characters');
+      }
       const branch = await transaction.get(firestore.doc(`branches/${branchId}`));
       if (!branch.exists) throw new SaleError('not-found', 'branch does not exist');
+      const branchCode = branch.data()?.code;
+      if (!isValidBranchCode(branchCode)) {
+        throw new SaleError('failed-precondition', 'branch code is missing or invalid');
+      }
       const inputs = await Promise.all(input.lines.map(async (line) => {
         const stockReference = firestore.doc(`branches/${branchId}/stock/${line.productId}`);
         const [product, stock] = await Promise.all([
@@ -277,7 +325,7 @@ export function createSaleService({
       }
       if (Object.hasOwn(invocationTime, 'error')) throw invocationTime.error;
       const { timestamp } = invocationTime;
-      const receipt = saleReceipt(input, branchId, calculation);
+      const receipt = saleReceipt(input, branchId, branchCode, calculation);
       transaction.create(firestore.doc(`sales/${input.idempotencyKey}`), {
         receipt, createdAt: timestamp,
       });
@@ -409,11 +457,17 @@ function saleTimestamp(value) {
   throw new SaleError('failed-precondition', 'sale timestamp is invalid');
 }
 
-function saleReceipt(input, branchId, calculation) {
-  return Object.freeze({
-    version: 1, saleId: input.idempotencyKey, branchId,
+// branchCode === null builds the legacy v1 shape, used only to validate and
+// return replays persisted before folios existed.
+function saleReceipt(input, branchId, branchCode, calculation) {
+  const common = {
+    saleId: input.idempotencyKey, branchId,
     productIds: Object.freeze(input.lines.map((line) => line.productId)),
     calculation, payment: Object.freeze({ ...input.payment }),
+  };
+  if (branchCode === null) return Object.freeze({ version: 1, ...common });
+  return Object.freeze({
+    version: 2, ...common, branchCode, folio: saleFolio(branchCode, input.idempotencyKey),
   });
 }
 
@@ -427,7 +481,11 @@ function validatedSaleReplay(record, input, actorId, branchId, fingerprint) {
     exactFields(record, ['actorId', 'branchId', 'fingerprint', 'result', 'completedAt'], 'replay');
     saleTimestamp(record.completedAt);
     const receipt = record.result;
-    exactFields(receipt, ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment'], 'receipt');
+    // Version selects the exact shape; the stored code (not today's branch
+    // code) rebuilds the folio, so a valid replay never depends on the branch.
+    const legacy = receipt?.version === 1;
+    exactFields(receipt, legacy ? RECEIPT_V1_FIELDS : RECEIPT_V2_FIELDS, 'receipt');
+    if (!legacy && !isValidBranchCode(receipt.branchCode)) throw new TypeError('branch code');
     saleDenseArray(receipt.calculation.lines);
     if (receipt.calculation.lines.length !== input.lines.length) throw new TypeError('line count');
     // Recompute only from immutable stored policy, never a repriced catalog.
@@ -445,7 +503,7 @@ function validatedSaleReplay(record, input, actorId, branchId, fingerprint) {
         };
       }),
     });
-    const expected = saleReceipt(input, branchId, calculation);
+    const expected = saleReceipt(input, branchId, legacy ? null : receipt.branchCode, calculation);
     if (calculation.totalCentavos !== input.payment.amountCentavos
       || saleCanonical(receipt) !== saleCanonical(expected)) {
       throw new TypeError('receipt snapshot differs');

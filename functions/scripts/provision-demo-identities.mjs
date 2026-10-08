@@ -26,10 +26,15 @@ export const DEMO_ACCOUNTS = Object.freeze([
   }),
 ]);
 
+// [branchId, name, code]. The code prefixes sale folios (NTE-3F2A-9C1B) and
+// must match functions/src/sales.js: 2-4 uppercase ASCII letters. Codes must
+// be unique across branches; sales cannot verify that per sale, so this seed
+// enforces it and folio lookups stay scoped to one branch.
 const BRANCHES = [
-  ['branch-north', 'North Demo Branch'],
-  ['branch-south', 'South Demo Branch'],
+  ['branch-north', 'North Demo Branch', 'NTE'],
+  ['branch-south', 'South Demo Branch', 'SUR'],
 ];
+const BRANCH_CODE = /^[A-Z]{2,4}$/;
 
 const PRODUCTS = [
   {
@@ -83,15 +88,16 @@ export function validateEmulatorEnvironment(env = process.env) {
   return { projectId: PROJECT_ID, firestoreHost, authHost };
 }
 
-export function buildDemoSeed() {
-  const records = BRANCHES.map(([branchId, name]) => ({
+export function buildDemoSeed({ branches = BRANCHES } = {}) {
+  validateBranchCodes(branches);
+  const records = branches.map(([branchId, name, code]) => ({
     path: `branches/${branchId}`,
-    data: { name, demoSeedVersion: SEED_VERSION },
+    data: { name, code, demoSeedVersion: SEED_VERSION },
   }));
 
   for (const product of PRODUCTS) {
     records.push({ path: `products/${product.id}`, data: structuredClone(product.data) });
-    for (const [branchId] of BRANCHES) {
+    for (const [branchId] of branches) {
       records.push({
         path: `branches/${branchId}/stock/${product.id}`,
         data: {
@@ -104,6 +110,17 @@ export function buildDemoSeed() {
   }
 
   return records;
+}
+
+function validateBranchCodes(branches) {
+  const seen = new Set();
+  for (const [branchId, , code] of branches) {
+    if (typeof code !== 'string' || !BRANCH_CODE.test(code)) {
+      throw new Error(`Demo seed has an invalid branch code for ${branchId}`);
+    }
+    if (seen.has(code)) throw new Error(`Demo seed has a duplicate branch code: ${code}`);
+    seen.add(code);
+  }
 }
 
 export async function provisionDemo({

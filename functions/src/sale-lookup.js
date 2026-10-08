@@ -1,10 +1,14 @@
 import {
   CORRECTION_WINDOW_MS, assertCorrectionWindow, calculateRemainingReturnable,
 } from './corrections-calculation.js';
-import { SaleError, assertLocalSalesEmulator, calculateSale } from './sales.js';
+import {
+  SaleError, assertLocalSalesEmulator, calculateSale, isValidBranchCode, saleFolio,
+} from './sales.js';
 
 const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
+const RECEIPT_V1_FIELDS = ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment'];
+const RECEIPT_V2_FIELDS = [...RECEIPT_V1_FIELDS, 'branchCode', 'folio'];
 const PRICING_FIELDS = [
   'currency', 'ivaRateBasisPoints', 'ivaTreatment', 'listedPriceCentavos', 'priceMode',
 ];
@@ -29,6 +33,9 @@ export const RECENT_SALES_MAX_LIMIT = 100;
  * saleReturnLedgers/{saleId} { returned: { [lineIndex]: scaled } } document.
  * The calculation is recomputed from its stored policy and must match exactly,
  * so audits, actors, provenance and acquisition costs can never be exposed.
+ * Stored receipts are v1 (legacy, no folio) or v2 (with branchCode and the
+ * folio derived from it); both stay readable and each must match its exact
+ * shape. The response shape does not expose the folio yet.
  */
 export function createSaleLookupService({
   firestore, now = () => new Date(), environment = process.env,
@@ -151,10 +158,17 @@ function storedSale(saleId, record) {
   try {
     exactFields(record, ['receipt', 'createdAt']);
     const { receipt } = record;
-    exactFields(receipt, ['version', 'saleId', 'branchId', 'productIds', 'calculation', 'payment']);
+    const legacy = receipt?.version === 1;
+    exactFields(receipt, legacy ? RECEIPT_V1_FIELDS : RECEIPT_V2_FIELDS);
     exactFields(receipt.payment, ['method', 'amountCentavos']);
     const { calculation, payment, productIds } = receipt;
-    if (receipt.version !== 1 || receipt.saleId !== saleId
+    // saleFolio rejects an invalid code; the stored folio must equal the
+    // derivation from the stored code and this document's own saleId.
+    if (!legacy && (receipt.version !== 2 || !isValidBranchCode(receipt.branchCode)
+      || receipt.folio !== saleFolio(receipt.branchCode, saleId))) {
+      throw new TypeError('receipt folio');
+    }
+    if (receipt.saleId !== saleId
       || !PAYMENT_METHODS.includes(payment.method)
       || !Array.isArray(productIds) || productIds.some((id) => !validId(id))) {
       throw new TypeError('receipt identity');
@@ -178,6 +192,8 @@ function storedSale(saleId, record) {
     }
     return {
       saleId,
+      folio: legacy ? null : receipt.folio,
+      branchCode: legacy ? null : receipt.branchCode,
       createdAt: timestampMs(record.createdAt),
       calculation: expected,
       payment: Object.freeze({ method: payment.method, amountCentavos: payment.amountCentavos }),

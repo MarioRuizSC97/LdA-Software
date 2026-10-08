@@ -204,8 +204,9 @@ function fixture(runId, foreignRunId) {
   };
   const stock = (branchId, productId) => `branches/${branchId}/stock/${productId}`;
   const seeds = new Map([
-    [`branches/${branch}`, { name: `Corrections ${runId}`, acceptanceRunId: runId }],
-    [`branches/${foreign}`, { name: `Corrections foreign ${foreignRunId}`, acceptanceRunId: foreignRunId }],
+    // Owned acceptance codes never reuse the demo NTE/SUR codes.
+    [`branches/${branch}`, { name: `Corrections ${runId}`, code: 'CRA', acceptanceRunId: runId }],
+    [`branches/${foreign}`, { name: `Corrections foreign ${foreignRunId}`, code: 'CRF', acceptanceRunId: foreignRunId }],
     ...Object.entries(products).map(([id, product]) => [`products/${id}`, { internalCode: id, name: `Acceptance ${id}`,
       quantitySpec: copy(product.spec), pricing: copy(product.pricing) }]),
     ...Object.entries(products).map(([id, product]) => [stock(branch, id), { quantityScaled: product.stock, ...product.spec }]),
@@ -250,7 +251,11 @@ function project(operation, context, timestamp) {
       quantity, spec: fx.products[productId].spec, pricing: fx.products[productId].pricing })));
     const payment = { method: data.payment.method, amountCentavos: data.payment.amountCentavos };
     if (payment.amountCentavos !== calculation.totalCentavos) throw new Error('acceptance/projection-payment');
-    const receipt = { version: 1, saleId: key, branchId, productIds: data.lines.map((line) => line.productId), calculation, payment };
+    // Folio: the seeded branch code and the first eight alphanumerics of the key.
+    const branchCode = fx.seeds.get(`branches/${branchId}`).code;
+    const head = key.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+    const receipt = { version: 2, saleId: key, branchId, branchCode, folio: `${branchCode}-${head.slice(0, 4)}-${head.slice(4)}`,
+      productIds: data.lines.map((line) => line.productId), calculation, payment };
     documents.set(`sales/${key}`, { receipt, createdAt: timestamp });
     documents.set(`saleAudits/${key}`, { saleId: key, branchId, actorId, createdAt: timestamp });
     data.lines.forEach(({ productId }, index) => {

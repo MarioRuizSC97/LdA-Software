@@ -20,8 +20,8 @@ const clone = (value) => structuredClone(value);
 class FakeFirestore {
   constructor() {
     this.records = new Map([
-      ['branches/north', { name: 'North' }],
-      ['branches/south', { name: 'South' }],
+      ['branches/north', { name: 'North', code: 'NTE' }],
+      ['branches/south', { name: 'South', code: 'SUR' }],
       ['products/p1', { quantitySpec: spec, pricing }],
       ['products/p2', { quantitySpec: spec, pricing }],
       ['branches/north/stock/p1', { ...spec, quantityScaled: 10 }],
@@ -87,7 +87,7 @@ function request(overrides = {}) {
   return {
     auth: clone(auth),
     data: {
-      idempotencyKey: 'key-one', invoiceRequested: true,
+      idempotencyKey: '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', invoiceRequested: true,
       lines: [{ productId: 'p1', quantity: '2' }],
       payment: { method: 'cash', amountCentavos: 232 },
       ...overrides,
@@ -118,7 +118,7 @@ function stock(firestore, productId = 'p1') {
 }
 
 function privateReplay(firestore) {
-  return firestore.records.get('saleSubmissionReceipts/key-one');
+  return firestore.records.get('saleSubmissionReceipts/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab');
 }
 
 test('transaction API is available without SDK initialization', () => {
@@ -239,10 +239,13 @@ test('valid sale persists immutable safe history, private audit and negative mov
   assert.deepEqual(Object.keys(result).sort(), ['receipt', 'replayed']);
   const receipt = result.receipt;
   assert.deepEqual(Object.keys(receipt).sort(), [
-    'branchId', 'calculation', 'payment', 'productIds', 'saleId', 'version',
+    'branchCode', 'branchId', 'calculation', 'folio', 'payment', 'productIds', 'saleId', 'version',
   ]);
-  assert.equal(receipt.saleId, 'key-one');
+  assert.equal(receipt.version, 2);
+  assert.equal(receipt.saleId, '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab');
   assert.equal(receipt.branchId, 'north');
+  assert.equal(receipt.branchCode, 'NTE');
+  assert.equal(receipt.folio, 'NTE-3F2A-9C1B');
   assert.deepEqual(receipt.productIds, ['p1']);
   assert.equal(receipt.calculation.totalCentavos, 232);
   assert.equal(receipt.calculation.lines[0].quantity.scaled, 2);
@@ -250,19 +253,19 @@ test('valid sale persists immutable safe history, private audit and negative mov
   assert.ok(Object.isFrozen(receipt.calculation.lines));
   assert.ok(Object.isFrozen(receipt.payment));
   assert.equal(stock(firestore), 8);
-  assert.equal(firestore.records.get('sales/key-one').createdAt.getTime(), timestamp.getTime());
-  assert.deepEqual(firestore.records.get('sales/key-one').receipt, receipt);
-  assert.equal(firestore.records.get('saleAudits/key-one').actorId, auth.uid);
+  assert.equal(firestore.records.get('sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab').createdAt.getTime(), timestamp.getTime());
+  assert.deepEqual(firestore.records.get('sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab').receipt, receipt);
+  assert.equal(firestore.records.get('saleAudits/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab').actorId, auth.uid);
   assert.equal(privateReplay(firestore).actorId, auth.uid);
-  const movement = firestore.records.get('inventoryMovements/sale-key-one-0');
+  const movement = firestore.records.get('inventoryMovements/sale-3f2a9c1b-7d4e-4a10-8b6c-0123456789ab-0');
   assert.equal(movement.quantityScaled, -2);
   assert.equal(movement.type, 'sale');
   assert.equal(movement.actorId, auth.uid);
-  assert.equal(movement.saleId, 'key-one');
+  assert.equal(movement.saleId, '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab');
   assert.equal(movement.occurredAt.getTime(), timestamp.getTime());
   assert.equal(firestore.records.size, 10);
   assert.doesNotMatch(JSON.stringify(receipt), /cost|actor|seller-one|createdBy/i);
-  assert.doesNotMatch(JSON.stringify(firestore.records.get('sales/key-one')), /actor|seller-one/i);
+  assert.doesNotMatch(JSON.stringify(firestore.records.get('sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab')), /actor|seller-one/i);
 });
 
 test('missing branch, product, or pricing rejects with zero artifacts', async () => {
@@ -366,7 +369,7 @@ test('multiple products commit together and a later-product underflow commits no
   assert.equal(stock(firestore), 8);
   assert.equal(stock(firestore, 'p2'), 7);
   assert.deepEqual(result.receipt.productIds, ['p1', 'p2']);
-  assert.equal(firestore.records.get('inventoryMovements/sale-key-one-1').quantityScaled, -3);
+  assert.equal(firestore.records.get('inventoryMovements/sale-3f2a9c1b-7d4e-4a10-8b6c-0123456789ab-1').quantityScaled, -3);
 });
 
 test('exact replay returns original frozen snapshot after repricing without decrement', async () => {
@@ -374,7 +377,7 @@ test('exact replay returns original frozen snapshot after repricing without decr
   const original = await service(request());
   firestore.records.get('products/p1').pricing.listedPriceCentavos = 999;
   assert.deepEqual((await service(request())).receipt, original.receipt);
-  assert.deepEqual(firestore.records.get('sales/key-one').receipt, original.receipt);
+  assert.deepEqual(firestore.records.get('sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab').receipt, original.receipt);
   // Replay depends on validated immutable history, not current catalog inputs.
   firestore.records.delete('products/p1');
   const before = clone([...firestore.records]);
@@ -422,7 +425,7 @@ test('malformed private replay and snapshot fields fail closed', async () => {
 });
 
 test('buffered transaction rollback and create-only conflicts leave no partial artifacts', async () => {
-  for (const conflictPath of [null, 'sales/key-one', 'saleAudits/key-one', 'inventoryMovements/sale-key-one-0']) {
+  for (const conflictPath of [null, 'sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', 'saleAudits/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', 'inventoryMovements/sale-3f2a9c1b-7d4e-4a10-8b6c-0123456789ab-0']) {
     const { firestore, service } = fixture();
     if (conflictPath) firestore.records.set(conflictPath, { previous: true });
     else firestore.failCommit = true;
@@ -456,8 +459,8 @@ test('advancing clock is captured once and reused across abandoned and committed
   assert.deepEqual(attemptTimes[1], attemptTimes[0], 'retry timestamps must equal abandoned-attempt timestamps');
   assert.equal(clockCalls, 1, 'one clock read per new sale invocation');
   const paths = [
-    'sales/key-one', 'saleAudits/key-one', 'inventoryMovements/sale-key-one-0',
-    'branches/north/stock/p1', 'saleSubmissionReceipts/key-one',
+    'sales/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', 'saleAudits/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', 'inventoryMovements/sale-3f2a9c1b-7d4e-4a10-8b6c-0123456789ab-0',
+    'branches/north/stock/p1', 'saleSubmissionReceipts/3f2a9c1b-7d4e-4a10-8b6c-0123456789ab',
   ];
   assert.deepEqual(firestore.attemptWrites[1].map(({ path }) => path), paths);
   assert.deepEqual(attemptTimes[0], paths.map(() => timestamp.getTime()));
@@ -475,7 +478,7 @@ test('historical replay and business validation do not depend on a healthy curre
     const resubmit = sales.createSaleService({ firestore, environment, now });
     assert.deepEqual((await resubmit(request())).receipt, original.receipt);
     await rejectsUnchanged(firestore, resubmit, request({
-      idempotencyKey: 'new-key', payment: { method: 'cash', amountCentavos: 1 },
+      idempotencyKey: 'new-sale-key', payment: { method: 'cash', amountCentavos: 1 },
     }), 'invalid-argument');
   }
 });
@@ -483,10 +486,10 @@ test('historical replay and business validation do not depend on a healthy curre
 test('fresh requests consume stock sequentially and underflow is never committed', async () => {
   const { firestore, service } = fixture();
   for (let i = 0; i < 5; i++) {
-    await service(request({ idempotencyKey: `fresh-${i}` }));
+    await service(request({ idempotencyKey: `fresh-sale-${i}` }));
     assert.equal(stock(firestore), 10 - (i + 1) * 2);
   }
-  await rejectsUnchanged(firestore, service, request({ idempotencyKey: 'fresh-6' }), 'failed-precondition');
+  await rejectsUnchanged(firestore, service, request({ idempotencyKey: 'fresh-sale-6' }), 'failed-precondition');
 });
 
 test('fractional quantities preserve approved per-line rounding and authoritative spec', async () => {
@@ -528,7 +531,8 @@ test('request is detached before asynchronous reads and caller mutation', async 
 
 test('malformed replay identity, version, quantity and extra fields fail closed', async () => {
   for (const mutate of [
-    (r) => { r.result.version = 2; },
+    (r) => { r.result.version = 1; },
+    (r) => { r.result.version = 3; },
     (r) => { r.result.branchId = 'south'; },
     (r) => { r.result.calculation.lines[0].quantity.spec.precision = 7; },
     (r) => { r.result.calculation.lines[0].pricing.version = 2; },
@@ -571,4 +575,116 @@ test('invalid injected timestamp is rejected before writes', async () => {
     const { firestore, service } = fixture({ now });
     await rejectsUnchanged(firestore, service, request(), 'failed-precondition');
   }
+});
+
+const KEY = '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab';
+const branchCodeError = (error) => error.message === 'branch code is missing or invalid';
+
+test('folio derives from the branch code and the first eight alphanumeric key characters', () => {
+  assert.equal(sales.saleFolio('NTE', KEY), 'NTE-3F2A-9C1B');
+  assert.equal(sales.saleFolio('SUR', 'ABCDEF01-0000-4000-8000-000000000000'), 'SUR-ABCD-EF01');
+  assert.equal(sales.saleFolio('AB', 'inv05-12ab-x'), 'AB-INV0-512A');
+  assert.equal(sales.saleFolio('WXYZ', 'abcdefghij'), 'WXYZ-ABCD-EFGH');
+  for (const [code, key] of [
+    ['NTE', 'key-one'], ['NTE', 'a-b-c-d-e-f-g'], ['NTE', ''], ['NTE', 7],
+    ['nte', KEY], ['N', KEY], ['NORTE', KEY], ['N1E', KEY], [' NTE', KEY], ['', KEY], [null, KEY],
+  ]) assert.throws(() => sales.saleFolio(code, key), TypeError, `${code} ${key}`);
+  for (const code of ['AB', 'ABC', 'ABCD']) assert.equal(sales.isValidBranchCode(code), true);
+  for (const code of ['A', 'ABCDE', 'abc', 'AÉB', 'AB\n', 'A B', 1, undefined]) {
+    assert.equal(sales.isValidBranchCode(code), false);
+  }
+});
+
+test('a missing or invalid branch code fails closed before any write', async () => {
+  for (const code of [undefined, null, '', 'nte', 'N', 'NORTE', 'N1E', ' NTE', 'NTE ', 3, ['NTE']]) {
+    const { firestore, service } = fixture();
+    const branch = firestore.records.get('branches/north');
+    if (code === undefined) delete branch.code;
+    else branch.code = code;
+    await assert.rejects(service(request()), (error) => error.code === 'failed-precondition'
+      && branchCodeError(error));
+    assert.equal(firestore.records.has(`sales/${KEY}`), false);
+    assert.equal(stock(firestore), 10);
+  }
+});
+
+test('new sales require at least eight alphanumeric key characters for the folio', async () => {
+  for (const idempotencyKey of ['key-one', 'a-b-c-d-e-f-g', 'sale1']) {
+    const { firestore, service } = fixture();
+    await rejectsUnchanged(firestore, service, request({ idempotencyKey }), 'invalid-argument');
+  }
+  const { service } = fixture();
+  const { receipt } = await service(request({ idempotencyKey: 'inv05-abcd-sale' }));
+  assert.equal(receipt.folio, 'NTE-INV0-5ABC');
+});
+
+test('the folio is stored inside the sale receipt and the replay record, never beside it', async () => {
+  const { firestore, service } = fixture();
+  const { receipt } = await service(request());
+  assert.deepEqual(Object.keys(firestore.records.get(`sales/${KEY}`)).sort(), ['createdAt', 'receipt']);
+  assert.equal(firestore.records.get(`sales/${KEY}`).receipt.folio, 'NTE-3F2A-9C1B');
+  assert.deepEqual(privateReplay(firestore).result, receipt);
+  assert.doesNotMatch(JSON.stringify(receipt), /cost|actor|seller-one/i);
+});
+
+test('replay returns the identical folio receipt even after the branch code changes', async () => {
+  const { firestore, service } = fixture();
+  const original = await service(request());
+  firestore.records.get('branches/north').code = 'NRT';
+  const changed = await service(request());
+  assert.equal(changed.replayed, true);
+  assert.deepEqual(changed.receipt, original.receipt);
+  firestore.records.delete('branches/north');
+  const missing = await service(request());
+  assert.deepEqual(missing.receipt, original.receipt);
+  assert.equal(missing.receipt.folio, 'NTE-3F2A-9C1B');
+  assert.ok(Object.isFrozen(missing.receipt));
+});
+
+test('a legacy v1 replay record without a folio still replays exactly', async () => {
+  const { firestore, service } = fixture();
+  await service(request());
+  const { branchCode, folio, ...legacy } = privateReplay(firestore).result;
+  legacy.version = 1;
+  privateReplay(firestore).result = legacy;
+  const replay = await service(request());
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, legacy);
+  assert.equal(Object.hasOwn(replay.receipt, 'folio'), false);
+  const legacyKey = 'key-one'; // Legacy keys need not carry eight alphanumerics.
+  const short = fixture();
+  await short.service(request({ idempotencyKey: KEY }));
+  const record = clone(short.firestore.records.get(`saleSubmissionReceipts/${KEY}`));
+  const fingerprint = JSON.parse(record.fingerprint);
+  fingerprint.idempotencyKey = legacyKey;
+  record.fingerprint = JSON.stringify(fingerprint);
+  const { branchCode: _code, folio: _folio, ...result } = record.result;
+  record.result = { ...result, version: 1, saleId: legacyKey };
+  short.firestore.records.set(`saleSubmissionReceipts/${legacyKey}`, record);
+  const legacyReplay = await short.service(request({ idempotencyKey: legacyKey }));
+  assert.equal(legacyReplay.receipt.saleId, legacyKey);
+  assert.equal(legacyReplay.receipt.version, 1);
+});
+
+test('malformed folio replay snapshots fail closed', async () => {
+  for (const mutate of [
+    (r) => { r.result.folio = 'NTE-3F2A-9C1C'; },
+    (r) => { r.result.folio = 'nte-3f2a-9c1b'; },
+    (r) => { delete r.result.folio; },
+    (r) => { r.result.branchCode = 'nte'; r.result.folio = 'nte-3F2A-9C1B'; },
+    (r) => { r.result.branchCode = 'NORTE'; r.result.folio = 'NORTE-3F2A-9C1B'; },
+    (r) => { delete r.result.branchCode; },
+    (r) => { r.result.branchCode = 'SUR'; },
+    (r) => { r.result.unitCostCentavos = 1; },
+  ]) {
+    const { firestore, service } = fixture();
+    await service(request());
+    mutate(privateReplay(firestore));
+    await rejectsUnchanged(firestore, service, request(), 'failed-precondition');
+  }
+  // A consistent foreign code with a matching folio is a valid stored snapshot.
+  const { firestore, service } = fixture();
+  await service(request());
+  Object.assign(privateReplay(firestore).result, { branchCode: 'SUR', folio: 'SUR-3F2A-9C1B' });
+  assert.equal((await service(request())).receipt.folio, 'SUR-3F2A-9C1B');
 });

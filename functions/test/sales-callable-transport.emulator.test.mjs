@@ -274,7 +274,10 @@ function createManifest(context, adapter) {
         // Sales price from the private catalog projection at submission time, never the response.
         const saleKey = input.idempotencyKey;
         const calculation = saleCalculation(input, spec, entries.get(`products/${productId}`).expected.pricing);
-        const receipt = { version: 1, saleId: saleKey, branchId: branch, productIds: [productId],
+        const branchCode = entries.get(`branches/${branch}`).expected.code;
+        const head = saleKey.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+        const receipt = { version: 2, saleId: saleKey, branchId: branch, branchCode,
+          folio: `${branchCode}-${head.slice(0, 4)}-${head.slice(4)}`, productIds: [productId],
           calculation, payment: input.payment };
         requireSame(result, { receipt, replayed: false });
         const scaled = calculation.lines[0].quantity.scaled;
@@ -339,7 +342,9 @@ function createManifest(context, adapter) {
         validate(await read());
         uncertain = true;
         for (const path of paths.branches) {
-          const expected = { name: path.slice(9), acceptanceRunId: runId };
+          // Owned acceptance codes never reuse the demo NTE/SUR codes.
+          const code = path === paths.branches[0] ? 'HTS' : 'HTO';
+          const expected = { name: path.slice(9), code, acceptanceRunId: runId };
           await deadline(() => store.create(path, copy(expected)));
           const actual = (await read()).get(path);
           requireSame(actual, expected);
@@ -779,7 +784,8 @@ async function fakeSale(sample, kind, { scaled, base, iva, stock, pricing }, for
   const line = { quantity: { version: 1, spec: { unit: 'kg', precision: 2 }, scaled, decimal: input.lines[0].quantity },
     pricing: { version: 1, ...pricing }, baseCentavos: base, additionalIvaCentavos: iva,
     includedIvaCentavos: null, totalCentavos: base + iva };
-  const receipt = { version: 1, saleId: key, branchId: OWN, productIds: [id], payment: input.payment,
+  const receipt = { version: 2, saleId: key, branchId: OWN, branchCode: 'HTS',
+    folio: `HTS-HTTP-${RUN.slice(0, 4)}`, productIds: [id], payment: input.payment,
     calculation: { version: 1, currency: 'MXN', invoiceRequested: input.invoiceRequested, calculationPolicy: POLICY,
       lines: [line], baseCentavos: base, additionalIvaCentavos: iva, totalCentavos: base + iva } };
   const docs = new Map([

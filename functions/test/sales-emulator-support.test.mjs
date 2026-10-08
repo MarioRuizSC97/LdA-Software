@@ -155,7 +155,7 @@ test('namespace paths exclude escapes, alternate runs, malformed keys and unmani
 test('create-only confirmed creations are deleted after all reads and children before parents', async () => {
   const { db, run, branch } = fixture();
   const stock = `${branch}/stock/${run.ns.products[0]}`;
-  await run.seed(branch, { name: 'owned' });
+  await run.seed(branch, { name: 'owned', code: 'OWN' });
   await run.seed(`products/${run.ns.products[0]}`, { internalCode: run.ns.products[0] });
   await run.seed(stock, { unit: 'kg', precision: 2, quantityScaled: 10 });
   await assert.rejects(run.seed(branch, { name: 'upsert' }));
@@ -172,7 +172,7 @@ test('preexisting collision and ambiguous successful commit never grant deletion
     const { db, run, branch } = fixture();
     if (uncertain) db.failCreate = true;
     else db.records.set(branch, { name: 'foreign' });
-    await assert.rejects(run.seed(branch, { name: 'owned' }));
+    await assert.rejects(run.seed(branch, { name: 'owned', code: 'OWN' }));
     assert.equal(run.entries.get(branch).state, 'unknown');
     await assert.rejects(run.cleanup(), (error) => error.message.includes(branch));
     assert.ok(db.records.has(branch));
@@ -182,7 +182,7 @@ test('preexisting collision and ambiguous successful commit never grant deletion
 
 test('mismatch or missing anchor conservatively retains the exact run manifest', async () => {
   const { db, run, branch } = fixture();
-  await run.seed(branch, { name: 'owned' });
+  await run.seed(branch, { name: 'owned', code: 'OWN' });
   const product = `products/${run.ns.products[0]}`;
   await run.seed(product, { internalCode: run.ns.products[0] });
   db.records.set(product, { internalCode: 'foreign' });
@@ -282,7 +282,7 @@ test('successful sale linkage anchors replaced stock metadata; forged relationsh
     const pricing = { currency: 'MXN', listedPriceCentavos: 100, priceMode: 'iva-included',
       ivaTreatment: 'exempt', ivaRateBasisPoints: null };
     const timestamp = new Date('2026-01-01T00:00:00Z');
-    await run.seed(branch, { name: branch, createdAt: timestamp });
+    await run.seed(branch, { name: branch, code: 'OWN', createdAt: timestamp });
     await run.seed(productPath, { internalCode: productId, name: productId, quantitySpec, pricing, createdAt: timestamp });
     await run.seed(stockPath, { ...quantitySpec, quantityScaled: 100, updatedAt: timestamp });
     const key = run.ns.key('success');
@@ -315,7 +315,7 @@ test('successful sale linkage anchors replaced stock metadata; forged relationsh
 
 test('planned unknown sale artifacts and ownership read errors never authorize deletion', async () => {
   const { db, run, branch } = fixture();
-  await run.seed(branch, { name: 'owned' });
+  await run.seed(branch, { name: 'owned', code: 'OWN' });
   const unknown = run.plan(`sales/${run.ns.key('unknown')}`);
   db.records.set(unknown, { receipt: 'unconfirmed success or collision' });
   await assert.rejects(run.cleanup(), (error) => error.message.includes(unknown));

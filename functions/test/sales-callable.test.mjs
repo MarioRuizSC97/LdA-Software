@@ -13,11 +13,14 @@ const firestore = {
   runTransaction: async (callback) => callback({
     get: async ({ path }) => ({
       exists: !path.startsWith('saleSubmissionReceipts/'),
-      data: () => path.startsWith('products/') ? {
-        quantitySpec: { unit: 'piece', precision: 0 },
-        pricing: { currency: 'MXN', listedPriceCentavos: 100,
-          priceMode: 'iva-included', ivaTreatment: 'taxable', ivaRateBasisPoints: 1600 },
-      } : { unit: 'piece', precision: 0, quantityScaled: 10 },
+      data: () => {
+        if (/^branches\/[^/]+$/.test(path)) return { name: 'North', code: 'NTE' };
+        return path.startsWith('products/') ? {
+          quantitySpec: { unit: 'piece', precision: 0 },
+          pricing: { currency: 'MXN', listedPriceCentavos: 100,
+            priceMode: 'iva-included', ivaTreatment: 'taxable', ivaRateBasisPoints: 1600 },
+        } : { unit: 'piece', precision: 0, quantityScaled: 10 };
+      },
     }),
     create: () => {}, set: () => {},
   }),
@@ -169,11 +172,13 @@ test('trusted request and seller-safe result pass through, with lazy Admin initi
 test('unchanged sale service derives branch from auth and rejects client authority or admins', async () => {
   reset(); useRealService = true;
   const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
-    data: { idempotencyKey: 'key-one', invoiceRequested: false,
+    data: { idempotencyKey: '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', invoiceRequested: false,
       lines: [{ productId: 'p1', quantity: '1' }], payment: { method: 'cash', amountCentavos: 100 } } };
   const { receipt, replayed } = await invoke(request);
   assert.equal(receipt.branchId, 'north'); assert.equal(replayed, false);
-  assert.deepEqual(Object.keys(receipt).sort(), ['branchId', 'calculation', 'payment', 'productIds', 'saleId', 'version']);
+  assert.deepEqual(Object.keys(receipt).sort(),
+    ['branchCode', 'branchId', 'calculation', 'folio', 'payment', 'productIds', 'saleId', 'version']);
+  assert.equal(receipt.folio, 'NTE-3F2A-9C1B');
   assert.equal(receipt.calculation.totalCentavos, 100);
   await rejects(invoke({ ...request, data: { ...request.data, branchId: 'south' } }),
     'invalid-argument', 'sale request contains missing, invalid or unsupported fields');
