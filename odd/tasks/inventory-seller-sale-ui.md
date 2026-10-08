@@ -49,8 +49,8 @@ Out of scope:
 ## Tasks
 
 - [x] SALE-01 — Backend folio and branch code. Sales read the branch `code` (reject a missing or invalid code), derive the folio and store it on the sale. Keep replay exact. Update the strict stored-sale validation in sale lookup and corrections, the demo seed (`NTE`, `SUR`), and every test that seeds branches. Route: delegated writer.
-- [ ] SALE-02 — Read-only `quoteSale` callable: seller-only, branch from claims, current pricing, exact `calculateSale` total. Report insufficient stock without writing anything. Route: delegated writer.
-- [ ] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
+- [x] SALE-02 — Read-only `quoteSale` callable: seller-only, branch from claims, current pricing, exact `calculateSale` total. Report insufficient stock without writing anything. Route: delegated writer.
+- [x] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
 - [ ] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
 - [ ] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
 - [ ] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
@@ -103,6 +103,8 @@ Out of scope:
   - **Size:** about 940 lines against a 500–800 forecast, mostly parity and consistency tests.
 - SALE-02/03 parent spot check: all offline unit tests run from the repository root pass 297/297; transport offline 35 pass, 2 skipped; the source hashes match the writer report.
 
+- SALE-02/03 closure: native review `review-c14c45cd358064fa` approved; commit tree exactly the approved candidate `e38fba6f`. Finding `R3-folio-unicode-casefold` (SUGGESTION): Unicode uppercasing before the ASCII check lets a few non-ASCII characters (the long s, the dotless i) normalize into a valid folio. This is harmless for authorization; reject non-ASCII input before uppercasing later.
+
 ## Next step
 
-Review and commit SALE-02/03, then SALE-04 (Flutter sale domain and gateway).
+SALE-04 (Flutter sale domain and gateway).
