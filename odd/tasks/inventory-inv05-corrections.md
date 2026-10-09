@@ -38,7 +38,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 ## Constraints
 
-- Work on branch `feat/inventory-mvp-sales-corrections`, created from `166bee0`. Local work-unit commits only; push and PRs stay the user's decision.
+- Work on branch `feat/inventory-mvp-sales-corrections`, created from `166bee0`. CORR-07 and CORR-08 continue on `feat/inventory-mvp-sale-corrections-ui`, created from `fc186da` (the completed seller sale UI, `odd/tasks/inventory-seller-sale-ui.md`). Local work-unit commits only; push and PRs stay the user's decision.
 - Delivery strategy: feature-branch chain, the cached INV-05 choice. The forecast is well above 400 authored lines, so each task is its own reviewable work unit.
 - Use test-first with the pinned Node `/Users/luismarioruiz/.local/share/lda-node24/runtime/bin/node`. Emulator and live runs only against the already running local emulators, with owned data and teardown. No product-unrelated edits.
 
@@ -51,7 +51,11 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
 - [x] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
 - [x] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
-- [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Route: delegated writer.
+- [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
+  - [ ] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
+  - [ ] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
+  - [ ] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
+  - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
 ## Acceptance criteria
@@ -189,4 +193,4 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 ## Next step
 
-Paused. Start the seller sale UI feature; resume CORR-07 afterwards.
+CORR-07A: Flutter correction domain and gateway (delegated writer).
