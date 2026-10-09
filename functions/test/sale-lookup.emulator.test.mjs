@@ -166,7 +166,8 @@ test('INV05 real Firestore folio lookup for sellers (SALE-03)', async (t) => {
   await t.test('two in-window matches in a branch are ambiguous', async () => {
     await assert.rejects(service.findSale({ auth: seller(b), data: { folio } }),
       (error) => error.code === 'failed-precondition'
-        && error.message === 'folio is ambiguous; use the full receipt id or the recent list');
+        && error.message === 'folio is ambiguous; use the full receipt id or the recent list'
+        && error.reason === 'folio-ambiguous');
     const { sale } = await service.findSale({ auth: seller(b), data: { saleId: twinOne } });
     assert.equal(sale.folio, folio);
   });

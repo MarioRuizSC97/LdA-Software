@@ -6,13 +6,16 @@ import {
 import {
   calculateExchangeSettlement, calculateReturnRefund, CorrectionError,
 } from './corrections-calculation.js';
-import { addStockMovement, parseQuantity } from './quantity.js';
-import { RETURN_CONDITIONS, RETURN_REASONS } from './sale-returns.js';
-import { assertLocalSalesEmulator, calculateSale, SaleError } from './sales.js';
+import { addStockMovement } from './quantity.js';
+import { RETURN_REASONS, returnAmounts, returnLinesInput } from './sale-returns.js';
+import {
+  assertLocalSalesEmulator, calculateSale, SaleError, saleQuantity, saleStoredPricing,
+} from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'reason', 'returnLines', 'newLines'];
-const RETURN_LINE_FIELDS = ['lineIndex', 'quantity', 'condition'];
+const PREVIEW_REQUEST_FIELDS = ['saleId', 'reason', 'returnLines', 'newLines'];
+const EXCHANGE_CLOCK_INVALID = 'exchange clock is invalid';
 const NEW_LINE_FIELDS = ['productId', 'quantity'];
 const PAYMENT_FIELDS = ['method', 'amountCentavos'];
 const PRICING_FIELDS = [
@@ -79,7 +82,7 @@ export function createSaleExchangeService({
     const fingerprint = JSON.stringify({ actorId, branchId, ...input });
     const replayReference = firestore.doc(`saleExchangeSubmissionReceipts/${input.idempotencyKey}`);
     // Captured once, outside retryable callbacks; replay never depends on it.
-    const clock = invocationTime(now, 'exchange clock is invalid');
+    const clock = invocationTime(now, EXCHANGE_CLOCK_INVALID);
 
     return firestore.runTransaction(async (transaction) => {
       const replay = await transaction.get(replayReference);
@@ -91,57 +94,25 @@ export function createSaleExchangeService({
       }
       if (clock.error) throw clock.error;
 
-      const sale = await correctableSale(transaction, firestore, input.saleId, branchId, clock.ms);
-      const ledgerReference = firestore.doc(`saleReturnLedgers/${input.saleId}`);
-      const previous = storedReturnLedger(await transaction.get(ledgerReference), sale);
-      const refund = exchangeRefund(sale, previous, input.returnLines);
-      const returnedProducts = new Set(refund.lines.map((line) => line.productId));
-      if (input.newLines.some((line) => returnedProducts.has(line.productId))) {
-        throw new SaleError('invalid-argument', 'exchange new items must differ from the returned products');
-      }
-      const restock = restockPlan(sale, refund, input.returnLines);
+      const plan = await readExchangePlan(transaction, firestore, branchId, input, clock.ms);
+      const { sale, ledgerReference, previous, refund } = plan;
       const key = input.idempotencyKey;
-      const [restockReads, newReads] = await Promise.all([
-        Promise.all([...restock.values()].map(async (entry) => ({
-          entry, ...await productAndStock(transaction, firestore, branchId, entry.productId),
-        }))),
-        Promise.all(input.newLines.map(async (line) => ({
-          line, ...await productAndStock(transaction, firestore, branchId, line.productId),
-        }))),
-      ]);
       await assertCreateTargetsAbsent(transaction, [
         firestore.doc(`saleExchanges/${key}`), firestore.doc(`saleExchangeAudits/${key}`),
         ...refund.lines.map((line, index) => firestore.doc(`inventoryMovements/${movementId(key, 'in', index)}`)),
         ...input.newLines.map((line, index) => firestore.doc(`inventoryMovements/${movementId(key, 'out', index)}`)),
       ]);
       // All reads, including the replay ownership guard, finish before writes.
-      const restockWrites = restockReads.map(({ entry, product, stock }) => {
-        const productSpec = storedProductSpec(product);
-        const current = stockProjection(stock, productSpec);
-        let next;
-        try {
-          next = addStockMovement(current, entry.scaled, productSpec, entry.spec);
-        } catch {
-          throw new SaleError('failed-precondition', 'stock projection cannot accept the return');
-        }
-        return { productId: entry.productId, productSpec, next, lastMovementId: movementId(key, 'in', entry.lastIndex) };
+      const restockWrites = restockProjections(plan.restockReads).map(({ entry, productSpec, next }) => ({
+        productId: entry.productId, productSpec, next, lastMovementId: movementId(key, 'in', entry.lastIndex),
+      }));
+      // Line by line, so the first failing new line decides the error.
+      const prepared = plan.newReads.map((read) => {
+        const line = prepareNewLine(read);
+        if (line.next === null) throw new SaleError('failed-precondition', 'insufficient stock');
+        return line;
       });
-      const prepared = newReads.map(({ line, product, stock }) => {
-        if (!product.exists) throw new SaleError('not-found', 'product does not exist');
-        const productSpec = storedProductSpec(product);
-        const productPricing = storedPricing(product.data()?.pricing);
-        const scaled = newQuantity(line.quantity, productSpec);
-        const current = stockProjection(stock, productSpec);
-        let next;
-        try {
-          next = addStockMovement(current, -scaled, productSpec, productSpec);
-        } catch {
-          throw new SaleError('failed-precondition', 'insufficient stock');
-        }
-        return { line, productSpec, productPricing, scaled, next };
-      });
-      const calculation = newItemCalculation(sale.calculation.invoiceRequested, prepared);
-      const settlement = exchangeSettlement(refund, calculation);
+      const { calculation, settlement } = exchangeAmounts(sale, refund, prepared);
       const differencePayment = settledPayment(settlement, input.differencePayment);
 
       const { timestamp } = clock;
@@ -193,6 +164,122 @@ export function createSaleExchangeService({
   };
 }
 
+/**
+ * Read-only preview of submitExchange (decision 12), not a callable
+ * registration. Request.data is exactly { saleId, reason, returnLines:
+ * [{ lineIndex, quantity, condition }], newLines: [{ productId, quantity }] }:
+ * the submit request without its write-only idempotencyKey, note and
+ * differencePayment. Only trusted auth.token { role: 'seller', branchId }
+ * assigns the branch.
+ *
+ * One read-only transaction runs the same reads and checks as a new submit
+ * (sale, branch, window, ledger with cumulative rounding, lines, conditions,
+ * distinct new products, restock projections, new-item specs, quantities,
+ * current pricing and stock projections) through the same helpers, and
+ * rejects with the same SaleError. Short stock for a new line is reported as
+ * available: false instead of thrown, like quoteSale; the submit refuses it.
+ * The idempotency checks and the difference-payment rule are skipped. It
+ * never writes and never reads or returns costs.
+ *
+ * Returns a deeply frozen { saleId, returned, newItems, settlement:
+ * { returnedCentavos, newItemCentavos, customerPaysCentavos, refundCentavos,
+ * refundMethod }, newLines: [{ productId, available }], invoiced }. returned,
+ * newItems and invoiced equal the submit receipt fields; a submit must pay
+ * exactly customerPaysCentavos as its differencePayment when it is positive.
+ */
+export function createSaleExchangePreviewService({
+  firestore, now = () => new Date(), environment = process.env,
+} = {}) {
+  if (!firestore || typeof firestore.doc !== 'function' || typeof firestore.runTransaction !== 'function') {
+    throw new TypeError('an Admin Firestore-compatible instance is required');
+  }
+  if (typeof now !== 'function') throw new TypeError('now must be a function');
+
+  return async function previewExchange(request = {}) {
+    assertLocalSalesEmulator(environment);
+    const { branchId } = correctionSeller(request?.auth);
+    const input = exchangePreviewInput(request?.data);
+    const clock = invocationTime(now, EXCHANGE_CLOCK_INVALID);
+    return firestore.runTransaction(async (transaction) => {
+      if (clock.error) throw clock.error;
+      const plan = await readExchangePlan(transaction, firestore, branchId, input, clock.ms);
+      restockProjections(plan.restockReads);
+      const prepared = plan.newReads.map(prepareNewLine);
+      const { calculation, settlement } = exchangeAmounts(plan.sale, plan.refund, prepared);
+      return Object.freeze({
+        saleId: input.saleId,
+        returned: returnedPart(input, plan.refund),
+        newItems: newItemsPart(input, calculation),
+        settlement: Object.freeze(settlementAmounts(settlement)),
+        newLines: Object.freeze(prepared.map(({ line, next }) => Object.freeze({
+          productId: line.productId, available: next !== null,
+        }))),
+        invoiced: plan.refund.invoiced,
+      });
+    }, { readOnly: true });
+  };
+}
+
+// Shared submit and preview reads, in the submit's order: the sale (branch and
+// window), its ledger, the refund, distinct new products, then product and
+// stock for restocked and new products.
+async function readExchangePlan(transaction, firestore, branchId, input, nowMs) {
+  const sale = await correctableSale(transaction, firestore, input.saleId, branchId, nowMs);
+  const ledgerReference = firestore.doc(`saleReturnLedgers/${input.saleId}`);
+  const previous = storedReturnLedger(await transaction.get(ledgerReference), sale);
+  const refund = exchangeRefund(sale, previous, input.returnLines);
+  const returnedProducts = new Set(refund.lines.map((line) => line.productId));
+  if (input.newLines.some((line) => returnedProducts.has(line.productId))) {
+    throw new SaleError('invalid-argument', 'exchange new items must differ from the returned products');
+  }
+  const restock = restockPlan(sale, refund, input.returnLines);
+  const [restockReads, newReads] = await Promise.all([
+    Promise.all([...restock.values()].map(async (entry) => ({
+      entry, ...await productAndStock(transaction, firestore, branchId, entry.productId),
+    }))),
+    Promise.all(input.newLines.map(async (line) => ({
+      line, ...await productAndStock(transaction, firestore, branchId, line.productId),
+    }))),
+  ]);
+  return { sale, ledgerReference, previous, refund, restockReads, newReads };
+}
+
+function restockProjections(restockReads) {
+  return restockReads.map(({ entry, product, stock }) => {
+    const productSpec = storedProductSpec(product);
+    const current = stockProjection(stock, productSpec);
+    let next;
+    try {
+      next = addStockMovement(current, entry.scaled, productSpec, entry.spec);
+    } catch {
+      throw new SaleError('failed-precondition', 'stock projection cannot accept the return');
+    }
+    return { entry, productSpec, next };
+  });
+}
+
+// Validates one new item at current pricing, with the sales pricing and
+// quantity rules. `next` is the stock after selling it, or null when short.
+function prepareNewLine({ line, product, stock }) {
+  if (!product.exists) throw new SaleError('not-found', 'product does not exist');
+  const productSpec = storedProductSpec(product);
+  const productPricing = saleStoredPricing(product.data()?.pricing);
+  const scaled = saleQuantity(line.quantity, productSpec);
+  const current = stockProjection(stock, productSpec);
+  let next = null;
+  try {
+    next = addStockMovement(current, -scaled, productSpec, productSpec);
+  } catch {
+    // Reported by the caller: a submit fails, a preview marks the line unavailable.
+  }
+  return { line, productSpec, productPricing, scaled, next };
+}
+
+function exchangeAmounts(sale, refund, prepared) {
+  const calculation = newItemCalculation(sale.calculation.invoiceRequested, prepared);
+  return { calculation, settlement: exchangeSettlement(refund, calculation) };
+}
+
 function movementId(key, direction, index) {
   return `exchange-${key}-${direction}-${index}`;
 }
@@ -216,33 +303,7 @@ function exchangeInput(data) {
       throw new TypeError('key, sale and reason are required');
     }
     const note = optionalNote(data);
-    denseArray(data.returnLines);
-    denseArray(data.newLines);
-    if (data.returnLines.length === 0 || data.newLines.length === 0) {
-      throw new TypeError('return and new lines are required');
-    }
-    const seenLines = new Set();
-    const returnLines = data.returnLines.map((line) => {
-      exactFields(line, RETURN_LINE_FIELDS);
-      if (!Number.isSafeInteger(line.lineIndex) || line.lineIndex < 0 || seenLines.has(line.lineIndex)) {
-        throw new TypeError('line index must be unique and valid');
-      }
-      seenLines.add(line.lineIndex);
-      if (!canonicalQuantity(line.quantity) || !RETURN_CONDITIONS.includes(line.condition)) {
-        throw new TypeError('quantity and condition are required');
-      }
-      return { lineIndex: line.lineIndex, quantity: line.quantity, condition: line.condition };
-    });
-    const seenProducts = new Set();
-    const newLines = data.newLines.map((line) => {
-      exactFields(line, NEW_LINE_FIELDS);
-      if (!validId(line.productId) || seenProducts.has(line.productId)) {
-        throw new TypeError('product must be unique and valid');
-      }
-      seenProducts.add(line.productId);
-      if (!canonicalQuantity(line.quantity)) throw new TypeError('quantity is required');
-      return { productId: line.productId, quantity: line.quantity };
-    });
+    const { returnLines, newLines } = exchangeLinesInput(data);
     let differencePayment = null;
     if (Object.hasOwn(data, 'differencePayment')) {
       const payment = data.differencePayment;
@@ -260,6 +321,36 @@ function exchangeInput(data) {
   } catch {
     throw new SaleError('invalid-argument', 'exchange request contains missing, invalid or unsupported fields');
   }
+}
+
+function exchangePreviewInput(data) {
+  try {
+    exactFields(data, PREVIEW_REQUEST_FIELDS);
+    if (!validId(data.saleId) || !RETURN_REASONS.includes(data.reason)) {
+      throw new TypeError('sale and reason are required');
+    }
+    return { saleId: data.saleId, reason: data.reason, ...exchangeLinesInput(data) };
+  } catch {
+    throw new SaleError('invalid-argument', 'exchange preview request contains missing, invalid or unsupported fields');
+  }
+}
+
+// Shared submit and preview lines; throws TypeError for the caller to map.
+function exchangeLinesInput(data) {
+  denseArray(data.newLines);
+  const returnLines = returnLinesInput(data.returnLines);
+  if (data.newLines.length === 0) throw new TypeError('new lines are required');
+  const seenProducts = new Set();
+  const newLines = data.newLines.map((line) => {
+    exactFields(line, NEW_LINE_FIELDS);
+    if (!validId(line.productId) || seenProducts.has(line.productId)) {
+      throw new TypeError('product must be unique and valid');
+    }
+    seenProducts.add(line.productId);
+    if (!canonicalQuantity(line.quantity)) throw new TypeError('quantity is required');
+    return { productId: line.productId, quantity: line.quantity };
+  });
+  return { returnLines, newLines };
 }
 
 function exchangeRefund(sale, returned, lines) {
@@ -301,37 +392,6 @@ function restockPlan(sale, refund, lines) {
   return plan;
 }
 
-// sales.js keeps its stored-pricing validator private; this mirrors it exactly:
-// the published five-field policy, MXN, and an IVA rate matching its treatment.
-function storedPricing(value) {
-  try {
-    exactFields(value, PRICING_FIELDS);
-    const { currency, listedPriceCentavos, priceMode, ivaTreatment, ivaRateBasisPoints } = value;
-    if (currency !== 'MXN' || !Number.isSafeInteger(listedPriceCentavos) || listedPriceCentavos < 0
-      || !['iva-included', 'iva-additional-on-invoice'].includes(priceMode)
-      || !['taxable', 'zero-rated', 'exempt'].includes(ivaTreatment)
-      || (ivaTreatment === 'exempt' && ivaRateBasisPoints !== null)
-      || (ivaTreatment === 'zero-rated' && ivaRateBasisPoints !== 0)
-      || (ivaTreatment === 'taxable' && (!Number.isInteger(ivaRateBasisPoints)
-        || ivaRateBasisPoints < 1 || ivaRateBasisPoints > 10_000))) {
-      throw new TypeError('unsupported pricing policy');
-    }
-    return Object.fromEntries(PRICING_FIELDS.map((field) => [field, value[field]]));
-  } catch {
-    throw new SaleError('failed-precondition', 'product pricing is invalid');
-  }
-}
-
-function newQuantity(value, spec) {
-  try {
-    const scaled = parseQuantity(value, spec);
-    if (scaled <= 0) throw new RangeError('not positive');
-    return scaled;
-  } catch {
-    throw new SaleError('invalid-argument', 'quantity is not representable by the product specification');
-  }
-}
-
 function newItemCalculation(invoiceRequested, prepared) {
   try {
     return calculateSale({
@@ -361,12 +421,14 @@ function exchangeSettlement(refund, calculation) {
 function settledPayment(settlement, payment) {
   if (settlement.customerPaysCentavos > 0) {
     if (payment === null || payment.amountCentavos !== settlement.customerPaysCentavos) {
-      throw new SaleError('invalid-argument', 'difference payment must equal the amount the customer owes');
+      throw new SaleError('invalid-argument', 'difference payment must equal the amount the customer owes',
+        'payment-mismatch');
     }
     return payment;
   }
   if (payment !== null) {
-    throw new SaleError('invalid-argument', 'difference payment is only accepted when the customer owes money');
+    throw new SaleError('invalid-argument', 'difference payment is only accepted when the customer owes money',
+      'payment-mismatch');
   }
   return null;
 }
@@ -378,34 +440,41 @@ function exchangeReceipt(input, branchId, refund, calculation, settlement, diffe
     saleId: input.saleId,
     branchId,
     reason: input.reason,
-    returned: Object.freeze({
-      lines: Object.freeze(refund.lines.map((line, index) => Object.freeze({
-        lineIndex: line.lineIndex,
-        productId: line.productId,
-        quantity: line.quantity.decimal,
-        condition: input.returnLines[index].condition,
-        baseCentavos: line.baseCentavos,
-        additionalIvaCentavos: line.additionalIvaCentavos,
-        totalCentavos: line.totalCentavos,
-      }))),
-      baseCentavos: refund.baseCentavos,
-      additionalIvaCentavos: refund.additionalIvaCentavos,
-      totalCentavos: refund.totalCentavos,
-    }),
-    newItems: Object.freeze({
-      productIds: Object.freeze(input.newLines.map((line) => line.productId)),
-      calculation,
-    }),
+    returned: returnedPart(input, refund),
+    newItems: newItemsPart(input, calculation),
     settlement: Object.freeze({
-      returnedCentavos: settlement.returnedCentavos,
-      newItemCentavos: settlement.newItemCentavos,
-      customerPaysCentavos: settlement.customerPaysCentavos,
-      refundCentavos: settlement.refundCentavos,
-      refundMethod: settlement.refundMethod,
+      ...settlementAmounts(settlement),
       differencePayment: differencePayment === null ? null : Object.freeze({ ...differencePayment }),
     }),
     invoiced: refund.invoiced,
   });
+}
+
+// Receipt parts shared by the submit and its preview.
+function returnedPart(input, refund) {
+  return Object.freeze({
+    lines: returnAmounts({ lines: input.returnLines }, refund).lines,
+    baseCentavos: refund.baseCentavos,
+    additionalIvaCentavos: refund.additionalIvaCentavos,
+    totalCentavos: refund.totalCentavos,
+  });
+}
+
+function newItemsPart(input, calculation) {
+  return Object.freeze({
+    productIds: Object.freeze(input.newLines.map((line) => line.productId)),
+    calculation,
+  });
+}
+
+function settlementAmounts(settlement) {
+  return {
+    returnedCentavos: settlement.returnedCentavos,
+    newItemCentavos: settlement.newItemCentavos,
+    customerPaysCentavos: settlement.customerPaysCentavos,
+    refundCentavos: settlement.refundCentavos,
+    refundMethod: settlement.refundMethod,
+  };
 }
 
 function validatedReplay(record, input, actorId, branchId, fingerprint) {

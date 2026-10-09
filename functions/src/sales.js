@@ -186,8 +186,10 @@ const SALE_REASON_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
  * Domain refusal with a public code and message. The optional `reason` is a
  * stable kebab-case machine signal the callable forwards as HttpsError
  * details { reason }, so clients never match English messages. Reasons used:
- * 'payment-mismatch' (full payment differs from the authoritative total) and
- * 'insufficient-stock' (a sale line cannot be covered).
+ * 'payment-mismatch' (full payment differs from the authoritative total, or an
+ * exchange difference payment differs from what the customer owes),
+ * 'insufficient-stock' (a sale line cannot be covered) and 'folio-ambiguous'
+ * (a correction folio lookup matched more than one sale).
  */
 export class SaleError extends Error {
   constructor(code, message, reason) {
@@ -502,7 +504,9 @@ function saleStoredSpec(value) {
   }
 }
 
-function saleStoredPricing(value) {
+// Exported so the exchange service validates new items with this exact rule
+// instead of a drifting copy (CORR-07P).
+export function saleStoredPricing(value) {
   try {
     const snapshot = snapshotPricing(value);
     // calculateSale accepts the published policy, not its output version field.
@@ -512,7 +516,7 @@ function saleStoredPricing(value) {
   }
 }
 
-function saleQuantity(value, spec) {
+export function saleQuantity(value, spec) {
   try {
     const scaled = parseQuantity(value, spec);
     if (scaled <= 0) throw new RangeError('not positive');

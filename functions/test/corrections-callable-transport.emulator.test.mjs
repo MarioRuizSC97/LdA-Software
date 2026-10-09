@@ -16,9 +16,9 @@ import {
 import { calculateSale, createSaleService, SaleError } from '../src/sales.js';
 import { calculateReturnRefund } from '../src/corrections-calculation.js';
 import { createSaleLookupService } from '../src/sale-lookup.js';
-import { createSaleReturnService } from '../src/sale-returns.js';
+import { createSaleReturnPreviewService, createSaleReturnService } from '../src/sale-returns.js';
 import { createSaleReplacementService } from '../src/sale-replacements.js';
-import { createSaleExchangeService } from '../src/sale-exchanges.js';
+import { createSaleExchangePreviewService, createSaleExchangeService } from '../src/sale-exchanges.js';
 
 const NODE = '/Users/luismarioruiz/.local/share/lda-node24/runtime/bin/node';
 const RUN = '12345678-1234-4234-8234-123456789abc';
@@ -45,7 +45,9 @@ const OBSERVATION = /acceptance\/observation-uncertain/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const FUNCTIONS = ['submitSale', 'findCorrectableSale', 'listRecentCorrectableSales', 'submitSaleReturn',
-  'submitSaleReplacement', 'submitSaleExchange'];
+  'submitSaleReplacement', 'submitSaleExchange', 'previewSaleReturn', 'previewSaleExchange'];
+// CORR-07P previews: the submit request without its write-only fields.
+const PREVIEW = { return: 'previewSaleReturn', exchange: 'previewSaleExchange' };
 const CALLABLE = { sale: 'submitSale', return: 'submitSaleReturn', replacement: 'submitSaleReplacement',
   exchange: 'submitSaleExchange' };
 const BASE = `http://127.0.0.1:5001/${PROJECT}/us-south1`;
@@ -485,6 +487,10 @@ function createManifest(context, adapter) {
   };
   return Object.freeze({
     request,
+    kind: (label) => {
+      if (!Object.hasOwn(fx.operations, label)) throw new Error('acceptance/unknown-operation');
+      return fx.operations[label].kind;
+    },
     key: (label) => fx.key(label),
     ids: () => ({ branch: fx.branch, foreign: fx.foreign, missing: fx.missing, products: copy(fx.productIds) }),
     paths: () => [...entries.keys()],
@@ -701,11 +707,14 @@ function callableSuccess(outcome) {
   return outcome.body.result;
 }
 
-// Correction and lookup denials carry exactly status and message: no structured reason.
-function callableDenied(outcome, code, message) {
+// Correction and lookup denials carry exactly status and message, plus details { reason }
+// only when the rule publishes a structured reason; anything else fails closed.
+function callableDenied(outcome, code, message, reason) {
   const error = outcome.body?.error;
   if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || error?.status !== code
-    || (message !== undefined && error.message !== message) || !same(Object.keys(error).sort(), ['message', 'status'])) {
+    || (message !== undefined && error.message !== message)
+    || !same(Object.keys(error).sort(), reason === undefined ? ['message', 'status'] : ['details', 'message', 'status'])
+    || (reason !== undefined && !same(error.details, { reason }))) {
     throw new Error('acceptance/callable-denial');
   }
 }
@@ -716,8 +725,8 @@ async function runScenario({ manifest, call, step }) {
   const ids = manifest.ids();
   const succeed = (label, kind) => step(`${kind} success: ${label}`, () => manifest.execute(label,
     async (data) => callableSuccess(await call(CALLABLE[kind], data, 'seller'))));
-  const deny = (name, fn, data, role, code, message) => step(`denial: ${name}`, () => manifest.unchanged(async () => {
-    callableDenied(await call(fn, data, role), code, message);
+  const deny = (name, fn, data, role, code, message, reason) => step(`denial: ${name}`, () => manifest.unchanged(async () => {
+    callableDenied(await call(fn, data, role), code, message, reason);
   }));
   const observe = (name, fn, data, role, expected) => step(name, () => manifest.unchanged(async () => {
     requireSame(callableSuccess(await call(fn, data, role)), expected());
@@ -748,7 +757,7 @@ async function runScenario({ manifest, call, step }) {
     if (manifest.lookup('sale-i').sale.folio !== folio()) throw new Error('acceptance/folio-collision');
   });
   await deny('find: a folio shared by two own sales is ambiguous', 'findCorrectableSale', { folio: folio() }, 'seller',
-    'FAILED_PRECONDITION', DENIAL.ambiguous);
+    'FAILED_PRECONDITION', DENIAL.ambiguous, 'folio-ambiguous');
   // 1. findCorrectableSale: own branch only; missing and foreign share one answer.
   await observe('find: own-branch sale with full remaining quantities', 'findCorrectableSale', { saleId: saleU }, 'seller',
     () => manifest.lookup('sale-u'));
@@ -765,13 +774,49 @@ async function runScenario({ manifest, call, step }) {
     requireSame(manifest.recent().sales.map((sale) => sale.saleId), [manifest.key('sale-i'), saleU]);
   });
   await observe('list: the foreign seller sees none of them', 'listRecentCorrectableSales', {}, 'foreign', () => ({ sales: [] }));
+  // CORR-07P previews: read-only, seller-only, and exactly what the later submit produces.
+  const previews = new Map();
+  const previewData = (label) => {
+    const { idempotencyKey, note, differencePayment, ...data } = manifest.request(label);
+    return data;
+  };
+  const preview = (label) => step(`preview: ${label} writes nothing`, () => manifest.unchanged(async () => {
+    const kind = manifest.kind(label);
+    previews.set(label, callableSuccess(await call(PREVIEW[kind], previewData(label), 'seller')));
+  }));
+  const previewMatches = (label) => step(`preview: ${label} equals the confirmed submit`, async () => {
+    const { saleId, ...receipt } = manifest.receipt(label);
+    const expected = manifest.kind(label) === 'return'
+      ? { saleId, lines: receipt.lines, refund: receipt.refund, invoiced: receipt.invoiced }
+      : { saleId, returned: receipt.returned, newItems: receipt.newItems,
+        settlement: (({ differencePayment, ...amounts }) => amounts)(receipt.settlement),
+        newLines: receipt.newItems.productIds.map((productId) => ({ productId, available: true })),
+        invoiced: receipt.invoiced };
+    requireSame(previews.get(label), expected);
+  });
+  for (const [kind, label] of [['return', 'return-good'], ['exchange', 'exchange-pay']]) {
+    for (const role of ['client', 'unassigned', 'administrator']) {
+      await deny(`preview ${kind}: ${role} is not a seller`, PREVIEW[kind], previewData(label), role,
+        'PERMISSION_DENIED', DENIAL.seller);
+    }
+    await deny(`preview ${kind}: anonymous`, PREVIEW[kind], previewData(label), 'anonymous',
+      'UNAUTHENTICATED', DENIAL.unauthenticated);
+    await deny(`preview ${kind}: foreign seller gets not-found`, PREVIEW[kind], previewData(label), 'foreign',
+      'NOT_FOUND', DENIAL.notFound);
+  }
   // 3. submitSaleReturn: partial good restock, defect recorded only, original method, replay, over-return.
+  await preview('return-good');
   await succeed('return-good', 'return');
+  await previewMatches('return-good');
   await observe('return: exact replay', 'submitSaleReturn', manifest.request('return-good'), 'seller',
     () => ({ receipt: manifest.receipt('return-good'), replayed: true }));
   await deny('return: over-return', 'submitSaleReturn', manifest.request('return-over'), 'seller', 'OUT_OF_RANGE', DENIAL.overReturn);
+  await deny('preview return: the same over-return', 'previewSaleReturn', previewData('return-over'), 'seller',
+    'OUT_OF_RANGE', DENIAL.overReturn);
   await deny('return: foreign seller', 'submitSaleReturn', manifest.request('return-foreign'), 'foreign', 'NOT_FOUND', DENIAL.notFound);
+  await preview('return-invoiced');
   await succeed('return-invoiced', 'return');
+  await previewMatches('return-invoiced');
   await step('return: refunds use the original method and the IVA charged', async () => {
     requireSame(manifest.receipt('return-good').refund,
       { method: 'cash', baseCentavos: 2000, additionalIvaCentavos: 0, totalCentavos: 2000 });
@@ -788,12 +833,23 @@ async function runScenario({ manifest, call, step }) {
   await deny('replacement: insufficient stock', 'submitSaleReplacement', manifest.request('replace-stock'), 'seller',
     'FAILED_PRECONDITION', DENIAL.stock);
   // 5. submitSaleExchange: exact difference paid, refund, same product refused.
+  await preview('exchange-pay');
+  await step('preview: exchange-pay owes exactly the difference payment it will submit', async () => {
+    const owed = previews.get('exchange-pay').settlement.customerPaysCentavos;
+    if (owed !== manifest.request('exchange-pay').differencePayment.amountCentavos
+      || owed === manifest.request('exchange-wrong-pay').differencePayment.amountCentavos) {
+      throw new Error('acceptance/preview-amount');
+    }
+  });
   await deny('exchange: a wrong difference payment', 'submitSaleExchange', manifest.request('exchange-wrong-pay'), 'seller',
-    'INVALID_ARGUMENT', DENIAL.payment);
+    'INVALID_ARGUMENT', DENIAL.payment, 'payment-mismatch');
   await succeed('exchange-pay', 'exchange');
+  await previewMatches('exchange-pay');
   await deny('exchange: same product', 'submitSaleExchange', manifest.request('exchange-same'), 'seller',
     'INVALID_ARGUMENT', DENIAL.sameProduct);
+  await preview('exchange-refund');
   await succeed('exchange-refund', 'exchange');
+  await previewMatches('exchange-refund');
   await step('exchange: settlements', async () => {
     const pay = manifest.receipt('exchange-pay').settlement;
     const back = manifest.receipt('exchange-refund').settlement;
@@ -910,6 +966,8 @@ function rehearsal(options = {}) {
     submitSaleReturn: createSaleReturnService(shared),
     submitSaleReplacement: createSaleReplacementService(shared),
     submitSaleExchange: createSaleExchangeService(shared),
+    previewSaleReturn: createSaleReturnPreviewService(shared),
+    previewSaleExchange: createSaleExchangePreviewService(shared),
   };
   // Optional offline fault injection around one real service; live runs never use it.
   const services = Object.fromEntries(Object.entries(real).map(([name, service]) => [name,
@@ -1015,6 +1073,11 @@ test('offline: the full scenario rehearsed against the real services matches eve
   // ambiguous) and for the foreign seller.
   const folioCalls = sample.calls.filter(([name, , fields]) => name === 'findCorrectableSale' && fields === 'folio');
   assert.deepEqual(folioCalls.map(([, caller]) => caller), ['seller', 'seller', 'foreign', 'seller', 'seller']);
+  // Both previews reached the real services for the seller and for every denied role.
+  for (const name of Object.values(PREVIEW)) {
+    assert.deepEqual([...new Set(sample.calls.filter(([called]) => called === name).map(([, caller]) => caller))].sort(),
+      ['administrator', 'anonymous', 'client', 'foreign', 'seller', 'unassigned'], name);
+  }
   // The live REST step covers all ten private collections and all three movement families.
   assert.deepEqual([...new Set(sample.manifest.privateDocuments().map((path) => path.split('/')[0]))].sort(),
     CORRECTION_COLLECTIONS);
@@ -1245,10 +1308,21 @@ test('offline: fake HTTP enforces exact URLs, redirects and bounds; callable env
   assert.doesNotThrow(() => callableDenied(denied, 'OUT_OF_RANGE', DENIAL.overReturn));
   assert.throws(() => callableDenied(denied, 'OUT_OF_RANGE', DENIAL.notFound), /acceptance\/callable-denial/);
   assert.throws(() => callableDenied({ status: 200, body: { result: {} } }, 'OUT_OF_RANGE'), /acceptance\/callable-denial/);
-  // Correction denials publish no structured reason; any extra error field fails closed.
+  // Correction denials publish no structured reason unless the rule does; any extra error field fails closed.
   for (const extra of [{ details: { reason: 'insufficient-stock' } }, { details: null }, { stack: 'private' }]) {
     const forged = { status: 400, body: { error: { ...denied.body.error, ...extra } } };
     assert.throws(() => callableDenied(forged, 'OUT_OF_RANGE', DENIAL.overReturn), /acceptance\/callable-denial/);
+  }
+  const mismatch = { status: 400, body: { error: { status: 'INVALID_ARGUMENT', message: DENIAL.payment,
+    details: { reason: 'payment-mismatch' } } } };
+  assert.doesNotThrow(() => callableDenied(mismatch, 'INVALID_ARGUMENT', DENIAL.payment, 'payment-mismatch'));
+  for (const [error, reason] of [
+    [mismatch.body.error, undefined], [mismatch.body.error, 'folio-ambiguous'],
+    [{ ...mismatch.body.error, details: { reason: 'payment-mismatch', extra: true } }, 'payment-mismatch'],
+    [{ status: 'INVALID_ARGUMENT', message: DENIAL.payment }, 'payment-mismatch'],
+  ]) {
+    assert.throws(() => callableDenied({ status: 400, body: { error } }, 'INVALID_ARGUMENT', DENIAL.payment, reason),
+      /acceptance\/callable-denial/);
   }
   assert.deepEqual(callableSuccess({ status: 200, body: { result: { a: 1 } } }), { a: 1 });
   assert.throws(() => callableSuccess({ status: 200, body: { result: {}, extra: 1 } }), /acceptance\/callable-result/);

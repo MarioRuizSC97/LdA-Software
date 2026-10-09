@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculateSale } from '../src/sales.js';
 import { CORRECTION_WINDOW_MS } from '../src/corrections-calculation.js';
-import { createSaleExchangeService } from '../src/sale-exchanges.js';
+import { createSaleExchangePreviewService, createSaleExchangeService } from '../src/sale-exchanges.js';
 import { createSaleReturnService } from '../src/sale-returns.js';
 import {
   canonical, namespace, openRuntime,
@@ -151,6 +151,10 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     }),
   });
   const { exchange } = services(runtime.firestore);
+  const preview = createSaleExchangePreviewService({
+    firestore: runtime.firestore, environment: runtime.environment, now: () => new Date(NOW),
+  });
+  const previewData = ({ data: { idempotencyKey, note, differencePayment, ...rest } }) => rest;
   // Forces a serialization order: both submissions start together, but the
   // second one waits inside its transaction, before its first read (so it holds
   // no lock), until the first one has committed or failed.
@@ -253,8 +257,18 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     const payment = { method: 'card', amountCentavos: 174 };
     const input = exchangeRequest(key, '1', saleId, { note: 'Wanted the other model',
       differencePayment: payment });
+    // CORR-07P: the read-only preview gives the exact amount the submit accepts.
+    const previewed = await preview({ auth, data: previewData(input) });
+    assert.equal(previewed.settlement.customerPaysCentavos, payment.amountCentavos);
+    for (const path of planExchange(key)) await run.absent(path);
+    await run.absent(`saleReturnLedgers/${saleId}`);
+    const short = await preview({ auth, data: { ...previewData(input), newLines: [{ productId: p2, quantity: '11' }] } });
+    assert.deepEqual(short.newLines, [{ productId: p2, available: false }]);
     const { receipt, replayed } = await exchange(input);
     assert.equal(replayed, false);
+    const { differencePayment, ...settlement } = receipt.settlement;
+    assert.equal(canonical(previewed), canonical({ saleId, returned: receipt.returned, newItems: receipt.newItems,
+      settlement, newLines: [{ productId: p2, available: true }], invoiced: true }));
     assert.equal(canonical(receipt),
       canonical(await confirmExchange(key, '1', saleId, payment, 'Wanted the other model')));
     await run.confirm(stockPath(p1), {
@@ -350,6 +364,7 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     ];
     for (const [label, input, code] of cases) {
       await assert.rejects(exchange(input), (error) => error.code === code, label);
+      await assert.rejects(preview({ auth, data: previewData(input) }), (error) => error.code === code, label);
       for (const path of planExchange(run.ns.key(label))) await run.absent(path);
     }
     for (const id of [foreign, expired]) await run.absent(`saleReturnLedgers/${id}`);

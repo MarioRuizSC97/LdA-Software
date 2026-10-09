@@ -20,6 +20,10 @@ const CALLABLES = [
     unavailable: 'sale replacement is temporarily unavailable' },
   { name: 'submitSaleExchange', factory: 'createSaleExchangeService', operation: 'submitExchange',
     unavailable: 'sale exchange is temporarily unavailable' },
+  { name: 'previewSaleReturn', factory: 'createSaleReturnPreviewService', operation: 'previewReturn',
+    unavailable: 'sale return preview is temporarily unavailable' },
+  { name: 'previewSaleExchange', factory: 'createSaleExchangePreviewService', operation: 'previewExchange',
+    unavailable: 'sale exchange preview is temporarily unavailable' },
 ];
 let environment, events, apps, failure, forwarded;
 const firestore = Object.freeze({ seam: 'admin-firestore' });
@@ -64,6 +68,9 @@ const seams = {
   createSaleReplacementService: factory('createSaleReplacementService',
     (name) => operation(name, 'submitReplacement')),
   createSaleExchangeService: factory('createSaleExchangeService', (name) => operation(name, 'submitExchange')),
+  createSaleReturnPreviewService: factory('createSaleReturnPreviewService', (name) => operation(name, 'previewReturn')),
+  createSaleExchangePreviewService: factory('createSaleExchangePreviewService',
+    (name) => operation(name, 'previewExchange')),
 };
 // Load the real entrypoint with virtual dependency modules. No SDK is imported;
 // the real pure sale module supplies the guard and the SaleError class.
@@ -76,9 +83,9 @@ const replacements = new Map([
   ['firebase-functions/v2/https', ['HttpsError', 'onCall']],
   ['./sales.js', ['SaleError', 'assertLocalSalesEmulator', 'createSaleService', 'createSaleQuoteService']],
   ['./sale-lookup.js', ['createSaleLookupService']],
-  ['./sale-returns.js', ['createSaleReturnService']],
+  ['./sale-returns.js', ['createSaleReturnService', 'createSaleReturnPreviewService']],
   ['./sale-replacements.js', ['createSaleReplacementService']],
-  ['./sale-exchanges.js', ['createSaleExchangeService']],
+  ['./sale-exchanges.js', ['createSaleExchangeService', 'createSaleExchangePreviewService']],
 ]);
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -207,4 +214,37 @@ test('findCorrectableSale forwards a folio request unchanged to the lookup servi
   assert.equal(forwarded, request);
   assert.deepEqual(forwarded.data, { folio: 'nte-3f2a-9c1b' });
   assert.equal(events.at(-1), 'createSaleLookupService.findSale');
+});
+
+test('a correction reason such as folio-ambiguous or payment-mismatch passes through every callable', async () => {
+  for (const { name } of CALLABLES) {
+    for (const [code, message, reason] of [
+      ['failed-precondition', 'folio is ambiguous; use the full receipt id or the recent list', 'folio-ambiguous'],
+      ['invalid-argument', 'difference payment must equal the amount the customer owes', 'payment-mismatch'],
+    ]) {
+      reset();
+      failure = { at: 'operation', error: new sales.SaleError(code, message, reason) };
+      await assert.rejects(invoke(name), (error) => {
+        assert.ok(error instanceof HttpsError);
+        assert.deepEqual([error.code, error.message, error.details], [code, message, { reason }]);
+        return true;
+      });
+    }
+  }
+});
+
+test('the preview callables forward requests unchanged to their own read-only services', async () => {
+  for (const [name, method, data] of [
+    ['previewSaleReturn', 'createSaleReturnPreviewService.previewReturn',
+      { saleId: 'sale-one', reason: 'other', lines: [{ lineIndex: 0, quantity: '1', condition: 'good' }] }],
+    ['previewSaleExchange', 'createSaleExchangePreviewService.previewExchange',
+      { saleId: 'sale-one', reason: 'other', returnLines: [], newLines: [] }],
+  ]) {
+    reset();
+    const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'branch-north' } }, data };
+    assert.equal(await invoke(name, request), safeResult);
+    assert.equal(forwarded, request);
+    assert.equal(events.at(-1), method);
+    assert.ok(!events.some((event) => /\.submit/.test(event)), 'a preview never reaches a submit service');
+  }
 });

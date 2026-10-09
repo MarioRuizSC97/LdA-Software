@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculateSale } from '../src/sales.js';
-import { createSaleReturnService } from '../src/sale-returns.js';
+import { createSaleReturnPreviewService, createSaleReturnService } from '../src/sale-returns.js';
 import { canonical, namespace, openRuntime } from './sales-emulator-support.mjs';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -121,6 +121,9 @@ test('INV05 real Firestore seller returns (CORR-03)', async (t) => {
   const submit = createSaleReturnService({
     firestore: runtime.firestore, environment: runtime.environment, now: () => new Date(NOW),
   });
+  const preview = createSaleReturnPreviewService({
+    firestore: runtime.firestore, environment: runtime.environment, now: () => new Date(NOW),
+  });
   const auth = { uid: run.ns.actor, token: { role: 'seller', branchId: a } };
   const request = (key, quantity, condition, extra = {}) => ({
     auth,
@@ -161,11 +164,19 @@ test('INV05 real Firestore seller returns (CORR-03)', async (t) => {
   await t.test('a factory-defect return refunds, records and leaves sellable stock unchanged', async () => {
     const key = run.ns.key('defect');
     planReturn(key);
+    // CORR-07P: the read-only preview equals the later submit and writes nothing.
+    const { idempotencyKey, note, ...previewData } = request(key, '1', 'factory-defect',
+      { reason: 'factory-defect', note: 'Broken seal' }).data;
+    const previewed = await preview({ auth, data: previewData });
+    for (const path of planReturn(key)) await run.absent(path);
+    await run.absent(`saleReturnLedgers/${saleId}`);
     const { receipt, replayed } = await submit(request(key, '1', 'factory-defect',
       { reason: 'factory-defect', note: 'Broken seal' }));
     assert.equal(replayed, false);
     const expected = receiptFor(key, '1', 'factory-defect', 'factory-defect', 250, 40);
     assert.deepEqual(receipt, expected);
+    assert.equal(canonical(previewed), canonical({ saleId, lines: expected.lines, refund: expected.refund,
+      invoiced: true }));
     await confirmReturn(key, expected, { reason: 'factory-defect', note: 'Broken seal' },
       { type: 'sale-return-defect', quantityScaled: 1 });
     await run.confirm(stockPath, { ...piece, quantityScaled: 1 });
@@ -198,6 +209,27 @@ test('INV05 real Firestore seller returns (CORR-03)', async (t) => {
       returned: { 0: 3 }, lastReturnId: key, updatedAt: AT,
     });
     for (const path of planReturn(keys[1 - winners[0]])) await run.absent(path);
+  });
+
+  await t.test('after partial returns the preview gives the cumulative remainder and refuses as the submit', async () => {
+    const data = (quantity, target = saleId) => ({ saleId: target, reason: 'other',
+      lines: [{ lineIndex: 0, quantity, condition: 'good' }] });
+    assert.equal(canonical(await preview({ auth, data: data('1') })), canonical({ saleId,
+      lines: [{ lineIndex: 0, productId, quantity: '1', condition: 'good',
+        baseCentavos: 250, additionalIvaCentavos: 40, totalCentavos: 290 }],
+      refund: { method: 'cash', baseCentavos: 250, additionalIvaCentavos: 40, totalCentavos: 290 },
+      invoiced: true }));
+    await assert.rejects(preview({ auth, data: data('2') }), (error) => error.code === 'out-of-range'
+      && error.message === 'return exceeds the remaining sold quantity');
+    await assert.rejects(preview({ auth, data: data('1', foreign) }), (error) => error.code === 'not-found'
+      && error.message === 'sale was not found in this branch');
+    await assert.rejects(preview({ auth: { uid: run.ns.actor, token: { role: 'administrator' } }, data: data('1') }),
+      (error) => error.code === 'permission-denied');
+    // Nothing moved: the stock and ledger confirmed by the race are unchanged.
+    for (const path of [stockPath, `saleReturnLedgers/${saleId}`]) {
+      await run.confirm(path, run.entries.get(path).expected);
+    }
+    await run.absent(`saleReturnLedgers/${foreign}`);
   });
 
   await t.test('over-return and foreign sales are refused without writes', async () => {

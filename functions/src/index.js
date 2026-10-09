@@ -18,10 +18,10 @@ import {
   createProductPricingService,
 } from './pricing.js';
 
-import { createSaleExchangeService } from './sale-exchanges.js';
+import { createSaleExchangePreviewService, createSaleExchangeService } from './sale-exchanges.js';
 import { createSaleLookupService } from './sale-lookup.js';
 import { createSaleReplacementService } from './sale-replacements.js';
-import { createSaleReturnService } from './sale-returns.js';
+import { createSaleReturnPreviewService, createSaleReturnService } from './sale-returns.js';
 import {
   SaleError,
   assertLocalSalesEmulator,
@@ -234,4 +234,19 @@ export const submitSaleReplacement = saleCorrectionCallable(
 export const submitSaleExchange = saleCorrectionCallable(
   (firestore) => createSaleExchangeService({ firestore }),
   'sale exchange is temporarily unavailable',
+);
+
+/**
+ * Read-only correction previews (decision 12): exactly what submitSaleReturn
+ * and submitSaleExchange would produce right now, without writing. One
+ * callable per kind, mirroring the submits and their exact request shapes.
+ */
+export const previewSaleReturn = saleCorrectionCallable(
+  (firestore) => createSaleReturnPreviewService({ firestore }),
+  'sale return preview is temporarily unavailable',
+);
+
+export const previewSaleExchange = saleCorrectionCallable(
+  (firestore) => createSaleExchangePreviewService({ firestore }),
+  'sale exchange preview is temporarily unavailable',
 );

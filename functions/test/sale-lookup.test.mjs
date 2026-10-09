@@ -107,6 +107,8 @@ async function rejectsWith(promise, code, message) {
     assert.ok(error instanceof SaleError, `unexpected ${error}`);
     assert.equal(error.code, code);
     if (message) assert.equal(error.message, message);
+    // Only the ambiguous folio publishes a structured reason.
+    assert.equal(error.reason, undefined);
     return true;
   });
 }
@@ -489,8 +491,14 @@ test('two or more in-window folio matches are ambiguous and reveal no sale', asy
     const { firestore, service } = fixture(keys.map((key, index) => [
       `sales/${key}`, folioSaleRecord(key, 'north', NOW - (index + 1) * DAY),
     ]));
-    await rejectsWith(service.findSale({ auth, data: { folio: 'nte-3f2a-9c1b' } }), 'failed-precondition',
-      'folio is ambiguous; use the full receipt id or the recent list');
+    await assert.rejects(service.findSale({ auth, data: { folio: 'nte-3f2a-9c1b' } }), (error) => {
+      assert.ok(error instanceof SaleError);
+      assert.equal(error.code, 'failed-precondition');
+      assert.equal(error.message, 'folio is ambiguous; use the full receipt id or the recent list');
+      // CORR-07P: the structured signal the client branches on, never the message.
+      assert.equal(error.reason, 'folio-ambiguous');
+      return true;
+    });
     assert.ok(!firestore.events.some(([kind, path]) => kind === 'get' && path.startsWith('saleReturnLedgers/')));
     assert.deepEqual(firestore.writes, []);
   }

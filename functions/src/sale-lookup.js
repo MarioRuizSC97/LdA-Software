@@ -72,7 +72,7 @@ export function createSaleLookupService({
       if (docs.length === 0) throw notFound();
       if (docs.length > 1) {
         throw new SaleError('failed-precondition',
-          'folio is ambiguous; use the full receipt id or the recent list');
+          'folio is ambiguous; use the full receipt id or the recent list', 'folio-ambiguous');
       }
       return correctableSale(transaction, docs[0].id, docs[0].data());
     }, { readOnly: true });

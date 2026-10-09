@@ -9,7 +9,9 @@ import { assertLocalSalesEmulator, SaleError } from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'reason', 'lines'];
+const PREVIEW_REQUEST_FIELDS = ['saleId', 'reason', 'lines'];
 const LINE_FIELDS = ['lineIndex', 'quantity', 'condition'];
+const RETURN_CLOCK_INVALID = 'return clock is invalid';
 const RECEIPT_FIELDS = [
   'version', 'returnId', 'saleId', 'branchId', 'reason', 'lines', 'refund', 'invoiced',
 ];
@@ -60,7 +62,7 @@ export function createSaleReturnService({
     const fingerprint = JSON.stringify({ actorId, branchId, ...input });
     const replayReference = firestore.doc(`saleReturnSubmissionReceipts/${input.idempotencyKey}`);
     // Captured once, outside retryable callbacks; replay never depends on it.
-    const clock = invocationTime(now, 'return clock is invalid');
+    const clock = invocationTime(now, RETURN_CLOCK_INVALID);
 
     return firestore.runTransaction(async (transaction) => {
       const replay = await transaction.get(replayReference);
@@ -72,35 +74,15 @@ export function createSaleReturnService({
       }
       if (clock.error) throw clock.error;
 
-      const sale = await correctableSale(transaction, firestore, input.saleId, branchId, clock.ms);
-      const ledgerReference = firestore.doc(`saleReturnLedgers/${input.saleId}`);
-      const previous = storedReturnLedger(await transaction.get(ledgerReference), sale);
-      const refund = returnRefund(sale, previous, input.lines);
-      const restock = restockPlan(sale, refund, input.lines);
-      const stockReads = await Promise.all([...restock.values()].map(async (entry) => {
-        const [product, stock] = await Promise.all([
-          transaction.get(firestore.doc(`products/${entry.productId}`)),
-          transaction.get(firestore.doc(`branches/${branchId}/stock/${entry.productId}`)),
-        ]);
-        return { entry, product, stock };
-      }));
+      const plan = await readReturnPlan(transaction, firestore, branchId, input, clock.ms);
+      const { sale, ledgerReference, previous, refund } = plan;
       const key = input.idempotencyKey;
       await assertCreateTargetsAbsent(transaction, [
         firestore.doc(`saleReturns/${key}`), firestore.doc(`saleReturnAudits/${key}`),
         ...refund.lines.map((line, index) => firestore.doc(`inventoryMovements/${movementId(key, index)}`)),
       ]);
       // All reads, including the replay ownership guard, finish before writes.
-      const stockWrites = stockReads.map(({ entry, product, stock }) => {
-        const productSpec = storedProductSpec(product);
-        const current = stockProjection(stock, productSpec);
-        let next;
-        try {
-          next = addStockMovement(current, entry.scaled, productSpec, entry.spec);
-        } catch {
-          throw new SaleError('failed-precondition', 'stock projection cannot accept the return');
-        }
-        return { entry, productSpec, next };
-      });
+      const stockWrites = restockWrites(plan.stockReads);
 
       const { timestamp } = clock;
       const receipt = returnReceipt(input, branchId, refund);
@@ -138,6 +120,76 @@ export function createSaleReturnService({
   };
 }
 
+/**
+ * Read-only preview of submitReturn (decision 12), not a callable registration.
+ * Request.data is exactly { saleId, reason, lines: [{ lineIndex, quantity,
+ * condition }] }: the submit request without its write-only idempotencyKey and
+ * note. Only trusted auth.token { role: 'seller', branchId } assigns the branch.
+ *
+ * One read-only transaction runs the same reads and checks as a new submit
+ * (sale, branch, window, ledger with cumulative rounding, lines, conditions,
+ * restock projections) through the same helpers, and rejects with the same
+ * SaleError. Only the idempotency checks (replay, create collisions) are
+ * skipped, because a preview has no key. It never writes.
+ *
+ * Returns a deeply frozen { saleId, lines, refund, invoiced } whose fields are
+ * exactly the receipt fields the submit would produce right now.
+ */
+export function createSaleReturnPreviewService({
+  firestore, now = () => new Date(), environment = process.env,
+} = {}) {
+  if (!firestore || typeof firestore.doc !== 'function' || typeof firestore.runTransaction !== 'function') {
+    throw new TypeError('an Admin Firestore-compatible instance is required');
+  }
+  if (typeof now !== 'function') throw new TypeError('now must be a function');
+
+  return async function previewReturn(request = {}) {
+    assertLocalSalesEmulator(environment);
+    const { branchId } = correctionSeller(request?.auth);
+    const input = returnPreviewInput(request?.data);
+    const clock = invocationTime(now, RETURN_CLOCK_INVALID);
+    return firestore.runTransaction(async (transaction) => {
+      if (clock.error) throw clock.error;
+      const plan = await readReturnPlan(transaction, firestore, branchId, input, clock.ms);
+      restockWrites(plan.stockReads);
+      return Object.freeze({ saleId: input.saleId, ...returnAmounts(input, plan.refund) });
+    }, { readOnly: true });
+  };
+}
+
+// Shared submit and preview reads, in the submit's order: the sale (branch and
+// window), its ledger, the refund, then product and stock for good lines.
+async function readReturnPlan(transaction, firestore, branchId, input, nowMs) {
+  const sale = await correctableSale(transaction, firestore, input.saleId, branchId, nowMs);
+  const ledgerReference = firestore.doc(`saleReturnLedgers/${input.saleId}`);
+  const previous = storedReturnLedger(await transaction.get(ledgerReference), sale);
+  const refund = returnRefund(sale, previous, input.lines);
+  const restock = restockPlan(sale, refund, input.lines);
+  const stockReads = await Promise.all([...restock.values()].map(async (entry) => {
+    const [product, stock] = await Promise.all([
+      transaction.get(firestore.doc(`products/${entry.productId}`)),
+      transaction.get(firestore.doc(`branches/${branchId}/stock/${entry.productId}`)),
+    ]);
+    return { entry, product, stock };
+  }));
+  return { sale, ledgerReference, previous, refund, stockReads };
+}
+
+// Validates every restocked projection; the submit writes exactly these.
+function restockWrites(stockReads) {
+  return stockReads.map(({ entry, product, stock }) => {
+    const productSpec = storedProductSpec(product);
+    const current = stockProjection(stock, productSpec);
+    let next;
+    try {
+      next = addStockMovement(current, entry.scaled, productSpec, entry.spec);
+    } catch {
+      throw new SaleError('failed-precondition', 'stock projection cannot accept the return');
+    }
+    return { entry, productSpec, next };
+  });
+}
+
 function movementId(key, index) {
   return `return-${key}-${index}`;
 }
@@ -151,27 +203,47 @@ function returnInput(data) {
       throw new TypeError('key, sale and reason are required');
     }
     const note = optionalNote(data);
-    denseArray(data.lines);
-    if (data.lines.length === 0) throw new TypeError('lines are required');
-    const seen = new Set();
-    const lines = data.lines.map((line) => {
-      exactFields(line, LINE_FIELDS);
-      if (!Number.isSafeInteger(line.lineIndex) || line.lineIndex < 0 || seen.has(line.lineIndex)) {
-        throw new TypeError('line index must be unique and valid');
-      }
-      seen.add(line.lineIndex);
-      if (!canonicalQuantity(line.quantity) || !RETURN_CONDITIONS.includes(line.condition)) {
-        throw new TypeError('quantity and condition are required');
-      }
-      return { lineIndex: line.lineIndex, quantity: line.quantity, condition: line.condition };
-    });
     return {
       idempotencyKey: data.idempotencyKey, saleId: data.saleId, reason: data.reason,
-      note, lines,
+      note, lines: returnLinesInput(data.lines),
     };
   } catch {
     throw new SaleError('invalid-argument', 'return request contains missing, invalid or unsupported fields');
   }
+}
+
+function returnPreviewInput(data) {
+  try {
+    exactFields(data, PREVIEW_REQUEST_FIELDS);
+    if (!validId(data.saleId) || !RETURN_REASONS.includes(data.reason)) {
+      throw new TypeError('sale and reason are required');
+    }
+    return { saleId: data.saleId, reason: data.reason, lines: returnLinesInput(data.lines) };
+  } catch {
+    throw new SaleError('invalid-argument', 'return preview request contains missing, invalid or unsupported fields');
+  }
+}
+
+/**
+ * Shared by returns, exchanges and their previews: a dense, nonempty list of
+ * unique sale lines with canonical quantities and a supported condition.
+ * Throws TypeError so each caller maps it into its own invalid-argument.
+ */
+export function returnLinesInput(value) {
+  denseArray(value);
+  if (value.length === 0) throw new TypeError('lines are required');
+  const seen = new Set();
+  return value.map((line) => {
+    exactFields(line, LINE_FIELDS);
+    if (!Number.isSafeInteger(line.lineIndex) || line.lineIndex < 0 || seen.has(line.lineIndex)) {
+      throw new TypeError('line index must be unique and valid');
+    }
+    seen.add(line.lineIndex);
+    if (!canonicalQuantity(line.quantity) || !RETURN_CONDITIONS.includes(line.condition)) {
+      throw new TypeError('quantity and condition are required');
+    }
+    return { lineIndex: line.lineIndex, quantity: line.quantity, condition: line.condition };
+  });
 }
 
 function returnRefund(sale, returned, lines) {
@@ -221,6 +293,17 @@ function returnReceipt(input, branchId, refund) {
     saleId: input.saleId,
     branchId,
     reason: input.reason,
+    ...returnAmounts(input, refund),
+  });
+}
+
+/**
+ * The amount fields of a return receipt, shared with the exchange returned
+ * part and both previews: per-line amounts in request order with their
+ * condition, the refund by the original method, and the invoiced flag.
+ */
+export function returnAmounts(input, refund) {
+  return {
     lines: Object.freeze(refund.lines.map((line, index) => Object.freeze({
       lineIndex: line.lineIndex,
       productId: line.productId,
@@ -237,7 +320,7 @@ function returnReceipt(input, branchId, refund) {
       totalCentavos: refund.totalCentavos,
     }),
     invoiced: refund.invoiced,
-  });
+  };
 }
 
 function validatedReplay(record, input, actorId, branchId, fingerprint) {
