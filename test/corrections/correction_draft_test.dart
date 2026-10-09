@@ -455,5 +455,69 @@ void main() {
       expect(store.unresolvedFor('seller-1', saleBranchId), isNotNull);
       expect(store.resolve(again), isTrue);
     });
+
+    test('a completed draft keeps its receipt until acknowledged', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReturnDraft draft = returnDraft();
+      final Object receipt = Object();
+      final CorrectionAttempt stale = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      final CorrectionAttempt current = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      expect(store.complete(stale, receipt), isFalse);
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      expect(store.complete(current, receipt), isTrue);
+
+      expect(store.unresolvedFor('seller-1', saleBranchId), isNull);
+      final CompletedCorrection? completed = store.completedFor(
+        'seller-1',
+        saleBranchId,
+      );
+      expect(completed?.draft, same(draft));
+      expect(completed?.receipt, same(receipt));
+      expect(store.completedFor('seller-2', saleBranchId), isNull);
+      // Nothing else may begin before the receipt is acknowledged.
+      expect(
+        () => store.begin(
+          ownerUserId: 'seller-1',
+          draft: returnDraft(note: 'Other note'),
+        ),
+        throwsA(isA<CorrectionUnresolvedException>()),
+      );
+      expect(store.acknowledge('seller-1', saleBranchId, Object()), isFalse);
+      expect(store.acknowledge('seller-2', saleBranchId, receipt), isFalse);
+      expect(store.completedFor('seller-1', saleBranchId), isNotNull);
+      expect(store.acknowledge('seller-1', saleBranchId, receipt), isTrue);
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      store.begin(
+        ownerUserId: 'seller-1',
+        draft: returnDraft(note: 'Other note'),
+      );
+    });
+
+    test('an equal draft begun after completion awaits its replay again', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReturnDraft draft = returnDraft();
+      final CorrectionAttempt first = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      final Object receipt = Object();
+      expect(store.complete(first, receipt), isTrue);
+      final CorrectionAttempt replay = store.begin(
+        ownerUserId: 'seller-1',
+        draft: returnDraft(),
+      );
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      expect(store.unresolvedFor('seller-1', saleBranchId), equals(draft));
+      // The old receipt no longer acknowledges anything.
+      expect(store.acknowledge('seller-1', saleBranchId, receipt), isFalse);
+      expect(store.resolve(first), isFalse);
+      expect(store.isCurrent(replay), isTrue);
+    });
   });
 }

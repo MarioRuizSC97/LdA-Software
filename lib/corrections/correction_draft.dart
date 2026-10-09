@@ -539,15 +539,32 @@ class CorrectionAttempt {
 }
 
 class _StoredCorrectionDraft {
-  const _StoredCorrectionDraft(this.draft, this.revision);
+  _StoredCorrectionDraft(this.draft, this.revision);
   final SaleCorrectionDraft draft;
   final int revision;
+
+  /// The committed receipt, once the current attempt succeeded; until it is
+  /// acknowledged the entry still blocks any other correction.
+  Object? receipt;
+}
+
+/// A committed correction whose receipt the seller has not yet left.
+class CompletedCorrection {
+  const CompletedCorrection._(this.draft, this.receipt);
+  final SaleCorrectionDraft draft;
+  final Object receipt;
 }
 
 /// Volatile, live-shell-only retry storage mirroring `SaleDraftStore`: at
-/// most one unresolved correction (of any kind) per exact seller and branch.
+/// most one correction (of any kind) per exact seller and branch.
 /// An uncertain submission retries the same draft (same key, same payload)
-/// until it resolves; only the current attempt's revision may resolve it.
+/// until it resolves; only the current attempt's revision may resolve or
+/// complete it.
+///
+/// A success does not drop the entry: [complete] keeps the draft with its
+/// receipt until the seller has seen it and [acknowledge]s it, so a receipt
+/// whose form was disposed mid-submit is shown on the next opening instead
+/// of being lost, and no other correction can begin meanwhile.
 class CorrectionDraftStore {
   final Map<String, Map<String, _StoredCorrectionDraft>> _drafts =
       <String, Map<String, _StoredCorrectionDraft>>{};
@@ -556,9 +573,24 @@ class CorrectionDraftStore {
   // never match an equal draft begun again afterwards.
   int _lastRevision = 0;
 
-  SaleCorrectionDraft? unresolvedFor(String ownerUserId, String branchId) =>
-      _drafts[ownerUserId]?[branchId]?.draft;
+  /// The stored draft still awaiting an outcome; null once completed.
+  SaleCorrectionDraft? unresolvedFor(String ownerUserId, String branchId) {
+    final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
+    return stored == null || stored.receipt != null ? null : stored.draft;
+  }
 
+  /// The committed correction awaiting acknowledgement, if any.
+  CompletedCorrection? completedFor(String ownerUserId, String branchId) {
+    final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
+    final Object? receipt = stored?.receipt;
+    return receipt == null
+        ? null
+        : CompletedCorrection._(stored!.draft, receipt);
+  }
+
+  /// Begins an attempt. An equal draft, even an already completed one, may
+  /// be sent again (the server replays it); any other draft is refused
+  /// while one is stored.
   CorrectionAttempt begin({
     required String ownerUserId,
     required SaleCorrectionDraft draft,
@@ -587,12 +619,35 @@ class CorrectionDraftStore {
         current.draft == attempt.draft;
   }
 
+  /// Drops the current attempt's draft: a deterministic rejection committed
+  /// nothing.
   bool resolve(CorrectionAttempt attempt) {
     if (!isCurrent(attempt)) return false;
-    final Map<String, _StoredCorrectionDraft> branchDrafts =
-        _drafts[attempt.ownerUserId]!;
-    branchDrafts.remove(attempt.draft.branchId);
-    if (branchDrafts.isEmpty) _drafts.remove(attempt.ownerUserId);
+    _remove(attempt.ownerUserId, attempt.draft.branchId);
     return true;
+  }
+
+  /// Records the current attempt's committed [receipt] and keeps the entry
+  /// until [acknowledge].
+  bool complete(CorrectionAttempt attempt, Object receipt) {
+    if (!isCurrent(attempt)) return false;
+    _drafts[attempt.ownerUserId]![attempt.draft.branchId]!.receipt = receipt;
+    return true;
+  }
+
+  /// Drops the completed entry whose receipt is exactly [receipt]; anything
+  /// else (an unresolved draft, another receipt) is kept.
+  bool acknowledge(String ownerUserId, String branchId, Object receipt) {
+    final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
+    if (stored == null || !identical(stored.receipt, receipt)) return false;
+    _remove(ownerUserId, branchId);
+    return true;
+  }
+
+  void _remove(String ownerUserId, String branchId) {
+    final Map<String, _StoredCorrectionDraft> branchDrafts =
+        _drafts[ownerUserId]!;
+    branchDrafts.remove(branchId);
+    if (branchDrafts.isEmpty) _drafts.remove(ownerUserId);
   }
 }

@@ -37,6 +37,8 @@ final SaleCorrections _corrections = SaleCorrections(
   previewReturn: (_) async => throw UnimplementedError(),
   submitReturn: (_) async => throw UnimplementedError(),
   unresolvedDraft: () => null,
+  unacknowledgedReturn: () => null,
+  acknowledgeReturn: (_) {},
 );
 
 Widget _page(

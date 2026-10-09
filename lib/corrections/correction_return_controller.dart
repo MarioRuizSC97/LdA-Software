@@ -73,7 +73,10 @@ class CorrectionReturnController extends ChangeNotifier {
     final SaleReturnDraft? own = _ownDraft(unresolved);
     if (own != null) {
       _lock(own);
-    } else if (unresolved != null) {
+    } else if (unresolved != null ||
+        corrections.unacknowledgedReturn() != null) {
+      // The lookup shows an unacknowledged receipt before any form; this only
+      // guards a form opened anyway.
       _blockedMessage = correctionUnresolvedMessage;
     }
   }
@@ -133,7 +136,9 @@ class CorrectionReturnController extends ChangeNotifier {
     _formChanged();
   }
 
-  void setQuantity(int lineIndex, String text) {
+  /// Revalidates and re-previews after a quantity edit. The line's
+  /// [ReturnLineEntry.quantity] controller already holds the new text.
+  void quantityChanged() {
     if (!canEdit) return;
     _formChanged();
   }
@@ -184,7 +189,13 @@ class CorrectionReturnController extends ChangeNotifier {
       _notify();
       return;
     }
-    if (draft.previewRequest != current.request) return;
+    // The draft is built from the same form as the fresh preview, so this
+    // cannot differ unless the request derivation itself drifts. Never send
+    // a refund the seller was not shown: re-preview instead.
+    if (draft.previewRequest != current.request) {
+      retryPreview();
+      return;
+    }
     await _send(draft);
   }
 
@@ -205,6 +216,9 @@ class CorrectionReturnController extends ChangeNotifier {
     _notify();
     try {
       final SaleReturnReceipt receipt = await _corrections.submitReturn(draft);
+      // A disposed form drops the receipt here safely: the shell keeps it
+      // until the seller acknowledges it, and the lookup shows it on the
+      // next opening.
       if (_disposed) return;
       _submitting = false;
       _lockedDraft = null;

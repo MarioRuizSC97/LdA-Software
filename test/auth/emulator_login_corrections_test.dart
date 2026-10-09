@@ -73,6 +73,10 @@ class _CorrectionBackend {
   Completer<Object?>? pendingFind;
   Completer<Object?>? pendingList;
   Completer<Object?>? pendingReturn;
+
+  /// Answers the next returns in order, ahead of [pendingReturn]: a
+  /// [Completer], an error to throw, or a response.
+  final List<Object?> returnAnswers = <Object?>[];
   final List<Map<String, Object?>> returns = <Map<String, Object?>>[];
   final List<Map<String, Object?>> previews = <Map<String, Object?>>[];
   final List<Object> returnFailures = <Object>[];
@@ -100,6 +104,12 @@ class _CorrectionBackend {
       returnInvoke: (Map<String, Object?> request) async {
         returns.add(request);
         if (returnFailures.isNotEmpty) throw returnFailures.removeAt(0);
+        if (returnAnswers.isNotEmpty) {
+          final Object? answer = returnAnswers.removeAt(0);
+          if (answer is Completer<Object?>) return answer.future;
+          if (answer is Exception || answer is Error) throw answer!;
+          return answer;
+        }
         final Completer<Object?>? pending = pendingReturn;
         if (pending != null) return pending.future;
         return returnResponse();
@@ -126,6 +136,26 @@ Widget _app(
 );
 
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
+
+const SaleCallableException _overReturn = SaleCallableException(
+  code: 'out-of-range',
+  message: 'return exceeds the remaining sold quantity',
+);
+
+/// The default return under another idempotency key.
+SaleReturnDraft _newKeyDraft() => SaleReturnDraft.create(
+  sale: lookupSale(),
+  branchId: saleBranchId,
+  reason: CorrectionReason.other,
+  lines: const <ReturnLineInput>[
+    ReturnLineInput(
+      lineIndex: 1,
+      quantity: '1',
+      condition: ReturnCondition.good,
+    ),
+  ],
+  createKey: () => '22222222-3333-4444-8555-666666666666',
+);
 
 Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
@@ -380,5 +410,167 @@ void main() {
     );
     expect(seller.unresolvedDraft(), isNull);
     expect(backend.returns, isEmpty);
+  });
+
+  testWidgets('a committed return keeps its receipt until acknowledged', (
+    WidgetTester tester,
+  ) async {
+    final _CorrectionBackend backend = _CorrectionBackend();
+    final _SessionGateway sessions = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(sessions, correctionLoader: backend.load));
+    await tester.pumpAndSettle();
+    final SaleCorrections seller = corrections(tester);
+    final SaleReturnDraft draft = returnDraft();
+
+    final SaleReturnReceipt receipt = await seller.submitReturn(draft);
+    expect(seller.unresolvedDraft(), isNull);
+    final UnacknowledgedReturn? committed = seller.unacknowledgedReturn();
+    expect(committed?.receipt, same(receipt));
+    expect(committed?.draft, same(draft));
+    // Until the seller has seen it, no other correction may begin.
+    await expectLater(
+      seller.submitReturn(_newKeyDraft()),
+      throwsA(isA<CorrectionUnresolvedException>()),
+    );
+    expect(backend.returns, hasLength(1));
+
+    // Another seller can neither see nor acknowledge it.
+    sessions.sessions.add(_otherSeller);
+    await tester.pumpAndSettle();
+    expect(corrections(tester).unacknowledgedReturn(), isNull);
+    seller.acknowledgeReturn(receipt);
+    corrections(tester).acknowledgeReturn(receipt);
+    sessions.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    final SaleCorrections again = corrections(tester);
+    expect(again.unacknowledgedReturn()?.receipt, same(receipt));
+
+    // Only the exact receipt acknowledges it.
+    again.acknowledgeReturn(
+      SaleReturnReceipt.fromCallable(returnResponse(), draft: draft),
+    );
+    expect(again.unacknowledgedReturn()?.receipt, same(receipt));
+    again.acknowledgeReturn(receipt);
+    expect(again.unacknowledgedReturn(), isNull);
+
+    final SaleReturnDraft next = _newKeyDraft();
+    backend.returnAnswers.add(returnResponseFor(next));
+    final SaleReturnReceipt nextReceipt = await again.submitReturn(next);
+    expect(nextReceipt.returnId, next.idempotencyKey);
+  });
+
+  testWidgets('a rejection clears the stored return so a new key can begin', (
+    WidgetTester tester,
+  ) async {
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..returnAnswers.add(StateError('offline'))
+      ..returnAnswers.add(_overReturn);
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), correctionLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    final SaleCorrections seller = corrections(tester);
+    final SaleReturnDraft draft = returnDraft();
+
+    await expectLater(
+      seller.submitReturn(draft),
+      throwsA(isA<SaleUncertainException>()),
+    );
+    expect(seller.unresolvedDraft(), same(draft));
+    await expectLater(
+      seller.submitReturn(draft),
+      throwsA(
+        isA<SaleRejectedException>().having(
+          (SaleRejectedException e) => e.isOverReturn,
+          'isOverReturn',
+          isTrue,
+        ),
+      ),
+    );
+    expect(seller.unresolvedDraft(), isNull);
+    expect(seller.unacknowledgedReturn(), isNull);
+
+    final SaleReturnDraft next = _newKeyDraft();
+    backend.returnAnswers.add(returnResponseFor(next));
+    final SaleReturnReceipt receipt = await seller.submitReturn(next);
+    expect(receipt.returnId, next.idempotencyKey);
+    expect(backend.returns, <Object?>[
+      draft.toRequest(),
+      draft.toRequest(),
+      next.toRequest(),
+    ]);
+  });
+
+  testWidgets('a seller change during a rejection keeps it uncertain', (
+    WidgetTester tester,
+  ) async {
+    final Completer<Object?> pending = Completer<Object?>();
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..returnAnswers.add(pending);
+    final _SessionGateway sessions = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(sessions, correctionLoader: backend.load));
+    await tester.pumpAndSettle();
+    final SaleReturnDraft draft = returnDraft();
+    Object? error;
+    unawaited(
+      corrections(tester)
+          .submitReturn(draft)
+          .then<void>((_) {}, onError: (Object e) => error = e),
+    );
+    await tester.pump();
+    sessions.sessions.add(_otherSeller);
+    await tester.pumpAndSettle();
+    pending.completeError(_overReturn);
+    await tester.pumpAndSettle();
+    expect(error, isA<SaleUncertainException>());
+    sessions.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    expect(corrections(tester).unresolvedDraft(), same(draft));
+  });
+
+  testWidgets('a superseded attempt is stale and keeps the stored return', (
+    WidgetTester tester,
+  ) async {
+    final Completer<Object?> first = Completer<Object?>();
+    final Completer<Object?> second = Completer<Object?>();
+    final Completer<Object?> third = Completer<Object?>();
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..returnAnswers.addAll(<Object?>[first, second, third]);
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), correctionLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    final SaleCorrections seller = corrections(tester);
+    final SaleReturnDraft draft = returnDraft();
+    final List<Object?> outcomes = <Object?>[];
+    void track(Future<SaleReturnReceipt> submit) =>
+        unawaited(submit.then<void>(outcomes.add, onError: outcomes.add));
+
+    track(seller.submitReturn(draft));
+    await tester.pump();
+    track(seller.submitReturn(draft));
+    await tester.pump();
+    expect(backend.returns, hasLength(2));
+
+    // The first attempt was superseded: neither its success nor a
+    // rejection may settle the stored return.
+    first.complete(returnResponse());
+    await tester.pumpAndSettle();
+    expect(outcomes.single, isA<SaleStaleException>());
+    expect(seller.unresolvedDraft(), same(draft));
+    expect(seller.unacknowledgedReturn(), isNull);
+
+    track(seller.submitReturn(draft));
+    await tester.pump();
+    second.completeError(_overReturn);
+    await tester.pumpAndSettle();
+    expect(outcomes.last, isA<SaleStaleException>());
+    expect(seller.unresolvedDraft(), same(draft));
+
+    third.complete(returnResponse());
+    await tester.pumpAndSettle();
+    expect(outcomes.last, isA<SaleReturnReceipt>());
+    expect(seller.unresolvedDraft(), isNull);
+    expect(seller.unacknowledgedReturn()?.receipt, same(outcomes.last));
   });
 }

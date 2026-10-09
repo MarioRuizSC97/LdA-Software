@@ -86,6 +86,8 @@ class _Backend {
       );
     },
     unresolvedDraft: () => null,
+    unacknowledgedReturn: () => null,
+    acknowledgeReturn: (_) {},
   );
 }
 

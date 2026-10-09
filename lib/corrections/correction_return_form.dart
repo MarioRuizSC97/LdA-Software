@@ -234,8 +234,7 @@ class _LineEditor extends StatelessWidget {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  onChanged: (String text) =>
-                      controller.setQuantity(index, text),
+                  onChanged: (_) => controller.quantityChanged(),
                   decoration: InputDecoration(
                     labelText: 'Cantidad a devolver',
                     errorText: entry.error,

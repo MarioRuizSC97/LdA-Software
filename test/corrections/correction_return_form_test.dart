@@ -482,6 +482,33 @@ void main() {
     expect(_confirmEnabled(tester), isFalse);
   });
 
+  testWidgets('an unseen committed return also blocks a new return', (
+    WidgetTester tester,
+  ) async {
+    final SaleReturnDraft committed = returnDraft();
+    final FakeCorrections backend = FakeCorrections()
+      ..completed = (
+        draft: committed,
+        receipt: SaleReturnReceipt.fromCallable(
+          returnResponse(),
+          draft: committed,
+        ),
+      );
+    await _pump(tester, backend: backend, sale: uninvoicedSale());
+    expect(
+      find.text(
+        'Hay otra corrección sin confirmar. Reinténtala antes de registrar '
+        'una nueva.',
+      ),
+      findsOneWidget,
+    );
+    await _tap(tester, _key('return-line-select-0'));
+    await _enter(tester, 'return-line-quantity-0', '1');
+    await _tap(tester, _key('return-reason-other'));
+    await _settlePreview(tester);
+    expect(_confirmEnabled(tester), isFalse);
+  });
+
   testWidgets('a rejection re-previews and explains it in Spanish', (
     WidgetTester tester,
   ) async {

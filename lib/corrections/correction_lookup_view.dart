@@ -6,6 +6,7 @@ import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
 import 'correction_draft.dart';
 import 'correction_receipt.dart';
+import 'correction_return_controller.dart' show correctionSessionMessage;
 import 'correction_return_form.dart';
 import 'correction_return_receipt_view.dart';
 import 'correction_sale.dart';
@@ -16,15 +17,16 @@ import 'sale_corrections.dart';
 // English. This view replaces the catalog body while shown, like the sale
 // receipt, so it is disposed with the page whenever the session changes.
 
-const String _sessionMessage =
-    'Tu sesión cambió. Inicia sesión de nuevo para continuar.';
 const String _searchFailedMessage =
     'No se pudo buscar la venta. Intenta de nuevo.';
 
 /// Seller correction lookup: a folio search plus the branch's recent sales
 /// (last [correctionWindowDays] days). Choosing a sale shows its
 /// [CorrectionSaleDetail], whose "Devolver" opens the [CorrectionReturnForm];
-/// a registered return shows its receipt, then the refetched sale.
+/// a registered return shows its receipt, then the refetched sale. A return
+/// committed while no form was shown (for example, the view closed during
+/// its submit) shows its receipt on entry; leaving the receipt acknowledges
+/// it.
 class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
@@ -69,10 +71,17 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   @override
   void initState() {
     super.initState();
-    // An unresolved return reopens its form, locked to the stored draft.
+    // A committed but unseen return shows its receipt first; otherwise an
+    // unresolved return reopens its form, locked to the stored draft.
+    final UnacknowledgedReturn? committed = widget.corrections
+        .unacknowledgedReturn();
     final SaleCorrectionDraft? unresolved = widget.corrections
         .unresolvedDraft();
-    if (unresolved is SaleReturnDraft) _returning = unresolved.sale;
+    if (committed != null) {
+      _receipt = (committed.receipt, committed.draft.sale);
+    } else if (unresolved is SaleReturnDraft) {
+      _returning = unresolved.sale;
+    }
     _loadRecent();
   }
 
@@ -101,7 +110,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
       setState(() {
         _recentStatus = _RecentStatus.failed;
         _recentError = error is SaleSessionException
-            ? _sessionMessage
+            ? correctionSessionMessage
             : 'No se pudieron cargar las ventas recientes.';
       });
     }
@@ -157,7 +166,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
           'Elige la venta en la lista de ventas recientes.',
     SaleRejectedException(code: 'failed-precondition') =>
       'Esta venta no se puede corregir en este momento.',
-    SaleSessionException() => _sessionMessage,
+    SaleSessionException() => correctionSessionMessage,
     _ => _searchFailedMessage,
   };
 
@@ -194,7 +203,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
       if (!mounted || generation != _searchGeneration) return;
       setState(
         () => _refreshError = failure is SaleSessionException
-            ? _sessionMessage
+            ? correctionSessionMessage
             : 'No se pudo actualizar la venta.',
       );
     }
@@ -223,8 +232,14 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         receipt: receipt.$1,
         sale: receipt.$2,
         productNames: widget.productNames,
-        onBackToSale: () => _refreshSale(receipt.$2.saleId),
-        onNewSearch: _newSearch,
+        onBackToSale: () {
+          widget.corrections.acknowledgeReturn(receipt.$1);
+          _refreshSale(receipt.$2.saleId);
+        },
+        onNewSearch: () {
+          widget.corrections.acknowledgeReturn(receipt.$1);
+          _newSearch();
+        },
       );
     }
     final CorrectableSale? returning = _returning;

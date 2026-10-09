@@ -25,7 +25,8 @@ class CorrectionSaleDetail extends StatelessWidget {
   final Map<String, String> productNames;
   final VoidCallback onBack;
 
-  /// Opens the return form; null hides the action's effect.
+  /// Opens the return form. "Devolver" is disabled when this is null or the
+  /// sale has nothing left to return.
   final VoidCallback? onReturn;
 
   @override

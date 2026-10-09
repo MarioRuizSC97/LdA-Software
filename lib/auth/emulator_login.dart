@@ -561,9 +561,10 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   }
 
   /// Seller return submit, mirroring [_submitSale]: freezes ownership and
-  /// the draft before gateway initialization or transport, and resolves only
-  /// the current attempt's proven success or deterministic rejection.
-  /// Anything else keeps the draft stored for a same-key retry.
+  /// the draft before gateway initialization or transport. Only the current
+  /// attempt's deterministic rejection drops the draft, and only its proven
+  /// success completes it, keeping the receipt until the seller acknowledges
+  /// it. Anything else keeps the draft stored for a same-key retry.
   Future<SaleReturnReceipt> _submitReturn(SaleReturnDraft draft) async {
     final EmulatorSession? session = _session;
     if (!_isExactSeller(session) ||
@@ -583,7 +584,8 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       if (!_isSameCurrentSeller(session)) {
         throw const SaleUncertainException();
       }
-      if (!_correctionDrafts.resolve(attempt)) {
+      // Kept with its receipt, not dropped, until the seller has seen it.
+      if (!_correctionDrafts.complete(attempt, receipt)) {
         throw const SaleStaleException();
       }
       return receipt;
@@ -619,7 +621,30 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       unresolvedDraft: () => _isSameCurrentSeller(session)
           ? _correctionDrafts.unresolvedFor(session.userId, session.branchId!)
           : null,
+      unacknowledgedReturn: () =>
+          _isSameCurrentSeller(session) ? _unacknowledgedReturn(session) : null,
+      acknowledgeReturn: (SaleReturnReceipt receipt) {
+        if (!_isSameCurrentSeller(session)) return;
+        _correctionDrafts.acknowledge(
+          session.userId,
+          session.branchId!,
+          receipt,
+        );
+      },
     );
+  }
+
+  UnacknowledgedReturn? _unacknowledgedReturn(EmulatorSession session) {
+    final CompletedCorrection? completed = _correctionDrafts.completedFor(
+      session.userId,
+      session.branchId!,
+    );
+    if (completed == null) return null;
+    final SaleCorrectionDraft draft = completed.draft;
+    final Object receipt = completed.receipt;
+    return draft is SaleReturnDraft && receipt is SaleReturnReceipt
+        ? (draft: draft, receipt: receipt)
+        : null;
   }
 
   SaleCheckout? _saleCheckoutFor(EmulatorSession session) {

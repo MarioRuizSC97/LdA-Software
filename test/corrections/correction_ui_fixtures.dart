@@ -16,14 +16,19 @@ const Object answerNormally = Object();
 /// Answers a submit as a replay of an already registered return.
 const Object answerReplayed = #replayed;
 
-/// Fake seller correction operations that behave like the shell: one
-/// unresolved draft per seller, kept on anything but a success or a
-/// deterministic rejection. Queued results are [answerNormally],
+/// Fake seller correction operations that behave like the shell: one stored
+/// correction per seller. A deterministic rejection drops it; a success
+/// keeps it, with its receipt, until that receipt is acknowledged; anything
+/// else keeps it unresolved. Queued results are [answerNormally],
 /// [answerReplayed], a [Completer], or an error to throw.
 class FakeCorrections {
   FakeCorrections({this.unresolved});
 
   SaleCorrectionDraft? unresolved;
+
+  /// The committed return awaiting acknowledgement.
+  UnacknowledgedReturn? completed;
+  final List<SaleReturnReceipt> acknowledged = <SaleReturnReceipt>[];
   final List<Map<String, Object?>> finds = <Map<String, Object?>>[];
   final List<Object> findResults = <Object>[];
   final List<SaleReturnPreviewRequest> previews = <SaleReturnPreviewRequest>[];
@@ -58,10 +63,11 @@ class FakeCorrections {
         : submitResults.removeAt(0);
     // Like the shell, a session refusal happens before the draft is stored.
     if (result is SaleSessionException) throw result;
-    final SaleCorrectionDraft? current = unresolved;
+    final SaleCorrectionDraft? current = unresolved ?? completed?.draft;
     if (current != null && current != draft) {
       throw const CorrectionUnresolvedException();
     }
+    completed = null;
     unresolved = draft;
     submits.add(draft);
     try {
@@ -78,6 +84,7 @@ class FakeCorrections {
         throw result;
       }
       unresolved = null;
+      completed = (draft: draft, receipt: receipt);
       return receipt;
     } on SaleRejectedException {
       unresolved = null;
@@ -105,6 +112,11 @@ class FakeCorrections {
     previewReturn: preview,
     submitReturn: submit,
     unresolvedDraft: () => unresolved,
+    unacknowledgedReturn: () => completed,
+    acknowledgeReturn: (SaleReturnReceipt receipt) {
+      acknowledged.add(receipt);
+      if (identical(completed?.receipt, receipt)) completed = null;
+    },
     createKey: nextKey,
   );
 }
