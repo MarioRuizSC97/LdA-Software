@@ -53,7 +53,7 @@ Out of scope:
 - [x] SALE-03 — Folio lookup for corrections: `findCorrectableSale` accepts a folio, scoped to branch and window, with ambiguity handling. Route: delegated writer.
 - [x] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
 - [x] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
-- [ ] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
+- [x] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
 - [ ] SALE-07 — HTTP transport acceptance for the quote, folio and folio lookup, live with user approval; then reconcile evidence and commits, and report pending checks. Route: delegated writer plus verifier, then the parent.
 
 ## Acceptance criteria
@@ -191,6 +191,10 @@ Out of scope:
   - A stale functions emulator without `createdAt` would make every sale uncertain, so confirm the emulator has reloaded.
   - The receipt shows local device time.
 
+- SALE-06 closure: high-risk four-lens native review `review-48c97553b190fb68` approved; commit tree exactly the approved candidate `25a33c9b`. Non-blocking follow-ups:
+  - **`R4-createdAt-version-skew-uncertain-loop` and `R3-createdAt-version-skew-stuck-uncertain` (WARNING):** a backend without `createdAt` makes every client submit uncertain. This is mitigated operationally: confirm the running functions emulator has reloaded before SALE-07. Consider a clearer protocol-version error later.
+  - **`R2-duplicate-created-at-fixture`, `R2-fixture-reason-literals` and `R2-validation-reason-silent-default` (SUGGESTION):** test-fixture duplication, literal reason strings in fixtures, and a silent default validation reason.
+
 ## Next step
 
-Review and commit SALE-06, then SALE-07 (HTTP transport acceptance, live with user approval, and reconcile).
+SALE-07: HTTP transport acceptance for quote, folio, createdAt and reasons, with a live run only with user approval after confirming the emulator has loaded the new functions; then reconcile and report.
