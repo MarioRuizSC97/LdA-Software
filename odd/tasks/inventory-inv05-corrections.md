@@ -52,7 +52,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
 - [x] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
-  - [ ] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
+  - [x] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
   - [ ] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
   - [ ] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
   - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
@@ -190,7 +190,24 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 
 - CORR-07 exploration (read-only): the Flutter app has no seller sale UI and no client for `submitSale` or the correction callables. Every write flow is an admin-gated inline form in `catalog_page.dart` (about 2,390 lines), with no router or dialogs. The receipt number is the client-generated `saleId` UUID, 36 characters long. Proposed split: domain plus gateway, lookup and list screen, then forms.
 - Decision (user, 2026-10-08): build the seller sale UI first, as a separate feature that defines the receipt and its number. CORR-07 is paused until it exists; CORR-07 and CORR-08 resume afterwards.
+- CORR-07A writer (delegated, Flutter domain and gateway, no UI):
+  - **New files:**
+    - `lib/corrections/correction_sale.dart`, `correction_draft.dart` and `correction_receipt.dart`;
+    - `lib/firebase/emulator_correction_gateway.dart`.
+  - **Bootstrap:** `initializeCorrectionGateway` plus a `createCorrectionGateway` seam that binds the 5 callable names. It reuses the sale helpers and outcome types.
+  - **Shapes:**
+    - The lookup returns per-line `soldScaled`, `returnedScaled` and `remainingScaled`, plus folio, `createdAt` and receipt; there are no product names (the UI resolves them from the catalog).
+    - The correction receipts have no server time.
+    - The correction services set no `details.reason`.
+  - **Payment and preview:** only `submitSaleExchange` takes a client amount. `differencePayment.amountCentavos` must equal the server `customerPaysCentavos` exactly, and must be absent when nothing is owed. No callable previews a refund or a difference.
+  - **Submit handling:** a malformed submit response is Uncertain (same-key retry), matching the sale gateway; a malformed lookup or list response is Protocol.
+  - **Evidence (author-reported):** RED from compile failures, then GREEN 61/61 targeted. 12 mutation probes: 11 killed; 1 equivalent mutant was removed and a new test added.
+  - **Size:** about 3,510 lines (about 1,860 in `lib`), mostly strict parsers and forgery tests.
+- CORR-07A parent spot check: corrections and firebase tests 126/126. The writer reported `flutter analyze` clean and the full suite 477/477.
+- CORR-07A closure: native review `review-de5042722e54d2a1` (medium, one lens) approved and acknowledged; commit tree exactly the approved candidate `88f11977`; commit `862120b`. Follow-ups, folded into CORR-07B:
+  - `R3-001` (WARNING): only `CorrectionProtocolException` becomes Uncertain after a submit returns. Any other parse error, such as a `SaleValidationException` from the exchange calculation or a cast error, escapes raw, so the UI could drop a possibly committed draft. Catch all post-submit parse failures.
+  - `R3-002` (SUGGESTION): `CorrectionDraftStore` lacks tests for seller and branch isolation, `isCurrent` after resolve, and a stale attempt clearing a newer draft.
 
 ## Next step
 
-CORR-07A: Flutter correction domain and gateway (delegated writer).
+CORR-07B (entry, lookup, list and detail), folding in R3-001 and R3-002. Product decision pending before CORR-07C/D: how sellers see the refund or exchange difference before confirming, since no server preview exists.
