@@ -278,7 +278,23 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `R3-shell-rejection-resolve-untested` (WARNING) and `R3-lookup-reopen-untested` (SUGGESTION).
   - R2 cleanups: `setQuantity` ignores its arguments, a silent confirm bail, the `onReturn` doc, and a duplicated session message.
 - Open (backend, later): the correction services send no `details.reason` for an expired window.
+- CORR-07C1 writer (delegated fix for `R4-receipt-dropped-on-dispose` and the CORR-07C follow-ups):
+  - **Draft store:** `CorrectionDraftStore.complete` keeps a committed correction and its receipt until `acknowledge` is called with that exact receipt. `begin` refuses any other draft until then.
+  - **Lookup view:** it shows an unacknowledged receipt first, otherwise it reopens the locked form for an unresolved draft. "Volver a la venta" and "Nueva búsqueda" acknowledge the receipt. The store is in memory only, so an app restart still loses it (the same limit as unresolved drafts).
+  - **Tests and cleanups:** real-shell rejection, stale and seller-change tests; a lookup reopen test; `setQuantity` renamed to `quantityChanged`; the confirm drift now re-previews; the doc and the session message fixed.
+  - **Evidence (author-reported):** real RED for the lost receipt (no receipt widget, and a StateError on the new key), then GREEN; 10 mutation probes, all killed.
+  - **Sale flow:** the writer reports the same gap there. `SaleCartController` returns on `_disposed` after the shell resolves the sale draft, so a seller switch during a submit loses the receipt. The exposure is smaller.
+- CORR-07C1 parent spot check: full `flutter test` 550/550.
+- CORR-07C1 closure: high-risk four-lens native review `review-55b20df3ddc200f0` approved and acknowledged; commit tree exactly the approved candidate `4a4e30c0`; commit `66ca176`. Follow-ups, folded into CORR-07D:
+  - `R2-blocked-message-misleads` and `R3-blocked-message-misleading`: a committed but unacknowledged return blocks with the "retry" message; give it its own message about reviewing the receipt.
+  - `R2-untyped-receipt-silent-drop`: the store keeps the receipt as `Object`. Type it, or comment and assert it, before replacement and exchange add other receipt kinds.
+  - `R3-drift-guard-untested`: test the confirm drift re-preview.
+  - `R3-setquantity-removed`: no direct test that a quantity edit revalidates and re-previews.
+- Open findings for after CORR-07, per the user's order:
+  - `SaleDraftStore` revision reset in `lib/sales/sale_draft.dart`;
+  - the sale receipt is lost when the cart controller is disposed during a submit;
+  - no server reason for an expired correction window.
 
 ## Next step
 
-CORR-07C1: fix the lost receipt on dispose and the review follow-ups (delegated writer, running). Then CORR-07D.
+CORR-07D: the replacement and exchange forms (with `previewSaleExchange` and the same complete/acknowledge receipt handling), folding in the CORR-07C1 follow-ups.
