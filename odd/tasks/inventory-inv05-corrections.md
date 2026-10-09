@@ -224,7 +224,31 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - Open findings deferred by the user until after CORR-07P:
   - `SaleDraftStore` in `lib/sales/sale_draft.dart` has the same revision-reset bug.
   - The folio lookup's `failed-precondition` also covers non-ambiguous cases; CORR-07P addresses it with a reason.
+- CORR-07P writer (delegated, backend):
+  - **Callables:** one per kind, seller-only, exported through `saleCorrectionCallable`.
+    - `previewSaleReturn`: request exactly `{saleId, reason, lines}`; the response has exactly the return receipt fields `{saleId, lines, refund, invoiced}`.
+    - `previewSaleExchange`: request exactly `{saleId, reason, returnLines, newLines}`; the response is `{saleId, returned, newItems, settlement:{returnedCentavos, newItemCentavos, customerPaysCentavos, refundCentavos, refundMethod}, newLines:[{productId, available}], invoiced}`. Short stock shows as `available:false` per line, while the submit still rejects it.
+    - Both reject `idempotencyKey`, `note` and `differencePayment`. No costs appear.
+  - **Shared code:**
+    - the previews and submits share reads (`readReturnPlan`, `readExchangePlan`), checks and receipt builders;
+    - the previews run a read-only transaction;
+    - submit error precedence is locked by a test, and a side-by-side script showed submit responses and stores byte-identical apart from the new reasons.
+  - **Drift fixed:** `sale-exchanges.js` now uses `saleStoredPricing` and `saleQuantity` exported from `sales.js`; its private validator copies are gone.
+  - **Reasons:**
+    - `folio-ambiguous` on the ambiguous folio lookup;
+    - `payment-mismatch` on all three exchange difference-payment rejections (one reason, because the client recovers the same way; the messages differ).
+    - The exchange submit's insufficient stock still has no reason; the preview's `available` covers the UI.
+  - **Transport harness:** preview equals submit for return-good, return-invoiced, exchange-pay and exchange-refund; the wrong payment and the ambiguous folio carry their reasons; non-sellers and a foreign seller are denied.
+  - **Evidence (author-reported):**
+    - RED: preview 12/13, lookup 1 and callable 8/9 failing; then GREEN.
+    - 13 mutation probes, all killed.
+    - Emulator suites run once each: `sale-returns` 6/6, `sale-exchanges` 6/6 and `sale-lookup` 10/10, with no residue.
+    - Transport offline: 39 pass, 2 skipped.
+  - **Size:** about 1,010 authored lines.
+- CORR-07P parent spot check: every non-emulator `functions/test/*.test.mjs` from the repository root, 318/318 pass. The writer reported 355 under a different counting command; neither run had a failure.
+- CORR-07P closure: native review `review-8110b1410ad6e01c` (medium, one lens) approved with no findings and acknowledged; commit tree exactly the approved candidate `6aa37de7`; commit `4863da9`.
+- CORR-07P pending: the one live HTTP transport run, which needs user approval. First confirm OPTIONS 204 for the 8 correction routes, including the two previews.
 
 ## Next step
 
-CORR-07P: backend correction preview and structured reasons (delegated writer).
+CORR-07P live run (needs user approval), then CORR-07C (return form with preview, folding in the CORR-07B follow-ups).
