@@ -54,7 +54,7 @@ Out of scope:
 - [x] SALE-04 — Flutter sale domain and gateway: cart model with `BigInt` validation, quote and submit callable adapters following the stock-intake gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, idempotency key per draft), bootstrap wiring, unit tests. Route: delegated writer.
 - [x] SALE-05 — Flutter cart UI on the seller catalog: "Agregar" per card, the cart button and panel, re-quote, payment method and invoice, confirm, uncertain-retry lock, and Spanish copy. Widget tests. Route: delegated writer.
 - [x] SALE-06 — Flutter receipt screen: folio, QR (`qr_flutter`, already a dependency), lines, totals, payment, invoiced flag, date and time, "Nueva venta". Widget tests. Route: delegated writer.
-- [ ] SALE-07 — HTTP transport acceptance for the quote, folio and folio lookup, live with user approval; then reconcile evidence and commits, and report pending checks. Route: delegated writer plus verifier, then the parent.
+- [x] SALE-07 — HTTP transport acceptance for the quote, folio and folio lookup, live with user approval; then reconcile evidence and commits, and report pending checks. Route: delegated writer plus verifier, then the parent.
 
 ## Acceptance criteria
 
@@ -195,6 +195,27 @@ Out of scope:
   - **`R4-createdAt-version-skew-uncertain-loop` and `R3-createdAt-version-skew-stuck-uncertain` (WARNING):** a backend without `createdAt` makes every client submit uncertain. This is mitigated operationally: confirm the running functions emulator has reloaded before SALE-07. Consider a clearer protocol-version error later.
   - **`R2-duplicate-created-at-fixture`, `R2-fixture-reason-literals` and `R2-validation-reason-silent-default` (SUGGESTION):** test-fixture duplication, literal reason strings in fixtures, and a silent default validation reason.
 
+- SALE-07 (delegated writer, then a delegated verifier for the live run):
+  - The folio lookup checks went into the corrections harness. It already seeds branches with codes (`CRA`/`CRF`) and a foreign seller, and `runScenario` is shared by the offline rehearsal (real services) and the live root.
+  - Its sale keys share their first eight alphanumerics, so the shared folio is also the live ambiguity check.
+  - New live assertions:
+    - `quoteSale` denials;
+    - an insufficient-stock quote without writes;
+    - the quote equals the later charge;
+    - receipt v2 folio, `branchCode` and `createdAt`;
+    - `details.reason` (`insufficient-stock`, `payment-mismatch`);
+    - `callableDenied` refuses any extra error field;
+    - the folio lookup returns the same sale as its saleId, normalizes lowercase and padding, and gives a foreign or missing folio the same not-found and a shared folio a failed precondition.
+  - RED, then GREEN: sales 3 failing, corrections 3 failing, then all green. Mutation probes killed all but the dropped ambiguity-message check, which was informational.
+  - Offline: transport files 41 tests (39 pass, 2 live skipped); all non-emulator unit tests 340/340 from the repository root.
+  - Native review `review-365b207314f4dbda`: one lens, approved and acknowledged; the commit tree equals the approved candidate `0bfb58c5`. Commit `40594a5`.
+  - Live run (user-approved, exactly once):
+    - OPTIONS returned 204 for all 10 callables;
+    - one command for both files gave 118/118 pass;
+    - the 8 fixture documents plus 2 identities hashed `5ddfb8b8…` before and after (equal), the full document listing was 104 before and after, and no residue remained.
+  - Non-blocking follow-up `R3-forged-folio-baseline` (WARNING): the forged-v2 receipt test should assert the genuine folio value (`HTS-HTTP-1234`) before its near-miss forgeries.
+  - Still pending: the Flutter SDK exposing `details` as a Map is covered only by a fake (no device or integration run); the receipt shows local device time.
+
 ## Next step
 
-SALE-07: HTTP transport acceptance for quote, folio, createdAt and reasons, with a live run only with user approval after confirming the emulator has loaded the new functions; then reconcile and report.
+Feature complete (SALE-01..07). Resume CORR-07 (seller correction screens) in `odd/tasks/inventory-inv05-corrections.md`, then CORR-08.
