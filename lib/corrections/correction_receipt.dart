@@ -4,6 +4,12 @@ import 'correction_draft.dart';
 import 'correction_sale.dart';
 
 const Set<String> _responseKeys = <String>{'receipt', 'replayed'};
+const Set<String> _previewKeys = <String>{
+  'saleId',
+  'lines',
+  'refund',
+  'invoiced',
+};
 const Set<String> _returnKeys = <String>{
   'version',
   'returnId',
@@ -98,8 +104,8 @@ class CorrectionRefundLine {
 
 /// Parsed v1 `submitSaleReturn` result, bound to the draft that produced it.
 ///
-/// The server returns no correction time; the UI may show the client time
-/// at acceptance if it needs one.
+/// The server returns no correction time, so none is shown: the device
+/// clock is not the server's.
 class SaleReturnReceipt {
   const SaleReturnReceipt._({
     required this.returnId,
@@ -183,6 +189,72 @@ class SaleReturnReceipt {
   /// The sale was invoiced: the administrator handles the credit note.
   final bool invoiced;
   final bool replayed;
+}
+
+/// Parsed `previewSaleReturn` result: what [SaleReturnReceipt] would hold if
+/// the previewed return were submitted right now. Read-only; nothing was
+/// written, so a malformed preview is a protocol error, never uncertain.
+class SaleReturnPreview {
+  const SaleReturnPreview._({
+    required this.request,
+    required this.lines,
+    required this.refundMethod,
+    required this.baseCentavos,
+    required this.additionalIvaCentavos,
+    required this.totalCentavos,
+    required this.invoiced,
+  });
+
+  /// Requires exactly `{saleId, lines, refund, invoiced}` for the requested
+  /// sale, with the same per-line binding, sums and refund method checks as
+  /// [SaleReturnReceipt.fromCallable].
+  factory SaleReturnPreview.fromCallable(
+    Object? value, {
+    required SaleReturnPreviewRequest request,
+  }) {
+    final Map<Object?, Object?> preview = correctionExact(value, _previewKeys);
+    final Object? invoiced = preview['invoiced'];
+    if (preview['saleId'] != request.saleId ||
+        invoiced is! bool ||
+        invoiced != request.sale.invoiced) {
+      throw const CorrectionProtocolException();
+    }
+    final _Refund refund = _refund(
+      preview['lines'],
+      request.lines,
+      request.sale,
+      invoiced,
+    );
+    final Map<Object?, Object?> totals = correctionExact(
+      preview['refund'],
+      _refundKeys,
+    );
+    final _Amounts amounts = _amounts(totals, invoiced);
+    if (totals['method'] != request.sale.paymentMethod.wireValue ||
+        !amounts.sameAs(refund.sums)) {
+      throw const CorrectionProtocolException();
+    }
+    return SaleReturnPreview._(
+      request: request,
+      lines: refund.lines,
+      refundMethod: request.sale.paymentMethod,
+      baseCentavos: amounts.base,
+      additionalIvaCentavos: amounts.additionalIva,
+      totalCentavos: amounts.total,
+      invoiced: invoiced,
+    );
+  }
+
+  /// The exact request this preview answers.
+  final SaleReturnPreviewRequest request;
+  final List<CorrectionRefundLine> lines;
+
+  /// Always the original sale's payment method (decision 6).
+  final SalePaymentMethod refundMethod;
+  final int baseCentavos;
+  final int additionalIvaCentavos;
+  final int totalCentavos;
+  final bool invoiced;
 }
 
 /// One replaced line: same product, no charge.

@@ -6,6 +6,8 @@ import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
 import '../catalog/stock_intake.dart';
+import '../corrections/correction_draft.dart';
+import '../corrections/correction_receipt.dart';
 import '../corrections/correction_sale.dart';
 import '../corrections/sale_corrections.dart';
 import '../firebase/emulator_correction_gateway.dart';
@@ -101,6 +103,10 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // initialization is dropped and retried on the next call.
   String? _correctionGatewayOwner;
   Future<EmulatorCorrectionGateway>? _correctionGateway;
+
+  // Volatile retry storage: at most one unresolved correction per exact
+  // seller and branch, retried with the same key until it resolves.
+  final CorrectionDraftStore _correctionDrafts = CorrectionDraftStore();
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -554,6 +560,44 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     return result;
   }
 
+  /// Seller return submit, mirroring [_submitSale]: freezes ownership and
+  /// the draft before gateway initialization or transport, and resolves only
+  /// the current attempt's proven success or deterministic rejection.
+  /// Anything else keeps the draft stored for a same-key retry.
+  Future<SaleReturnReceipt> _submitReturn(SaleReturnDraft draft) async {
+    final EmulatorSession? session = _session;
+    if (!_isExactSeller(session) ||
+        widget.correctionGatewayLoader == null ||
+        draft.branchId != session!.branchId) {
+      throw const SaleSessionException();
+    }
+    final CorrectionAttempt attempt = _correctionDrafts.begin(
+      ownerUserId: session.userId,
+      draft: draft,
+    );
+    try {
+      final EmulatorCorrectionGateway gateway = await _correctionGatewayFor(
+        session,
+      );
+      final SaleReturnReceipt receipt = await gateway.submitReturn(draft);
+      if (!_isSameCurrentSeller(session)) {
+        throw const SaleUncertainException();
+      }
+      if (!_correctionDrafts.resolve(attempt)) {
+        throw const SaleStaleException();
+      }
+      return receipt;
+    } on SaleRejectedException {
+      if (!_isSameCurrentSeller(session)) {
+        throw const SaleUncertainException();
+      }
+      if (!_correctionDrafts.resolve(attempt)) {
+        throw const SaleStaleException();
+      }
+      rethrow;
+    }
+  }
+
   SaleCorrections? _saleCorrectionsFor(EmulatorSession session) {
     if (!_isExactSeller(session) || widget.correctionGatewayLoader == null) {
       return null;
@@ -566,6 +610,15 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       listRecent: () => _correctionRead<RecentCorrectableSales>(
         (EmulatorCorrectionGateway gateway) => gateway.listRecent(),
       ),
+      previewReturn: (SaleReturnPreviewRequest request) =>
+          _correctionRead<SaleReturnPreview>(
+            (EmulatorCorrectionGateway gateway) =>
+                gateway.previewReturn(request),
+          ),
+      submitReturn: _submitReturn,
+      unresolvedDraft: () => _isSameCurrentSeller(session)
+          ? _correctionDrafts.unresolvedFor(session.userId, session.branchId!)
+          : null,
     );
   }
 

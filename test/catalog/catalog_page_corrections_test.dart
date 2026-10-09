@@ -34,6 +34,9 @@ final SaleCorrections _corrections = SaleCorrections(
   listRecent: () async => RecentCorrectableSales.fromCallable(<String, Object?>{
     'sales': <Object?>[lookupSaleJson()],
   }, query: RecentSalesQuery()),
+  previewReturn: (_) async => throw UnimplementedError(),
+  submitReturn: (_) async => throw UnimplementedError(),
+  unresolvedDraft: () => null,
 );
 
 Widget _page(

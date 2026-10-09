@@ -575,6 +575,7 @@ void main() {
             'submitSaleReturn': returnResponse,
             'submitSaleReplacement': replacementResponse,
             'submitSaleExchange': exchangeResponse,
+            'previewSaleReturn': returnPreviewJson,
           };
       final EmulatorCorrectionGateway gateway =
           DemoEmulatorBootstrap.createCorrectionGateway(
@@ -600,12 +601,15 @@ void main() {
       await gateway.submitReplacement(replacementDraft());
       expect(invoked.last, 'submitSaleReplacement');
       await gateway.submitExchange(exchangeDraft());
+      expect(invoked.last, 'submitSaleExchange');
+      await gateway.previewReturn(returnPreviewRequest());
       expect(invoked, <String>[
         'findCorrectableSale',
         'listRecentCorrectableSales',
         'submitSaleReturn',
         'submitSaleReplacement',
         'submitSaleExchange',
+        'previewSaleReturn',
       ]);
     });
   });

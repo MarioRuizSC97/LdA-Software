@@ -4,8 +4,8 @@ import '../sales/sale_format.dart';
 import 'correction_sale.dart';
 
 // User-visible text is neutral, professional Spanish; identifiers stay in
-// English. The correction forms arrive in CORR-07C/D, so their actions are
-// shown disabled here.
+// English. Replacement and exchange forms arrive in CORR-07D, so those
+// actions are shown disabled here.
 
 /// One looked-up sale: folio, date, total, payment, invoice flag, the
 /// client-derived correction window (display only; the server decides), and
@@ -15,6 +15,7 @@ class CorrectionSaleDetail extends StatelessWidget {
     required this.sale,
     required this.productNames,
     required this.onBack,
+    this.onReturn,
     super.key,
   });
 
@@ -23,6 +24,9 @@ class CorrectionSaleDetail extends StatelessWidget {
   /// Catalog product names by product ID; unknown IDs are shown verbatim.
   final Map<String, String> productNames;
   final VoidCallback onBack;
+
+  /// Opens the return form; null hides the action's effect.
+  final VoidCallback? onReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +72,7 @@ class CorrectionSaleDetail extends StatelessWidget {
                 name: productNames[line.productId] ?? line.productId,
               ),
             const Divider(height: 32),
-            const _PendingActions(),
+            _Actions(onReturn: sale.hasReturnableQuantity ? onReturn : null),
           ],
         ),
       ),
@@ -110,28 +114,30 @@ class _CorrectionLine extends StatelessWidget {
   }
 }
 
-class _PendingActions extends StatelessWidget {
-  const _PendingActions();
+class _Actions extends StatelessWidget {
+  const _Actions({required this.onReturn});
+
+  final VoidCallback? onReturn;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
-      const Wrap(
+      Wrap(
         spacing: 8,
         runSpacing: 8,
         children: <Widget>[
-          OutlinedButton(
-            key: ValueKey<String>('correction-action-return'),
-            onPressed: null,
-            child: Text('Devolver'),
+          FilledButton(
+            key: const ValueKey<String>('correction-action-return'),
+            onPressed: onReturn,
+            child: const Text('Devolver'),
           ),
-          OutlinedButton(
+          const OutlinedButton(
             key: ValueKey<String>('correction-action-replace'),
             onPressed: null,
             child: Text('Reemplazar (defecto de fábrica)'),
           ),
-          OutlinedButton(
+          const OutlinedButton(
             key: ValueKey<String>('correction-action-exchange'),
             onPressed: null,
             child: Text('Cambiar producto'),

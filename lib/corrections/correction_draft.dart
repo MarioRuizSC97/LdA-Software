@@ -187,6 +187,11 @@ class SaleReturnDraft extends SaleCorrectionDraft {
   final String? note;
   final List<CorrectionLine> lines;
 
+  /// The preview of exactly this return: same sale, reason and lines. A
+  /// draft may be confirmed only against a preview equal to this one.
+  SaleReturnPreviewRequest get previewRequest =>
+      SaleReturnPreviewRequest._(sale: sale, reason: reason, lines: lines);
+
   @override
   Map<String, Object?> toRequest() => <String, Object?>{
     'idempotencyKey': idempotencyKey,
@@ -197,6 +202,51 @@ class SaleReturnDraft extends SaleCorrectionDraft {
     ],
     if (note != null) 'note': note,
   };
+}
+
+/// `previewSaleReturn`: exactly `{saleId, reason, lines}`, the return
+/// request without its write-only key and note. Lines are validated exactly
+/// like [SaleReturnDraft.create]; the server recomputes against its ledger.
+class SaleReturnPreviewRequest {
+  const SaleReturnPreviewRequest._({
+    required this.sale,
+    required this.reason,
+    required this.lines,
+  });
+
+  factory SaleReturnPreviewRequest.create({
+    required CorrectableSale sale,
+    required CorrectionReason reason,
+    required List<ReturnLineInput> lines,
+  }) => SaleReturnPreviewRequest._(
+    sale: sale,
+    reason: reason,
+    lines: _returnLines(sale, lines),
+  );
+
+  /// The looked-up sale the lines were validated against.
+  final CorrectableSale sale;
+  final CorrectionReason reason;
+  final List<CorrectionLine> lines;
+
+  String get saleId => sale.saleId;
+
+  Map<String, Object?> toRequest() => <String, Object?>{
+    'saleId': saleId,
+    'reason': reason.wireValue,
+    'lines': <Object?>[
+      for (final CorrectionLine line in lines) line.toRequestLine(),
+    ],
+  };
+
+  /// Equal when they would send the same preview request.
+  @override
+  bool operator ==(Object other) =>
+      other is SaleReturnPreviewRequest &&
+      jsonEncode(other.toRequest()) == jsonEncode(toRequest());
+
+  @override
+  int get hashCode => jsonEncode(toRequest()).hashCode;
 }
 
 /// `submitSaleReplacement`: `{idempotencyKey, saleId, lines, note?}`. The

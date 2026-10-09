@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
+import 'correction_draft.dart';
+import 'correction_receipt.dart';
+import 'correction_return_form.dart';
+import 'correction_return_receipt_view.dart';
 import 'correction_sale.dart';
 import 'correction_sale_detail.dart';
 import 'sale_corrections.dart';
@@ -13,9 +18,13 @@ import 'sale_corrections.dart';
 
 const String _sessionMessage =
     'Tu sesión cambió. Inicia sesión de nuevo para continuar.';
+const String _searchFailedMessage =
+    'No se pudo buscar la venta. Intenta de nuevo.';
 
 /// Seller correction lookup: a folio search plus the branch's recent sales
-/// (last 15 days). Choosing a sale shows its [CorrectionSaleDetail].
+/// (last [correctionWindowDays] days). Choosing a sale shows its
+/// [CorrectionSaleDetail], whose "Devolver" opens the [CorrectionReturnForm];
+/// a registered return shows its receipt, then the refetched sale.
 class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
@@ -47,9 +56,23 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   String? _searchError;
   CorrectableSale? _selected;
 
+  /// The sale whose return form is shown.
+  CorrectableSale? _returning;
+
+  /// The registered return and the sale it was made against.
+  (SaleReturnReceipt, CorrectableSale)? _receipt;
+
+  /// The sale ID being refetched after a return, and its failure if any.
+  String? _refreshSaleId;
+  String? _refreshError;
+
   @override
   void initState() {
     super.initState();
+    // An unresolved return reopens its form, locked to the stored draft.
+    final SaleCorrectionDraft? unresolved = widget.corrections
+        .unresolvedDraft();
+    if (unresolved is SaleReturnDraft) _returning = unresolved.sale;
     _loadRecent();
   }
 
@@ -111,9 +134,10 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     CorrectableSale? sale;
     try {
       sale = await widget.corrections.find(query);
-    } on SaleStaleException {
-      // Superseded by a newer search, which owns the outcome.
     } catch (failure) {
+      // A stale result whose generation still matches was superseded by a
+      // lookup outside this view; nothing else owns the outcome here, so it
+      // is shown as a retryable failure rather than dropped.
       error = _searchMessage(failure);
     }
     if (!mounted || generation != _searchGeneration) return;
@@ -127,22 +151,105 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   String _searchMessage(Object failure) => switch (failure) {
     SaleRejectedException(code: 'not-found') =>
       'No se encontró una venta con ese folio en esta sucursal '
-          '(últimos 15 días)',
-    SaleRejectedException(code: 'failed-precondition') =>
+          '(últimos $correctionWindowDays días)',
+    final SaleRejectedException rejected when rejected.isFolioAmbiguous =>
       'Hay más de una venta con ese folio. '
           'Elige la venta en la lista de ventas recientes.',
+    SaleRejectedException(code: 'failed-precondition') =>
+      'Esta venta no se puede corregir en este momento.',
     SaleSessionException() => _sessionMessage,
-    _ => 'No se pudo buscar la venta. Intenta de nuevo.',
+    _ => _searchFailedMessage,
   };
+
+  void _completeReturn(SaleReturnReceipt receipt) {
+    final CorrectableSale? sale = _returning;
+    if (sale == null) return;
+    setState(() {
+      _returning = null;
+      _selected = null;
+      _receipt = (receipt, sale);
+    });
+  }
+
+  /// Refetches the sale by ID so the detail shows the server's updated
+  /// returned and remaining quantities.
+  Future<void> _refreshSale(String saleId) async {
+    final int generation = ++_searchGeneration;
+    setState(() {
+      _receipt = null;
+      _selected = null;
+      _refreshSaleId = saleId;
+      _refreshError = null;
+    });
+    try {
+      final CorrectableSale sale = await widget.corrections.find(
+        SaleLookupQuery.bySaleId(saleId),
+      );
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _refreshSaleId = null;
+        _selected = sale;
+      });
+    } catch (failure) {
+      if (!mounted || generation != _searchGeneration) return;
+      setState(
+        () => _refreshError = failure is SaleSessionException
+            ? _sessionMessage
+            : 'No se pudo actualizar la venta.',
+      );
+    }
+  }
+
+  void _newSearch() {
+    _searchGeneration += 1;
+    setState(() {
+      _receipt = null;
+      _returning = null;
+      _selected = null;
+      _refreshSaleId = null;
+      _refreshError = null;
+      _searching = false;
+      _searchError = null;
+      _folio.clear();
+    });
+    _loadRecent();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final (SaleReturnReceipt, CorrectableSale)? receipt = _receipt;
+    if (receipt != null) {
+      return CorrectionReturnReceiptView(
+        receipt: receipt.$1,
+        sale: receipt.$2,
+        productNames: widget.productNames,
+        onBackToSale: () => _refreshSale(receipt.$2.saleId),
+        onNewSearch: _newSearch,
+      );
+    }
+    final CorrectableSale? returning = _returning;
+    if (returning != null) {
+      return CorrectionReturnForm(
+        key: ValueKey<String>('return-form-${returning.saleId}'),
+        sale: returning,
+        corrections: widget.corrections,
+        productNames: widget.productNames,
+        onBack: () => setState(() {
+          _returning = null;
+          _selected ??= returning;
+        }),
+        onCompleted: _completeReturn,
+      );
+    }
+    final String? refreshSaleId = _refreshSaleId;
+    if (refreshSaleId != null) return _refreshView(refreshSaleId);
     final CorrectableSale? selected = _selected;
     if (selected != null) {
       return CorrectionSaleDetail(
         sale: selected,
         productNames: widget.productNames,
         onBack: () => setState(() => _selected = null),
+        onReturn: () => setState(() => _returning = selected),
       );
     }
     final ThemeData theme = Theme.of(context);
@@ -200,13 +307,52 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
             ),
             const SizedBox(height: 24),
             Text(
-              'Ventas recientes (últimos 15 días)',
+              'Ventas recientes (últimos $correctionWindowDays días)',
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             ..._recentSection(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _refreshView(String saleId) {
+    final String? error = _refreshError;
+    return Center(
+      key: const ValueKey<String>('correction-refresh'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: error == null
+            ? const CircularProgressIndicator()
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    error,
+                    key: const ValueKey<String>('correction-refresh-error'),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: <Widget>[
+                      FilledButton(
+                        key: const ValueKey<String>('correction-refresh-retry'),
+                        onPressed: () => _refreshSale(saleId),
+                        child: const Text('Reintentar'),
+                      ),
+                      OutlinedButton(
+                        key: const ValueKey<String>(
+                          'correction-refresh-new-search',
+                        ),
+                        onPressed: _newSearch,
+                        child: const Text('Nueva búsqueda'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
       ),
     );
   }

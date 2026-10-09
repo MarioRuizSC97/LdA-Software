@@ -2,8 +2,13 @@ import '../catalog/catalog_product.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_draft.dart' show saleFolio;
 
-/// Fixed global correction window: exactly 15×24h from the sale's createdAt.
-const Duration correctionWindow = Duration(days: 15);
+/// Days in the fixed global correction window (decision 2): exactly
+/// 15×24h from the sale's server createdAt. The server owns and enforces the
+/// rule; the client uses it only for display and copy.
+const int correctionWindowDays = 15;
+
+/// [correctionWindowDays] as a duration, for display only.
+const Duration correctionWindow = Duration(days: correctionWindowDays);
 
 /// Server bounds for `listRecentCorrectableSales`.
 const int recentSalesDefaultLimit = 50;

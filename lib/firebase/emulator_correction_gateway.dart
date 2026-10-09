@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import '../auth/emulator_session.dart';
 import '../corrections/correction_draft.dart';
 import '../corrections/correction_receipt.dart';
@@ -22,7 +24,41 @@ const Set<String> _rejectedCodes = <String>{
   'already-exists',
 };
 
-/// Seller-only adapter for the five sale-correction callables.
+/// Server `details.reason` for a folio that matches more than one sale.
+const String correctionFolioAmbiguousReason = 'folio-ambiguous';
+
+/// Exact server message for a sale outside the correction window. The
+/// correction services give it no `details.reason`, so it is the only signal;
+/// the server owns the window rule.
+const String correctionWindowClosedMessage =
+    'sale is outside the correction window';
+
+/// Correction meanings of a deterministic refusal.
+extension CorrectionRejection on SaleRejectedException {
+  /// The folio matches several sales; only the structured reason counts.
+  bool get isFolioAmbiguous =>
+      code == 'failed-precondition' && reason == correctionFolioAmbiguousReason;
+
+  /// A line would exceed its remaining returnable quantity. Returns and
+  /// their previews use `out-of-range` only for that.
+  bool get isOverReturn => code == 'out-of-range';
+
+  /// The sale's correction window has closed.
+  bool get isOutsideCorrectionWindow =>
+      code == 'failed-precondition' && message == correctionWindowClosedMessage;
+}
+
+/// An uncertain submission whose response arrived but could not be parsed.
+/// Keeps the original parse failure for diagnosis; callers still treat it as
+/// any [SaleUncertainException] and retry the same draft.
+class CorrectionUncertainException extends SaleUncertainException {
+  const CorrectionUncertainException(this.cause, this.stackTrace);
+  final Object cause;
+  final StackTrace stackTrace;
+}
+
+/// Seller-only adapter for the sale-correction callables: five operations
+/// plus the read-only return preview.
 ///
 /// Mirrors [EmulatorSaleGateway] and shares its callable, session and outcome
 /// types: the exact assigned seller is re-checked before and after each call;
@@ -31,8 +67,9 @@ const Set<String> _rejectedCodes = <String>{
 /// the server message and `details.reason`; anything else is
 /// [SaleUncertainException]. A malformed lookup or list response is a
 /// [CorrectionProtocolException] (reads have no effect to be uncertain
-/// about), while a malformed submission response is uncertain, because the
-/// correction may have committed and must be retried with the same draft.
+/// about), and so is a malformed preview, while a malformed submission
+/// response is uncertain, because the correction may have committed and must
+/// be retried with the same draft.
 class EmulatorCorrectionGateway {
   EmulatorCorrectionGateway({
     required this.expectedSession,
@@ -42,6 +79,7 @@ class EmulatorCorrectionGateway {
     required this.returnInvoke,
     required this.replacementInvoke,
     required this.exchangeInvoke,
+    required this.previewReturnInvoke,
   });
 
   final EmulatorSession expectedSession;
@@ -51,7 +89,9 @@ class EmulatorCorrectionGateway {
   final SaleCallable returnInvoke;
   final SaleCallable replacementInvoke;
   final SaleCallable exchangeInvoke;
+  final SaleCallable previewReturnInvoke;
   int _findGeneration = 0;
+  int _previewReturnGeneration = 0;
   int _listGeneration = 0;
   int _returnGeneration = 0;
   int _replacementGeneration = 0;
@@ -76,6 +116,27 @@ class EmulatorCorrectionGateway {
       () => generation != _listGeneration,
     );
     return RecentCorrectableSales.fromCallable(response, query: effective);
+  }
+
+  /// Read-only refund preview; a newer preview makes older ones stale.
+  Future<SaleReturnPreview> previewReturn(
+    SaleReturnPreviewRequest request,
+  ) async {
+    final Map<String, Object?> wire = request.toRequest();
+    final int generation = ++_previewReturnGeneration;
+    final Object? response = await _staleAware(
+      _call(previewReturnInvoke, wire),
+      () => generation != _previewReturnGeneration,
+    );
+    try {
+      return SaleReturnPreview.fromCallable(response, request: request);
+    } on CorrectionProtocolException {
+      rethrow;
+    } catch (error, stackTrace) {
+      // A cast or range error is a malformed preview too; nothing was written.
+      _logParseFailure('preview', error, stackTrace);
+      throw const CorrectionProtocolException();
+    }
   }
 
   Future<SaleReturnReceipt> submitReturn(SaleReturnDraft draft) async {
@@ -138,12 +199,23 @@ class EmulatorCorrectionGateway {
   /// Once a submit returned, the correction may have committed, so any
   /// failure to parse its response (a protocol, validation, cast or range
   /// error alike) keeps the draft for a same-key retry instead of escaping.
+  /// The original failure is logged and kept as the exception's cause.
   T _uncertainIfMalformed<T>(T Function() parse) {
     try {
       return parse();
-    } catch (_) {
-      throw const SaleUncertainException();
+    } catch (error, stackTrace) {
+      _logParseFailure('submission', error, stackTrace);
+      throw CorrectionUncertainException(error, stackTrace);
     }
+  }
+
+  void _logParseFailure(String kind, Object error, StackTrace stackTrace) {
+    developer.log(
+      'Malformed correction $kind response',
+      name: 'lda.corrections',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 
   /// A superseded call is stale whatever its outcome: a late rejection or

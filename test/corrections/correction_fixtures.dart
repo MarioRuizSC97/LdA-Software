@@ -249,3 +249,129 @@ Map<String, Object?> exchangeReceiptJson() => <String, Object?>{
 
 Map<String, Object?> exchangeResponse({bool replayed = false}) =>
     <String, Object?>{'receipt': exchangeReceiptJson(), 'replayed': replayed};
+
+/// The preview of [returnDraft]: the same lines and reason, without key or
+/// note.
+SaleReturnPreviewRequest returnPreviewRequest({
+  CorrectableSale? sale,
+  CorrectionReason reason = CorrectionReason.changeOfMind,
+  List<ReturnLineInput> lines = const <ReturnLineInput>[
+    ReturnLineInput(
+      lineIndex: 0,
+      quantity: '1',
+      condition: ReturnCondition.good,
+    ),
+    ReturnLineInput(
+      lineIndex: 1,
+      quantity: '1',
+      condition: ReturnCondition.factoryDefect,
+    ),
+  ],
+}) => SaleReturnPreviewRequest.create(
+  sale: sale ?? lookupSale(),
+  reason: reason,
+  lines: lines,
+);
+
+/// Server preview for [returnPreviewRequest]: exactly the receipt amounts.
+Map<String, Object?> returnPreviewJson() {
+  final Map<String, Object?> receipt = returnReceiptJson();
+  return <String, Object?>{
+    'saleId': saleKey,
+    'lines': receipt['lines'],
+    'refund': receipt['refund'],
+    'invoiced': true,
+  };
+}
+
+/// An uninvoiced, cash, pin-only sale: 3 pieces, base 750, total 750.
+Map<String, Object?> uninvoicedLookupSaleJson() => <String, Object?>{
+  'saleId': otherSaleId,
+  'folio': 'NTE-4B5C-6D7E',
+  'createdAt': saleCreatedAtMillis,
+  'receipt': <String, Object?>{
+    'calculation': <String, Object?>{
+      ...invoicedCalculation(),
+      'invoiceRequested': false,
+      'lines': <Object?>[pinCalculationLine()],
+      'baseCentavos': 750,
+      'additionalIvaCentavos': 0,
+      'totalCentavos': 750,
+    },
+    'payment': <String, Object?>{'method': 'cash', 'amountCentavos': 750},
+    'productIds': <Object?>['DEMO-PIN'],
+    'invoiceRequested': false,
+  },
+  'lines': <Object?>[
+    <String, Object?>{
+      'lineIndex': 0,
+      'soldScaled': 3,
+      'returnedScaled': 0,
+      'remainingScaled': 3,
+    },
+  ],
+};
+
+CorrectableSale uninvoicedSale() =>
+    parseCorrectableSale(uninvoicedLookupSaleJson());
+
+/// Server-shaped return amounts for [lines]: each line refunds its sold
+/// amounts proportionally, half-up, like a first return against the sale.
+Map<String, Object?> returnAmountsFor(
+  List<CorrectionLine> lines,
+  CorrectableSale sale,
+) {
+  final List<Object?> refundLines = <Object?>[];
+  int base = 0;
+  int additional = 0;
+  for (final CorrectionLine line in lines) {
+    final CorrectableSaleLine sold = sale.lines[line.lineIndex];
+    int part(int amount) =>
+        (amount * line.quantityScaled * 2 + sold.soldScaled) ~/
+        (2 * sold.soldScaled);
+    final int lineBase = part(sold.baseCentavos);
+    final int lineAdditional = part(sold.additionalIvaCentavos);
+    base += lineBase;
+    additional += lineAdditional;
+    refundLines.add(<String, Object?>{
+      'lineIndex': line.lineIndex,
+      'productId': line.productId,
+      'quantity': formatScaledQuantity(line.quantityScaled, line.quantitySpec),
+      'condition': line.condition!.wireValue,
+      'baseCentavos': lineBase,
+      'additionalIvaCentavos': lineAdditional,
+      'totalCentavos': lineBase + lineAdditional,
+    });
+  }
+  return <String, Object?>{
+    'lines': refundLines,
+    'refund': <String, Object?>{
+      'method': sale.paymentMethod.wireValue,
+      'baseCentavos': base,
+      'additionalIvaCentavos': additional,
+      'totalCentavos': base + additional,
+    },
+    'invoiced': sale.invoiced,
+  };
+}
+
+Map<String, Object?> returnPreviewJsonFor(SaleReturnPreviewRequest request) =>
+    <String, Object?>{
+      'saleId': request.saleId,
+      ...returnAmountsFor(request.lines, request.sale),
+    };
+
+Map<String, Object?> returnResponseFor(
+  SaleReturnDraft draft, {
+  bool replayed = false,
+}) => <String, Object?>{
+  'receipt': <String, Object?>{
+    'version': 1,
+    'returnId': draft.idempotencyKey,
+    'saleId': draft.saleId,
+    'branchId': draft.branchId,
+    'reason': draft.reason.wireValue,
+    ...returnAmountsFor(draft.lines, draft.sale),
+  },
+  'replayed': replayed,
+};

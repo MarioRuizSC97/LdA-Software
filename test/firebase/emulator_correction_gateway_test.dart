@@ -38,6 +38,7 @@ EmulatorCorrectionGateway _gateway({
   SaleCallable? returnInvoke,
   SaleCallable? replacementInvoke,
   SaleCallable? exchangeInvoke,
+  SaleCallable? previewReturnInvoke,
 }) => EmulatorCorrectionGateway(
   expectedSession: expected,
   sessionChecker: sessionChecker ?? () async => _seller,
@@ -50,6 +51,7 @@ EmulatorCorrectionGateway _gateway({
   returnInvoke: returnInvoke ?? (_) async => returnResponse(),
   replacementInvoke: replacementInvoke ?? (_) async => replacementResponse(),
   exchangeInvoke: exchangeInvoke ?? (_) async => exchangeResponse(),
+  previewReturnInvoke: previewReturnInvoke ?? (_) async => returnPreviewJson(),
 );
 
 SaleCallable _throwing(Object error) =>
@@ -399,5 +401,170 @@ void main() {
     submits[1].completeError(StateError('offline'));
     await expectLater(older, throwsA(isA<SaleStaleException>()));
     await expectLater(newer, throwsA(isA<SaleUncertainException>()));
+  });
+
+  group('previewReturn', () {
+    test('checks the seller around one exact preview request', () async {
+      final List<String> events = <String>[];
+      final EmulatorCorrectionGateway gateway = _gateway(
+        sessionChecker: () async {
+          events.add('session');
+          return _seller;
+        },
+        previewReturnInvoke: (Map<String, Object?> request) async {
+          events.add('preview');
+          expect(request, returnPreviewRequest().toRequest());
+          return returnPreviewJson();
+        },
+      );
+      final SaleReturnPreview preview = await gateway.previewReturn(
+        returnPreviewRequest(),
+      );
+      expect(preview.totalCentavos, 1410);
+      expect(events, <String>['session', 'preview', 'session']);
+    });
+
+    test('a malformed preview is a protocol error, never uncertain', () async {
+      final List<Object?> responses = <Object?>[
+        null,
+        <String, Object?>{'receipt': returnReceiptJson(), 'replayed': false},
+        Map<String, Object?>.of(returnPreviewJson())..['saleId'] = otherSaleId,
+        // A wrong-type field read through a typed view: a cast error.
+        returnPreviewJson().cast<String, int>(),
+      ];
+      for (int index = 0; index < responses.length; index++) {
+        await expectLater(
+          _gateway(previewReturnInvoke: (_) async => responses[index])
+              .previewReturn(returnPreviewRequest()),
+          throwsA(isA<CorrectionProtocolException>()),
+          reason: 'response $index',
+        );
+      }
+    });
+
+    test('rejections keep code, message and the known reasons', () async {
+      Future<SaleRejectedException> rejection(
+        SaleCallableException error,
+      ) async {
+        try {
+          await _gateway(previewReturnInvoke: _throwing(error))
+              .previewReturn(returnPreviewRequest());
+        } on SaleRejectedException catch (rejected) {
+          return rejected;
+        }
+        fail('expected a rejection');
+      }
+
+      final SaleRejectedException over = await rejection(
+        const SaleCallableException(
+          code: 'out-of-range',
+          message: 'return exceeds the remaining sold quantity',
+        ),
+      );
+      expect(over.isOverReturn, isTrue);
+      expect(over.isOutsideCorrectionWindow, isFalse);
+
+      final SaleRejectedException window = await rejection(
+        const SaleCallableException(
+          code: 'failed-precondition',
+          message: correctionWindowClosedMessage,
+        ),
+      );
+      expect(window.isOutsideCorrectionWindow, isTrue);
+      expect(window.isOverReturn, isFalse);
+      expect(window.isFolioAmbiguous, isFalse);
+
+      final SaleRejectedException other = await rejection(
+        const SaleCallableException(
+          code: 'failed-precondition',
+          message: 'stock projection cannot accept the return',
+        ),
+      );
+      expect(other.isOutsideCorrectionWindow, isFalse);
+
+      await expectLater(
+        _gateway(previewReturnInvoke: _throwing(StateError('offline')))
+            .previewReturn(returnPreviewRequest()),
+        throwsA(isA<SaleUncertainException>()),
+      );
+    });
+
+    test('only the folio-ambiguous reason is ambiguous', () async {
+      Future<SaleRejectedException> rejection(String? reason) async {
+        try {
+          await _gateway(
+            findInvoke: _throwing(
+              SaleCallableException(
+                code: 'failed-precondition',
+                message: 'folio is ambiguous',
+                reason: reason,
+              ),
+            ),
+          ).find(SaleLookupQuery.byFolio('NTE-3F2A-9C1B'));
+        } on SaleRejectedException catch (rejected) {
+          return rejected;
+        }
+        fail('expected a rejection');
+      }
+
+      expect(correctionFolioAmbiguousReason, 'folio-ambiguous');
+      expect((await rejection('folio-ambiguous')).isFolioAmbiguous, isTrue);
+      expect((await rejection(null)).isFolioAmbiguous, isFalse);
+      expect((await rejection('payment-mismatch')).isFolioAmbiguous, isFalse);
+    });
+
+    test('a superseded preview is stale whatever its outcome', () async {
+      final List<Completer<Object?>> pending = <Completer<Object?>>[];
+      final EmulatorCorrectionGateway gateway = _gateway(
+        previewReturnInvoke: (_) {
+          final Completer<Object?> completer = Completer<Object?>();
+          pending.add(completer);
+          return completer.future;
+        },
+      );
+      final Future<SaleReturnPreview> first = gateway.previewReturn(
+        returnPreviewRequest(),
+      );
+      final Future<SaleReturnPreview> second = gateway.previewReturn(
+        returnPreviewRequest(),
+      );
+      final Future<SaleReturnPreview> third = gateway.previewReturn(
+        returnPreviewRequest(),
+      );
+      await pumpEventQueue();
+      pending[0].complete(returnPreviewJson());
+      pending[1].completeError(
+        const SaleCallableException(code: 'out-of-range', message: 'over'),
+      );
+      pending[2].complete(returnPreviewJson());
+      await expectLater(first, throwsA(isA<SaleStaleException>()));
+      await expectLater(second, throwsA(isA<SaleStaleException>()));
+      expect((await third).totalCentavos, 1410);
+    });
+  });
+
+  test('a malformed submit keeps its original error as the cause', () async {
+    final EmulatorCorrectionGateway gateway = _gateway(
+      returnInvoke: (_) async => <String, Object?>{
+        'receipt': returnReceiptJson(),
+        'replayed': 'no',
+      }.cast<String, bool>(),
+    );
+    try {
+      await gateway.submitReturn(returnDraft());
+      fail('expected an uncertain result');
+    } on CorrectionUncertainException catch (error) {
+      expect(error, isA<SaleUncertainException>());
+      expect(error.cause, isA<TypeError>());
+      expect(error.stackTrace.toString(), isNotEmpty);
+    }
+    try {
+      await _gateway(
+        returnInvoke: (_) async => <String, Object?>{'receipt': null},
+      ).submitReturn(returnDraft());
+      fail('expected an uncertain result');
+    } on CorrectionUncertainException catch (error) {
+      expect(error.cause, isA<CorrectionProtocolException>());
+    }
   });
 }

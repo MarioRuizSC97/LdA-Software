@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/corrections/correction_draft.dart';
 import 'package:lda_inventory/corrections/correction_lookup_view.dart';
+import 'package:lda_inventory/corrections/correction_receipt.dart';
+import 'package:lda_inventory/corrections/correction_return_form.dart';
 import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/corrections/sale_corrections.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
@@ -64,10 +67,25 @@ class _Backend {
     return Future<T>.error(result);
   }
 
+  final List<SaleReturnDraft> submits = <SaleReturnDraft>[];
+
   SaleCorrections get corrections => SaleCorrections(
     branchId: saleBranchId,
     find: find,
     listRecent: listRecent,
+    previewReturn: (SaleReturnPreviewRequest request) async =>
+        SaleReturnPreview.fromCallable(
+          returnPreviewJsonFor(request),
+          request: request,
+        ),
+    submitReturn: (SaleReturnDraft draft) async {
+      submits.add(draft);
+      return SaleReturnReceipt.fromCallable(
+        returnResponseFor(draft),
+        draft: draft,
+      );
+    },
+    unresolvedDraft: () => null,
   );
 }
 
@@ -224,6 +242,13 @@ void main() {
         const SaleRejectedException(
           code: 'failed-precondition',
           message: 'folio is ambiguous',
+          reason: 'folio-ambiguous',
+        ),
+      )
+      ..findResults.add(
+        const SaleRejectedException(
+          code: 'failed-precondition',
+          message: 'persisted sale is invalid',
         ),
       )
       ..findResults.add(const SaleUncertainException())
@@ -248,6 +273,14 @@ void main() {
       ),
       findsOneWidget,
     );
+
+    // Only the structured reason means ambiguous.
+    await _search(tester, 'NTE-3F2A-9C1B');
+    expect(
+      find.text('Esta venta no se puede corregir en este momento.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('más de una venta'), findsNothing);
 
     await _search(tester, 'NTE-3F2A-9C1B');
     expect(
@@ -341,8 +374,13 @@ void main() {
       findsNothing,
     );
 
+    // The pin is still returnable, so "Devolver" is enabled.
+    expect(find.text('Devolver'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
+      isNotNull,
+    );
     for (final (String key, String label) in <(String, String)>[
-      ('correction-action-return', 'Devolver'),
       ('correction-action-replace', 'Reemplazar (defecto de fábrica)'),
       ('correction-action-exchange', 'Cambiar producto'),
     ]) {
@@ -376,5 +414,168 @@ void main() {
     await _pump(tester, _Backend(), onClose: () => closes += 1);
     await _tap(tester, _key('corrections-close'));
     expect(closes, 1);
+  });
+
+  testWidgets(
+    'a stale search that still owns the view shows a retryable error',
+    (WidgetTester tester) async {
+      final _Backend backend = _Backend()
+        ..findResults.add(const SaleStaleException());
+      await _pump(tester, backend);
+      await _search(tester, 'NTE-3F2A-9C1B');
+      expect(
+        find.text('No se pudo buscar la venta. Intenta de nuevo.'),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<FilledButton>(_key('correction-search')).onPressed,
+        isNotNull,
+      );
+      await _search(tester, 'NTE-3F2A-9C1B');
+      expect(_key('correction-detail'), findsOneWidget);
+    },
+  );
+
+  testWidgets('a superseded search stays silent', (WidgetTester tester) async {
+    final _Backend backend = _Backend();
+    final Completer<CorrectableSale> pending = Completer<CorrectableSale>();
+    backend
+      ..findResults.add(pending)
+      ..listResults.add(_recent(<CorrectableSale>[_sale()]));
+    await _pump(tester, backend);
+    await tester.enterText(_key('correction-folio'), 'NTE-3F2A-9C1B');
+    await tester.tap(_key('correction-search'));
+    await tester.pump();
+    // Opening a recent sale supersedes the pending search.
+    await tester.ensureVisible(_key('correction-sale-$saleKey'));
+    await tester.tap(_key('correction-sale-$saleKey'));
+    await tester.pump();
+    pending.completeError(const SaleStaleException());
+    await tester.pumpAndSettle();
+    expect(_key('correction-detail'), findsOneWidget);
+    await _tap(tester, _key('correction-detail-back'));
+    expect(
+      find.text('No se pudo buscar la venta. Intenta de nuevo.'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('a fully returned sale cannot be returned again', (
+    WidgetTester tester,
+  ) async {
+    final CorrectableSale sale = parseCorrectableSale(
+      lookupSaleJson(ribbonReturned: 250),
+    );
+    final CorrectableSale done = CorrectableSale.fromLookup(<String, Object?>{
+      'sale': <String, Object?>{
+        ...lookupSaleJson(ribbonReturned: 250),
+        'lines': <Object?>[
+          (lookupSaleJson(ribbonReturned: 250)['lines']! as List<Object?>)
+              .first,
+          <String, Object?>{
+            'lineIndex': 1,
+            'soldScaled': 3,
+            'returnedScaled': 3,
+            'remainingScaled': 0,
+          },
+        ],
+      },
+    }, query: SaleLookupQuery.bySaleId(saleKey));
+    expect(sale.hasReturnableQuantity, isTrue);
+    final _Backend backend = _Backend()
+      ..listResults.add(_recent(<CorrectableSale>[sale]))
+      ..findResults.add(done);
+    await _pump(tester, backend);
+    await _search(tester, 'NTE-3F2A-9C1B');
+    expect(
+      tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('a return shows its receipt, then the refetched sale', (
+    WidgetTester tester,
+  ) async {
+    final _Backend backend = _Backend()
+      ..listResults.add(_recent(<CorrectableSale>[_sale()]))
+      ..findResults.add(const SaleUncertainException())
+      ..findResults.add(_sale(ribbonReturned: 150));
+    await _pump(tester, backend);
+    await _tap(tester, _key('correction-sale-$saleKey'));
+    await _tap(tester, _key('correction-action-return'));
+    expect(_key('return-form'), findsOneWidget);
+
+    await _tap(tester, _key('return-line-select-0'));
+    await tester.enterText(_key('return-line-quantity-0'), '1');
+    await _tap(tester, _key('return-reason-change-of-mind'));
+    await tester.pump(returnPreviewDelay);
+    await tester.pumpAndSettle();
+    await _tap(tester, _key('return-confirm'));
+
+    expect(_key('return-receipt'), findsOneWidget);
+    expect(find.text('Total reembolsado: 11.60 MXN'), findsOneWidget);
+    expect(backend.submits.single.branchId, saleBranchId);
+
+    await _tap(tester, _key('return-receipt-back'));
+    expect(backend.finds.single, <String, Object?>{'saleId': saleKey});
+    expect(_key('correction-refresh-error'), findsOneWidget);
+    expect(find.text('No se pudo actualizar la venta.'), findsOneWidget);
+
+    await _tap(tester, _key('correction-refresh-retry'));
+    expect(backend.finds, hasLength(2));
+    expect(backend.finds.last, <String, Object?>{'saleId': saleKey});
+    final Finder ribbon = _key('correction-line-0');
+    for (final String text in <String>[
+      'Vendido: 2.50 meter',
+      'Devuelto: 1.50 meter',
+      'Restante: 1.00 meter',
+    ]) {
+      expect(
+        find.descendant(of: ribbon, matching: find.text(text)),
+        findsOneWidget,
+        reason: text,
+      );
+    }
+  });
+
+  testWidgets('a new search after a return reloads the recent sales', (
+    WidgetTester tester,
+  ) async {
+    final _Backend backend = _Backend()
+      ..listResults.add(_recent(<CorrectableSale>[_sale()]));
+    await _pump(tester, backend);
+    await _tap(tester, _key('correction-sale-$saleKey'));
+    await _tap(tester, _key('correction-action-return'));
+    await _tap(tester, _key('return-line-select-1'));
+    await tester.enterText(_key('return-line-quantity-1'), '1');
+    await _tap(tester, _key('return-reason-other'));
+    await tester.pump(returnPreviewDelay);
+    await tester.pumpAndSettle();
+    await _tap(tester, _key('return-confirm'));
+    expect(backend.lists, 1);
+
+    await _tap(tester, _key('return-receipt-new-search'));
+    expect(_key('correction-folio'), findsOneWidget);
+    expect(_key('return-receipt'), findsNothing);
+    expect(backend.lists, 2);
+    expect(backend.finds, isEmpty);
+  });
+
+  testWidgets('back from the return form shows the same sale', (
+    WidgetTester tester,
+  ) async {
+    final _Backend backend = _Backend()
+      ..listResults.add(_recent(<CorrectableSale>[_sale()]));
+    await _pump(tester, backend);
+    await _tap(tester, _key('correction-sale-$saleKey'));
+    await _tap(tester, _key('correction-action-return'));
+    await _tap(tester, _key('return-back'));
+    expect(_key('correction-detail'), findsOneWidget);
+    expect(_key('return-form'), findsNothing);
+  });
+
+  test('the window length is named and drives the copy', () {
+    expect(correctionWindowDays, 15);
+    expect(correctionWindow, const Duration(days: correctionWindowDays));
   });
 }
