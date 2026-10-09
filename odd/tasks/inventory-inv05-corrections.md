@@ -55,7 +55,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
   - [x] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
   - [x] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
-  - [ ] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
+  - [x] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
   - [ ] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
   - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
@@ -247,8 +247,15 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - **Size:** about 1,010 authored lines.
 - CORR-07P parent spot check: every non-emulator `functions/test/*.test.mjs` from the repository root, 318/318 pass. The writer reported 355 under a different counting command; neither run had a failure.
 - CORR-07P closure: native review `review-8110b1410ad6e01c` (medium, one lens) approved with no findings and acknowledged; commit tree exactly the approved candidate `6aa37de7`; commit `4863da9`.
-- CORR-07P pending: the one live HTTP transport run, which needs user approval. First confirm OPTIONS 204 for the 8 correction routes, including the two previews.
+- CORR-07P live run (user-approved, exactly once, HEAD `3aaf73e`, verifier):
+  - OPTIONS returned 204 for all 12 routes, including `previewSaleReturn` and `previewSaleExchange`.
+  - Both transport files in one command: 138/138 pass.
+  - Preview equalled submit for return-good, return-invoiced, exchange-pay and exchange-refund, and wrote nothing.
+  - The previewed `customerPaysCentavos` was accepted.
+  - `payment-mismatch` and `folio-ambiguous` reached the caller as `details.reason`.
+  - Preview denials passed.
+  - The fixture hash `5ddfb8b8…` was equal before and after; Firestore stayed at 104 documents with an identical listing; Auth stayed at 2 users with 0 `acceptance-*`. No residue.
 
 ## Next step
 
-CORR-07P live run (needs user approval), then CORR-07C (return form with preview, folding in the CORR-07B follow-ups).
+CORR-07C: return form using `previewSaleReturn`, folding in the CORR-07B follow-ups (delegated writer).
