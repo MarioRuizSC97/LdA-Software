@@ -236,7 +236,10 @@ test('valid sale persists immutable safe history, private audit and negative mov
   const { firestore, service } = fixture();
   const result = await service(request());
   assert.equal(result.replayed, false);
-  assert.deepEqual(Object.keys(result).sort(), ['receipt', 'replayed']);
+  assert.deepEqual(Object.keys(result).sort(), ['createdAt', 'receipt', 'replayed']);
+  // Epoch milliseconds of the stored sale timestamp, never a Date or string.
+  assert.equal(result.createdAt, timestamp.getTime());
+  assert.equal(firestore.records.get(`sales/${result.receipt.saleId}`).createdAt.getTime(), result.createdAt);
   const receipt = result.receipt;
   assert.deepEqual(Object.keys(receipt).sort(), [
     'branchCode', 'branchId', 'calculation', 'folio', 'payment', 'productIds', 'saleId', 'version',
@@ -345,6 +348,61 @@ test('insufficient or absent stock leaves zero artifacts', async () => {
     if (absent) firestore.records.delete('branches/north/stock/p1');
     else firestore.records.get('branches/north/stock/p1').quantityScaled = 1;
     await rejectsUnchanged(firestore, service, request(), 'failed-precondition');
+  }
+});
+
+test('a replay returns the original stored sale time, not the replay invocation time', async () => {
+  let clock = new Date(timestamp);
+  const { firestore, service } = fixture({ now: () => clock });
+  const original = await service(request());
+  clock = new Date('2026-06-20T08:30:00Z');
+  const replay = await service(request());
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(Object.keys(replay).sort(), ['createdAt', 'receipt', 'replayed']);
+  assert.equal(replay.createdAt, original.createdAt);
+  assert.equal(replay.createdAt, timestamp.getTime());
+  // The replay source is the submission receipt completedAt, written with the same timestamp as the sale.
+  privateReplay(firestore).completedAt = new Date('2026-06-02T00:00:00Z');
+  assert.equal((await service(request())).createdAt, Date.parse('2026-06-02T00:00:00Z'));
+});
+
+test('payment and stock refusals carry a stable machine reason; other refusals carry none', async () => {
+  const reasonOf = async (firestore, service, input, code) => {
+    let reason = null;
+    await assert.rejects(service(input), (error) => {
+      assert.equal(error.name, 'SaleError');
+      assert.equal(error.code, code);
+      reason = error.reason;
+      return true;
+    });
+    return reason;
+  };
+  let { firestore, service } = fixture();
+  firestore.records.get('branches/north/stock/p1').quantityScaled = 1;
+  assert.equal(await reasonOf(firestore, service, request(), 'failed-precondition'), 'insufficient-stock');
+  ({ firestore, service } = fixture());
+  firestore.records.delete('branches/north/stock/p1');
+  assert.equal(await reasonOf(firestore, service, request(), 'failed-precondition'), 'insufficient-stock');
+  ({ firestore, service } = fixture());
+  const mismatch = await reasonOf(firestore, service,
+    request({ payment: { method: 'cash', amountCentavos: 231 } }), 'invalid-argument');
+  assert.equal(mismatch, 'payment-mismatch');
+  ({ firestore, service } = fixture());
+  assert.equal(await reasonOf(firestore, service, request({ tax: 16 }), 'invalid-argument'), undefined);
+  ({ firestore, service } = fixture());
+  firestore.records.get('branches/north').code = 'bad';
+  assert.equal(await reasonOf(firestore, service, request(), 'failed-precondition'), undefined);
+});
+
+test('SaleError keeps code and message and accepts only a kebab-case reason', () => {
+  const plain = new sales.SaleError('not-found', 'missing');
+  assert.equal(plain.code, 'not-found');
+  assert.equal(plain.message, 'missing');
+  assert.equal(plain.reason, undefined);
+  assert.equal(Object.hasOwn(plain, 'reason'), false);
+  assert.equal(new sales.SaleError('invalid-argument', 'm', 'payment-mismatch').reason, 'payment-mismatch');
+  for (const reason of ['', 'Payment', 'payment mismatch', 7, null]) {
+    assert.throws(() => new sales.SaleError('invalid-argument', 'm', reason), TypeError);
   }
 });
 

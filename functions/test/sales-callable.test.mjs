@@ -26,7 +26,7 @@ const firestore = {
   }),
 };
 class HttpsError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, details) { super(message); this.code = code; this.details = details; }
 }
 const safeResult = Object.freeze({ receipt: { saleId: 'key-one' }, replayed: true });
 const safeQuote = Object.freeze({ calculation: {}, totalCentavos: 0, lines: [] });
@@ -188,8 +188,11 @@ test('unchanged sale service derives branch from auth and rejects client authori
   const request = { auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
     data: { idempotencyKey: '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', invoiceRequested: false,
       lines: [{ productId: 'p1', quantity: '1' }], payment: { method: 'cash', amountCentavos: 100 } } };
-  const { receipt, replayed } = await invoke(request);
+  const result = await invoke(request);
+  const { receipt, replayed } = result;
   assert.equal(receipt.branchId, 'north'); assert.equal(replayed, false);
+  assert.deepEqual(Object.keys(result).sort(), ['createdAt', 'receipt', 'replayed']);
+  assert.ok(Number.isSafeInteger(result.createdAt) && result.createdAt > 0);
   assert.deepEqual(Object.keys(receipt).sort(),
     ['branchCode', 'branchId', 'calculation', 'folio', 'payment', 'productIds', 'saleId', 'version']);
   assert.equal(receipt.folio, 'NTE-3F2A-9C1B');
@@ -212,6 +215,39 @@ test('known SaleError codes and public messages are mapped without private detai
     failure = { at: 'submit', error };
     await rejects(invoke(), code, 'public sale failure');
   }
+});
+
+const rejectsWithReason = (promise, code, message, reason) => assert.rejects(promise, (error) => {
+  assert.ok(error instanceof HttpsError);
+  assert.equal(error.code, code);
+  assert.equal(error.message, message);
+  assert.deepEqual(error.details, { reason });
+  assert.deepEqual(Object.keys(error.details), ['reason']);
+  return true;
+});
+
+test('the real service maps payment mismatch and insufficient stock to details.reason', async () => {
+  reset(); useRealService = true;
+  const request = (quantity, amountCentavos) => ({
+    auth: { uid: 'seller', token: { role: 'seller', branchId: 'north' } },
+    data: { idempotencyKey: '3f2a9c1b-7d4e-4a10-8b6c-0123456789ab', invoiceRequested: false,
+      lines: [{ productId: 'p1', quantity }], payment: { method: 'cash', amountCentavos } },
+  });
+  await rejectsWithReason(invoke(request('1', 99)), 'invalid-argument',
+    'full payment must equal the authoritative total', 'payment-mismatch');
+  await rejectsWithReason(invoke(request('11', 1100)), 'failed-precondition',
+    'insufficient stock', 'insufficient-stock');
+});
+
+test('a SaleError reason is forwarded alone; private fields never reach details', async () => {
+  reset();
+  const error = new sales.SaleError('invalid-argument', 'public sale failure', 'payment-mismatch');
+  error.details = 'private provenance';
+  failure = { at: 'submit', error };
+  await rejectsWithReason(invoke(), 'invalid-argument', 'public sale failure', 'payment-mismatch');
+  reset();
+  failure = { at: 'submit', error: new sales.SaleError('failed-precondition', 'public quote failure', 'insufficient-stock') };
+  await rejectsWithReason(invokeQuote(), 'failed-precondition', 'public quote failure', 'insufficient-stock');
 });
 
 test('unknown initialization, Firestore, factory and submission errors are sanitized', async () => {

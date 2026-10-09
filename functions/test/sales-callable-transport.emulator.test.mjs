@@ -279,7 +279,7 @@ function createManifest(context, adapter) {
         const receipt = { version: 2, saleId: saleKey, branchId: branch, branchCode,
           folio: `${branchCode}-${head.slice(0, 4)}-${head.slice(4)}`, productIds: [productId],
           calculation, payment: input.payment };
-        requireSame(result, { receipt, replayed: false });
+        requireSame(result, { receipt, replayed: false, createdAt: timestamp });
         const scaled = calculation.lines[0].quantity.scaled;
         const movementId = `sale-${saleKey}-0`;
         expected.set(`sales/${saleKey}`, { receipt, createdAt: timestamp });
@@ -334,6 +334,11 @@ function createManifest(context, adapter) {
     receipt(kind) { // Copy of a confirmed private sale receipt, for replay comparison only.
       if (!SALE_KINDS.includes(kind) || !completed.has(kind)) throw new Error('acceptance/operation-order');
       return copy(entries.get(`sales/${key(kind)}`).expected.receipt);
+    },
+    saleReplay(kind) { // The exact replay response: the stored receipt and the original sale time.
+      if (!SALE_KINDS.includes(kind) || !completed.has(kind)) throw new Error('acceptance/operation-order');
+      const { receipt, createdAt } = entries.get(`sales/${key(kind)}`).expected;
+      return copy({ receipt, replayed: true, createdAt });
     },
     async seedBranches() {
       if (seeded || cleanupStarted) throw new Error('acceptance/seed-once');
@@ -798,7 +803,7 @@ async function fakeSale(sample, kind, { scaled, base, iva, stock, pricing }, for
     [`saleSubmissionReceipts/${key}`, { actorId: SELLER, branchId: OWN, result: copy(receipt), completedAt: 1000,
       fingerprint: JSON.stringify({ actorId: SELLER, branchId: OWN, ...input }) }],
   ]);
-  const response = { receipt: copy(receipt), replayed: false };
+  const response = { receipt: copy(receipt), replayed: false, createdAt: 1000 };
   forge(docs, response, key);
   return sample.manifest.execute(kind, async () => {
     for (const [path, value] of docs) sample.store.documents.set(path, copy(value));
@@ -824,7 +829,10 @@ test('offline: seller sale, replay and repricing follow independent sales projec
   assert.deepEqual(replay, first.receipt);
   replay.payment.amountCentavos = 1; // Copies cannot poison the private projection.
   first.receipt.saleId = 'foreign';
-  await sample.manifest.unchanged(async () => ({ receipt: sample.manifest.receipt('sale'), replayed: true }));
+  // The replay response carries the original stored sale time, not a new one.
+  assert.deepEqual(sample.manifest.saleReplay('sale'),
+    { receipt: sample.manifest.receipt('sale'), replayed: true, createdAt: 1000 });
+  await sample.manifest.unchanged(async () => sample.manifest.saleReplay('sale'));
   await fakePrice(sample, 'reprice', taxable(1500, 'iva-additional-on-invoice'));
   const repriced = sample.store.documents.get(`productPriceAudits/${sample.manifest.request('reprice').idempotencyKey}`);
   assert.equal(repriced.previousAuditId, sample.manifest.request('price').idempotencyKey);
@@ -834,7 +842,7 @@ test('offline: seller sale, replay and repricing follow independent sales projec
   assert.equal(second.receipt.calculation.totalCentavos, 870);
   // A replay after repricing keeps the original immutable snapshot.
   assert.equal(sample.manifest.receipt('sale').calculation.totalCentavos, 1234);
-  await sample.manifest.unchanged(async () => ({ receipt: sample.manifest.receipt('sale'), replayed: true }));
+  await sample.manifest.unchanged(async () => sample.manifest.saleReplay('sale'));
   await sample.manifest.cleanup();
   assert.equal(sample.store.documents.size, 0);
 });
@@ -1280,7 +1288,7 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     await t.test('seller sale success, replay and conflict', async () => {
       await manifest.execute('sale', async (input) => callableSuccess(await call('sale', input, tokens.seller)));
       await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
-        { receipt: manifest.receipt('sale'), replayed: true }));
+        manifest.saleReplay('sale')));
       await manifest.unchanged(async () => callableDenied(await call('sale',
         { ...manifest.request('sale'), lines: [line('0.50')] }, tokens.seller), 'ALREADY_EXISTS'));
     });
@@ -1298,7 +1306,7 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     await t.test('repriced sale and immutable replay snapshot', async () => {
       await manifest.execute('resale', async (input) => callableSuccess(await call('resale', input, tokens.seller)));
       await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
-        { receipt: manifest.receipt('sale'), replayed: true }));
+        manifest.saleReplay('sale')));
     });
     // Teardown verifies Firestore exact contents transactionally, Auth privately,
     // and baseline preservation. Auth's nontransactional verify-delete race remains.

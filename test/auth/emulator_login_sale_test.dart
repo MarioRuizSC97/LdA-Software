@@ -57,20 +57,29 @@ Future<CatalogSnapshot> _catalog(EmulatorSession session) async =>
     : CatalogSnapshot(const <CatalogItem>[]);
 
 /// Real sale gateway over fake callables, recording loader and submit calls.
+///
+/// [current] is what the gateway's own session checker sees (null means the
+/// session it was built for); [loadFailures] fail initializations in order;
+/// [duringSubmit] runs inside the callable, before its outcome.
 class _SaleBackend {
   int loads = 0;
   final List<Map<String, Object?>> submits = <Map<String, Object?>>[];
   final List<Object> submitFailures = <Object>[];
+  final List<Object> loadFailures = <Object>[];
+  EmulatorSession? current;
+  void Function()? duringSubmit;
 
   Future<EmulatorSaleGateway> load(EmulatorSession session) async {
     loads += 1;
+    if (loadFailures.isNotEmpty) throw loadFailures.removeAt(0);
     return EmulatorSaleGateway(
       expectedSession: session,
-      sessionChecker: () async => session,
+      sessionChecker: () async => current ?? session,
       quoteInvoke: (Map<String, Object?> request) async =>
           quoteFor(cartForRequest(request)),
       submitInvoke: (Map<String, Object?> request) async {
         submits.add(request);
+        duringSubmit?.call();
         if (submitFailures.isNotEmpty) throw submitFailures.removeAt(0);
         return submitResponseForRequest(request);
       },
@@ -153,11 +162,106 @@ void main() {
     });
     final String key = request['idempotencyKey']! as String;
     expect(
-      find.textContaining('Folio NTE-${key.substring(0, 4).toUpperCase()}'),
-      findsOneWidget,
+      tester.widget<Text>(_key('sale-receipt-folio')).data,
+      startsWith('NTE-${key.substring(0, 4).toUpperCase()}'),
     );
+    await _tap(tester, _key('sale-receipt-new'));
     expect(find.textContaining('Carrito vacío'), findsOneWidget);
   });
+
+  testWidgets('a failed gateway initialization is dropped and retried', (
+    WidgetTester tester,
+  ) async {
+    final _SaleBackend backend = _SaleBackend()
+      ..loadFailures.add(StateError('functions unavailable'));
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), saleLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
+    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+    await _tap(tester, _key('sale-cart-button'));
+
+    expect(backend.loads, 1);
+    expect(find.text('No se pudo calcular el total'), findsOneWidget);
+
+    await _tap(tester, _key('sale-retry-quote'));
+    expect(backend.loads, 2);
+    expect(find.textContaining('20.00 MXN'), findsWidgets);
+
+    await _tap(tester, _key('sale-charge'));
+    expect(backend.loads, 2);
+    expect(backend.submits, hasLength(1));
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+  });
+
+  testWidgets('a seller change seen before the call locks the stored draft '
+      'without sending it', (WidgetTester tester) async {
+    final _SaleBackend backend = _SaleBackend();
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), saleLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
+    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+    await _tap(tester, _key('sale-cart-button'));
+    backend.current = _otherSeller;
+    await _tap(tester, _key('sale-charge'));
+
+    // The quote ran before the switch; the submit's pre-call check refused.
+    expect(backend.submits, isEmpty);
+    expect(_key('sale-retry-submit'), findsOneWidget);
+    expect(_key('sale-receipt-folio'), findsNothing);
+
+    backend.current = null;
+    await _tap(tester, _key('sale-retry-submit'));
+    expect(backend.submits, hasLength(1));
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+  });
+
+  for (final bool rejected in <bool>[false, true]) {
+    testWidgets('a seller change during the call makes a '
+        '${rejected ? 'rejection' : 'success'} uncertain', (
+      WidgetTester tester,
+    ) async {
+      final _SaleBackend backend = _SaleBackend();
+      if (rejected) {
+        backend.submitFailures.add(
+          const SaleCallableException(
+            code: 'invalid-argument',
+            message: 'full payment must equal the authoritative total',
+            reason: 'payment-mismatch',
+          ),
+        );
+      }
+      final _SessionGateway gateway = _SessionGateway(restored: _seller);
+      // The gateway's own checks still pass; only the shell sees the switch.
+      backend.duringSubmit = () {
+        backend.duringSubmit = null;
+        gateway.sessions.add(_otherSeller);
+      };
+      await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+      await tester.pumpAndSettle();
+      await _addRibbonAndCharge(tester);
+
+      expect(backend.submits, hasLength(1));
+      expect(_key('sale-receipt-folio'), findsNothing);
+      expect(find.textContaining('Carrito vacío'), findsOneWidget);
+
+      // The draft stayed stored for the original seller: same-key retry.
+      gateway.sessions.add(_seller);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);
+      await _tap(tester, _key('sale-cart-button'));
+      expect(_key('sale-retry-submit'), findsOneWidget);
+      await _tap(tester, _key('sale-retry-submit'));
+      expect(backend.submits, hasLength(2));
+      expect(backend.submits[1], backend.submits[0]);
+      expect(_key('sale-receipt-folio'), findsOneWidget);
+    });
+  }
 
   testWidgets('an uncertain sale survives re-login and retries the same key', (
     WidgetTester tester,
@@ -187,7 +291,7 @@ void main() {
 
     expect(backend.submits, hasLength(2));
     expect(backend.submits[1], backend.submits[0]);
-    expect(find.textContaining('Venta registrada'), findsOneWidget);
+    expect(find.text('Venta registrada'), findsOneWidget);
   });
 
   testWidgets('another seller never sees an unresolved sale', (

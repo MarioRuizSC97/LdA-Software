@@ -180,11 +180,26 @@ function folioHead(saleId) {
   return characters.slice(0, 8).toUpperCase();
 }
 
+const SALE_REASON_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+/**
+ * Domain refusal with a public code and message. The optional `reason` is a
+ * stable kebab-case machine signal the callable forwards as HttpsError
+ * details { reason }, so clients never match English messages. Reasons used:
+ * 'payment-mismatch' (full payment differs from the authoritative total) and
+ * 'insufficient-stock' (a sale line cannot be covered).
+ */
 export class SaleError extends Error {
-  constructor(code, message) {
+  constructor(code, message, reason) {
     super(message);
     this.name = 'SaleError';
     this.code = code;
+    if (reason !== undefined) {
+      if (typeof reason !== 'string' || !SALE_REASON_PATTERN.test(reason)) {
+        throw new TypeError('sale error reason must be kebab-case');
+      }
+      this.reason = reason;
+    }
   }
 }
 
@@ -221,7 +236,10 @@ export function assertLocalSalesEmulator(environment = process.env) {
  * Only trusted auth.token { role: 'seller', branchId } assigns the branch.
  * Duplicate products are rejected: merging could change per-line rounding.
  *
- * Returns { receipt, replayed }; receipt is a detached deeply frozen v2
+ * Returns { receipt, replayed, createdAt }; createdAt is the stored sale
+ * timestamp in epoch milliseconds (a replay returns the original one, read
+ * from the submission receipt's completedAt, which is written with the same
+ * timestamp as sales.createdAt). receipt is a detached deeply frozen v2
  * { version: 2, saleId, branchId, branchCode, folio, productIds, calculation,
  * payment } snapshot. branchCode is read from branches/{branchId}.code at
  * sale time (a missing or invalid code fails closed) and folio is
@@ -265,10 +283,7 @@ export function createSaleService({
     return firestore.runTransaction(async (transaction) => {
       const replay = await transaction.get(replayReference);
       if (replay.exists) {
-        return {
-          receipt: validatedSaleReplay(replay.data(), input, actorId, branchId, fingerprint),
-          replayed: true,
-        };
+        return { ...validatedSaleReplay(replay.data(), input, actorId, branchId, fingerprint), replayed: true };
       }
 
       // A legacy key may replay above, but a new sale must yield a folio.
@@ -282,12 +297,14 @@ export function createSaleService({
       // Line by line, so the first failing line decides the error, as before.
       const prepared = inputs.map((read) => {
         const line = prepareSaleLine(read);
-        if (line.next === null) throw new SaleError('failed-precondition', 'insufficient stock');
+        if (line.next === null) {
+          throw new SaleError('failed-precondition', 'insufficient stock', 'insufficient-stock');
+        }
         return line;
       });
       const calculation = authoritativeCalculation(input.invoiceRequested, prepared);
       if (input.payment.amountCentavos !== calculation.totalCentavos) {
-        throw new SaleError('invalid-argument', 'full payment must equal the authoritative total');
+        throw new SaleError('invalid-argument', 'full payment must equal the authoritative total', 'payment-mismatch');
       }
       if (Object.hasOwn(invocationTime, 'error')) throw invocationTime.error;
       const { timestamp } = invocationTime;
@@ -314,7 +331,7 @@ export function createSaleService({
       transaction.create(replayReference, {
         actorId, branchId, fingerprint, result: receipt, completedAt: timestamp,
       });
-      return { receipt, replayed: false };
+      return { receipt, replayed: false, createdAt: timestamp.getTime() };
     });
   };
 }
@@ -515,6 +532,7 @@ function saleCurrentStock(snapshot, spec) {
   return value.quantityScaled;
 }
 
+// Returns the epoch milliseconds of a valid persisted or captured timestamp.
 function saleTimestamp(value) {
   // Admin reads Date writes back as Timestamp; support both without importing
   // or initializing the SDK. Reject strings and sentinel/nonfinite values.
@@ -522,7 +540,8 @@ function saleTimestamp(value) {
     const date = value instanceof Date
       ? value
       : typeof value?.toDate === 'function' ? value.toDate() : null;
-    if (date instanceof Date && Number.isFinite(date.getTime())) return;
+    const milliseconds = date instanceof Date ? date.getTime() : NaN;
+    if (Number.isSafeInteger(milliseconds) && milliseconds >= 0) return milliseconds;
   } catch {
     // A malformed persisted Timestamp adapter also fails with the domain error.
   }
@@ -551,7 +570,8 @@ function validatedSaleReplay(record, input, actorId, branchId, fingerprint) {
   }
   try {
     exactFields(record, ['actorId', 'branchId', 'fingerprint', 'result', 'completedAt'], 'replay');
-    saleTimestamp(record.completedAt);
+    // completedAt is written with the same timestamp as sales.createdAt.
+    const createdAt = saleTimestamp(record.completedAt);
     const receipt = record.result;
     // Version selects the exact shape; the stored code (not today's branch
     // code) rebuilds the folio, so a valid replay never depends on the branch.
@@ -580,7 +600,7 @@ function validatedSaleReplay(record, input, actorId, branchId, fingerprint) {
       || saleCanonical(receipt) !== saleCanonical(expected)) {
       throw new TypeError('receipt snapshot differs');
     }
-    return expected;
+    return { receipt: expected, createdAt };
   } catch {
     throw new SaleError('failed-precondition', 'persisted sale replay is invalid');
   }

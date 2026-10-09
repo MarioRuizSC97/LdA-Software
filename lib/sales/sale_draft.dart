@@ -8,7 +8,10 @@ final RegExp _uuidV4Pattern = RegExp(
 final RegExp _branchCodePattern = RegExp(r'^[A-Z]{2,4}$');
 final RegExp _nonAlphanumeric = RegExp(r'[^a-zA-Z0-9]');
 
-const Set<String> _responseKeys = <String>{'receipt', 'replayed'};
+const Set<String> _responseKeys = <String>{'receipt', 'replayed', 'createdAt'};
+
+/// Largest epoch millisecond a [DateTime] can represent.
+const int _maxDateTimeMillis = 8640000000000000;
 const Set<String> _receiptKeys = <String>{
   'version',
   'saleId',
@@ -121,9 +124,8 @@ class SaleDraft {
 
 /// Parsed v2 `submitSale` result, bound to the draft that produced it.
 ///
-/// `submitSale` returns `{receipt, replayed}` with no timestamp, so
-/// [confirmedAt] is the client clock when the response was accepted. For a
-/// replay this is the confirmation time, not the original sale time.
+/// [createdAt] is the authoritative server sale time (UTC). For a replay it
+/// is the original sale time, never the time of the retry.
 class SaleReceipt {
   const SaleReceipt._({
     required this.saleId,
@@ -135,22 +137,24 @@ class SaleReceipt {
     required this.paymentMethod,
     required this.amountCentavos,
     required this.replayed,
-    required this.confirmedAt,
+    required this.createdAt,
   });
 
-  /// Requires exactly `{receipt, replayed}` and a v2 receipt whose sale ID is
+  /// Requires exactly `{receipt, replayed, createdAt}`, where `createdAt` is
+  /// a non-negative integer of epoch milliseconds within the [DateTime]
+  /// range, and a v2 receipt whose sale ID is
   /// the draft key, whose branch is the draft branch, whose folio is derived
   /// from its branch code and key, whose products and calculation match the
   /// draft cart, and whose payment is the draft method and amount, equal to
   /// the calculation total. Legacy v1 receipts cannot answer a new UUID key
   /// and are rejected.
-  factory SaleReceipt.fromCallable(
-    Object? value, {
-    required SaleDraft draft,
-    required DateTime confirmedAt,
-  }) {
+  factory SaleReceipt.fromCallable(Object? value, {required SaleDraft draft}) {
     final Map<Object?, Object?> response = _exact(value, _responseKeys);
     final Object? replayed = response['replayed'];
+    final Object? createdAt = response['createdAt'];
+    if (createdAt is! int || createdAt < 0 || createdAt > _maxDateTimeMillis) {
+      throw const SaleProtocolException();
+    }
     final Map<Object?, Object?> receipt = _exact(
       response['receipt'],
       _receiptKeys,
@@ -191,7 +195,7 @@ class SaleReceipt {
       paymentMethod: draft.paymentMethod,
       amountCentavos: calculation.totalCentavos,
       replayed: replayed,
-      confirmedAt: confirmedAt,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true),
     );
   }
 
@@ -204,7 +208,9 @@ class SaleReceipt {
   final SalePaymentMethod paymentMethod;
   final int amountCentavos;
   final bool replayed;
-  final DateTime confirmedAt;
+
+  /// Server sale time in UTC; convert with `toLocal()` for display.
+  final DateTime createdAt;
 
   List<SalePricedLine> get lines => calculation.lines;
   int get baseCentavos => calculation.baseCentavos;

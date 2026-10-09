@@ -24,7 +24,7 @@ const CALLABLES = [
 let environment, events, apps, failure, forwarded;
 const firestore = Object.freeze({ seam: 'admin-firestore' });
 class HttpsError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, details) { super(message); this.code = code; this.details = details; }
 }
 const safeResult = Object.freeze({ receipt: { saleId: 'sale-one' }, replayed: false });
 
@@ -166,6 +166,20 @@ test('known SaleError codes and public messages are mapped without private detai
       failure = { at: 'operation', error };
       await rejects(invoke(name), code, `public ${code} correction failure`);
     }
+  }
+});
+
+test('a SaleError reason reaches correction callers only as details.reason', async () => {
+  for (const { name } of CALLABLES) {
+    reset();
+    failure = { at: 'operation', error: new sales.SaleError('failed-precondition', 'insufficient stock', 'insufficient-stock') };
+    await assert.rejects(invoke(name), (error) => {
+      assert.ok(error instanceof HttpsError);
+      assert.equal(error.code, 'failed-precondition');
+      assert.equal(error.message, 'insufficient stock');
+      assert.deepEqual(error.details, { reason: 'insufficient-stock' });
+      return true;
+    });
   }
 });
 

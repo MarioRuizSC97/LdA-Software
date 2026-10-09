@@ -8,6 +8,7 @@ import '../sales/sale_cart_controller.dart';
 import '../sales/sale_cart_panel.dart';
 import '../sales/sale_draft.dart';
 import '../sales/sale_format.dart';
+import '../sales/sale_receipt_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
@@ -147,7 +148,8 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   /// Seller-only sale operations; null hides the cart.
   final SaleCheckout? saleCheckout;
 
-  /// Receives each confirmed sale (the receipt screen consumes it).
+  /// Receives each confirmed sale. Optional: the page itself shows the
+  /// receipt from its cart controller.
   final ValueChanged<SaleReceipt>? onSaleCompleted;
 
   @override
@@ -294,6 +296,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     setState(() => _cartVisible = false);
     _requestCatalog();
     widget.onSaleCompleted?.call(receipt);
+  }
+
+  /// "Nueva venta": dismiss the receipt and return to the empty cart and
+  /// the catalog.
+  void _startNewSale() {
+    _sale?.dismissReceipt();
+    setState(() => _cartVisible = false);
   }
 
   void _cancelSuccessNotice(String category) {
@@ -502,8 +511,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   @override
   Widget build(BuildContext context) {
     final SaleCartController? sale = _sale;
+    final SaleReceipt? receipt = sale?.lastReceipt;
     return Scaffold(
-      bottomNavigationBar: sale != null && !_cartVisible
+      bottomNavigationBar: sale != null && receipt == null && !_cartVisible
           ? SaleCartButton(
               controller: sale,
               onPressed: () => setState(() => _cartVisible = true),
@@ -534,13 +544,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _PricingSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
-            if (sale != null) SaleCompletedNotice(controller: sale),
             if (_creationCoordinator != null)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: sale != null && _cartVisible
+              child: receipt != null
+                  ? SaleReceiptView(receipt: receipt, onNewSale: _startNewSale)
+                  : sale != null && _cartVisible
                   ? SaleCartPanel(
                       controller: sale,
                       onClose: () => setState(() => _cartVisible = false),

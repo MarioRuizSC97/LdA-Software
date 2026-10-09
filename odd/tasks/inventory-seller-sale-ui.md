@@ -163,6 +163,34 @@ Out of scope:
   - **`R2-quantity-error-message-coupling`:** Spanish quantity errors are mapped by matching English domain messages. Use typed validation reasons instead.
   - **`R3-shell-gateway-retry-untested`:** the shell does not test a failed gateway initialization being dropped and retried, or session changes during submit.
 
+- SALE-06 writer (delegated; backend plus Flutter):
+  - **Sale time:** `submitSale` returns `{receipt, replayed, createdAt}` in epoch ms. A replay uses the submission receipt's `completedAt`, which is written in the same transaction with the same timestamp, so no extra read is needed.
+  - **Rejection reasons:** `SaleError` takes an optional kebab-case `reason` (`insufficient-stock`, `payment-mismatch`). `saleHttpsError` maps it to `HttpsError` details `{reason}`. Codes and messages are unchanged, and the correction responses are byte-identical.
+  - **Client receipt:** `SaleReceipt` requires `createdAt` and exposes it as a DateTime. `confirmedAt` and the gateway clock were removed.
+  - **Client reasons:** they are read from `details.reason`, accepted only when `details` is a Map and the reason a String. `isPaymentMismatch` and `isInsufficientStock` use the reason, so the English-message matching is gone.
+  - **Re-quote:** every submit rejection now re-quotes.
+  - **Quantity errors:** typed through `SaleValidationReason`, with the Spanish copy unchanged.
+  - **Receipt view:** `lib/sales/sale_receipt_view.dart` shows:
+    - "Venta registrada", the folio in large type, and the QR of the `saleId`;
+    - the lines, subtotal, "IVA adicional" when present, and total;
+    - "Método de pago", "Factura: Con/Sin factura", the date and time in Spanish (e.g. "8 de octubre de 2026, 19:42", local time), and "Sucursal";
+    - "Venta repetida (ya registrada)" on a replay;
+    - "Nueva venta".
+    It replaces the catalog body while shown. `SaleCompletedNotice` was removed, and the shell needs no `onSaleCompleted`.
+  - **Shell tests (no shell source change):** a failed gateway initialization is retried; a seller change before submit locks the draft; a seller change during submit becomes uncertain, and a same-key retry follows.
+  - **Evidence (author-reported):** backend RED with 8 failing; Flutter RED from compile failures; then GREEN. 26 mutation probes, all killed, done with backup-and-restore only. `sales.emulator` ran once: 9/9.
+  - **Size:** about 1,444 lines against a 900–1,400 forecast.
+- SALE-06 parent spot check:
+  - Backend offline: 303/303.
+  - Transport offline: 35 pass, 2 skipped.
+  - `flutter analyze`: clean.
+  - `flutter test`: 436/436.
+  - HEAD is unchanged at `6acce64`; no `lib/auth` change.
+- Risks for SALE-07:
+  - The live callable must deliver `details.reason`, and the Flutter SDK must expose it as a Map; this is unit-tested only with a fake.
+  - A stale functions emulator without `createdAt` would make every sale uncertain, so confirm the emulator has reloaded.
+  - The receipt shows local device time.
+
 ## Next step
 
-SALE-06 (receipt screen; the server returns `createdAt`), folding in the SALE-05 follow-ups.
+Review and commit SALE-06, then SALE-07 (HTTP transport acceptance, live with user approval, and reconcile).

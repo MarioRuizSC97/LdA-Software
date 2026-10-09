@@ -21,7 +21,6 @@ const EmulatorSession _administrator = EmulatorSession(
   email: 'admin@demo.invalid',
   role: InventoryRole.administrator,
 );
-final DateTime _now = DateTime.utc(2026, 10, 8, 18, 30);
 
 SaleDraft _draft({String branchId = saleBranchId}) => SaleDraft.fromQuote(
   quote: SaleQuote.fromCallable(quoteResponse(), cart: invoicedCart()),
@@ -40,7 +39,6 @@ EmulatorSaleGateway _gateway({
   sessionChecker: sessionChecker ?? () async => _seller,
   quoteInvoke: quoteInvoke ?? (_) async => quoteResponse(),
   submitInvoke: submitInvoke ?? (_) async => submitResponse(),
-  clock: () => _now,
 );
 
 void main() {
@@ -70,7 +68,7 @@ void main() {
   });
 
   test(
-    'submit sends the exact frozen request and stamps client time',
+    'submit sends the exact frozen request and keeps the server time',
     () async {
       final List<String> events = <String>[];
       final EmulatorSaleGateway gateway = _gateway(
@@ -99,7 +97,7 @@ void main() {
       final SaleReceipt receipt = await gateway.submit(_draft());
       expect(receipt.folio, 'NTE-3F2A-9C1B');
       expect(receipt.replayed, isFalse);
-      expect(receipt.confirmedAt, _now);
+      expect(receipt.createdAt, DateTime.utc(2026, 10, 9, 1, 42));
       expect(events, <String>['session', 'submit', 'session']);
     },
   );
@@ -220,6 +218,62 @@ void main() {
       }
     },
   );
+
+  test('the server reason reaches the rejection and classifies it', () async {
+    Future<SaleRejectedException> rejection(String code, String? reason) async {
+      final EmulatorSaleGateway gateway = _gateway(
+        submitInvoke: (_) => throw SaleCallableException(
+          code: code,
+          message: 'server text',
+          reason: reason,
+        ),
+      );
+      try {
+        await gateway.submit(_draft());
+      } on SaleRejectedException catch (error) {
+        return error;
+      }
+      fail('expected a rejection');
+    }
+
+    final SaleRejectedException mismatch = await rejection(
+      'invalid-argument',
+      'payment-mismatch',
+    );
+    expect(mismatch.reason, 'payment-mismatch');
+    expect(mismatch.message, 'server text');
+    expect(mismatch.isPaymentMismatch, isTrue);
+    expect(mismatch.isInsufficientStock, isFalse);
+
+    final SaleRejectedException stock = await rejection(
+      'failed-precondition',
+      'insufficient-stock',
+    );
+    expect(stock.reason, 'insufficient-stock');
+    expect(stock.isInsufficientStock, isTrue);
+    expect(stock.isPaymentMismatch, isFalse);
+
+    for (final (String code, String? reason) in <(String, String?)>[
+      ('invalid-argument', null),
+      ('invalid-argument', 'Payment-Mismatch'),
+      ('invalid-argument', 'payment-mismatch '),
+      ('failed-precondition', 'payment-mismatch'),
+      ('invalid-argument', 'insufficient-stock'),
+    ]) {
+      final SaleRejectedException other = await rejection(code, reason);
+      expect(other.isPaymentMismatch, isFalse, reason: '$code $reason');
+      expect(other.isInsufficientStock, isFalse, reason: '$code $reason');
+    }
+  });
+
+  test('the English mismatch message alone no longer means re-quote', () {
+    const SaleRejectedException legacy = SaleRejectedException(
+      code: 'invalid-argument',
+      message: 'full payment must equal the authoritative total',
+    );
+    expect(legacy.reason, isNull);
+    expect(legacy.isPaymentMismatch, isFalse);
+  });
 
   test('internal, transport, and malformed responses stay uncertain', () async {
     for (final Object failure in <Object>[
@@ -419,6 +473,52 @@ void main() {
       );
     });
 
+    test(
+      'carries an exact string details.reason and tolerates others',
+      () async {
+        Future<SaleCallableException> mapped(Object? details) async {
+          final SaleCallable callable = saleCallableFromInvoker(
+            (_) => throw _FunctionsException(
+              code: 'invalid-argument',
+              message: 'server text',
+              details: details,
+            ),
+          );
+          try {
+            await callable(<String, Object?>{});
+          } on SaleCallableException catch (error) {
+            return error;
+          }
+          fail('expected a callable exception');
+        }
+
+        expect(
+          (await mapped(<String, Object?>{'reason': 'payment-mismatch'}))
+              .reason,
+          'payment-mismatch',
+        );
+        expect(
+          (await mapped(<Object?, Object?>{'reason': 'insufficient-stock'}))
+              .reason,
+          'insufficient-stock',
+        );
+        for (final Object? details in <Object?>[
+          null,
+          'payment-mismatch',
+          <Object?>['payment-mismatch'],
+          <String, Object?>{},
+          <String, Object?>{'reason': 7},
+          <String, Object?>{'reason': null},
+          <String, Object?>{'code': 'payment-mismatch'},
+        ]) {
+          final SaleCallableException error = await mapped(details);
+          expect(error.reason, isNull, reason: '$details');
+          expect(error.code, 'invalid-argument');
+          expect(error.message, 'server text');
+        }
+      },
+    );
+
     test('a null message becomes empty', () async {
       final SaleCallable callable = saleCallableFromInvoker(
         (_) => throw _FunctionsException(code: 'internal', message: null),
@@ -444,9 +544,12 @@ void main() {
 }
 
 class _FunctionsException extends FirebaseFunctionsException {
-  _FunctionsException({required super.code, required String? message})
-    : _message = message,
-      super(message: message ?? '');
+  _FunctionsException({
+    required super.code,
+    required String? message,
+    super.details,
+  }) : _message = message,
+       super(message: message ?? '');
 
   final String? _message;
 

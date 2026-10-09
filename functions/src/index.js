@@ -117,9 +117,7 @@ export const submitSale = onCall(
       const submit = createSaleService({ firestore: getFirestore() });
       return await submit(request);
     } catch (error) {
-      if (error instanceof SaleError) {
-        throw new HttpsError(error.code, error.message);
-      }
+      if (error instanceof SaleError) throw saleHttpsError(error);
       throw new HttpsError(
         'internal',
         'sale submission is temporarily unavailable',
@@ -127,6 +125,16 @@ export const submitSale = onCall(
     }
   },
 );
+
+/**
+ * Public code and message, plus details { reason } only when the SaleError
+ * carries a machine reason. Nothing else from the error reaches the caller.
+ */
+function saleHttpsError(error) {
+  return typeof error.reason === 'string'
+    ? new HttpsError(error.code, error.message, { reason: error.reason })
+    : new HttpsError(error.code, error.message);
+}
 
 /** Read-only cart quote: exactly what submitSale would charge right now. */
 export const quoteSale = localSaleCallable(
@@ -196,9 +204,7 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
         const operation = createOperation(getFirestore());
         return await operation(request);
       } catch (error) {
-        if (error instanceof SaleError) {
-          throw new HttpsError(error.code, error.message);
-        }
+        if (error instanceof SaleError) throw saleHttpsError(error);
         throw new HttpsError('internal', unavailableMessage);
       }
     },

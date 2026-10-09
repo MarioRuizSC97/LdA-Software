@@ -338,8 +338,10 @@ void main() {
     expect(_enabled(tester, _key('sale-charge')), isFalse);
   });
 
-  testWidgets('a successful sale shows the folio, clears the cart and '
-      'refreshes the catalog', (WidgetTester tester) async {
+  testWidgets('a successful sale shows the receipt, clears the cart and '
+      'refreshes the catalog; Nueva venta returns to the catalog', (
+    WidgetTester tester,
+  ) async {
     final FakeSaleCheckout sales = FakeSaleCheckout();
     final _Loader loader = _Loader();
     final List<SaleReceipt> completed = <SaleReceipt>[];
@@ -360,23 +362,31 @@ void main() {
     expect(draft.amountCentavos, 3650);
     expect(draft.cart.invoiceRequested, isTrue);
     expect(completed.single.folio, 'NTE-3F2A-9C1B');
-    expect(find.textContaining('Folio NTE-3F2A-9C1B'), findsOneWidget);
-    expect(find.textContaining('Venta registrada'), findsOneWidget);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(find.text('Venta registrada'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('sale-receipt-folio')).data,
+      'NTE-3F2A-9C1B',
+    );
+    expect(find.text('36.50 MXN'), findsOneWidget);
+    expect(find.text('Tarjeta'), findsOneWidget);
+    expect(find.text('Con factura'), findsOneWidget);
+    expect(_key('sale-cart-button'), findsNothing);
+    expect(_key('sale-add-DEMO-RIBBON'), findsNothing);
     expect(loader.calls, 2);
     expect(sales.store.unresolvedFor('seller-north', 'branch-north'), isNull);
+
+    await _tap(tester, _key('sale-receipt-new'));
+    expect(_key('sale-receipt-folio'), findsNothing);
+    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(_key('sale-add-DEMO-RIBBON'), findsOneWidget);
+    expect(completed, hasLength(1));
   });
 
   testWidgets('a payment mismatch re-quotes and asks to confirm again', (
     WidgetTester tester,
   ) async {
     final FakeSaleCheckout sales = FakeSaleCheckout();
-    sales.submitFailures.add(
-      const SaleRejectedException(
-        code: 'invalid-argument',
-        message: paymentMismatchMessage,
-      ),
-    );
+    sales.submitFailures.add(paymentMismatchRejection);
     await tester.pumpWidget(_page(sales));
     await tester.pumpAndSettle();
     await _enterQuantity(tester, 'DEMO-PIN', '2');
@@ -398,17 +408,75 @@ void main() {
     expect(sales.submittedDrafts, hasLength(2));
     expect(sales.submittedDrafts.last.idempotencyKey, secondSaleKey);
     expect(sales.submittedDrafts.last.amountCentavos, 600);
-    expect(find.textContaining('Folio NTE-7C1D-0E2F'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('sale-receipt-folio')).data,
+      'NTE-7C1D-0E2F',
+    );
   });
 
-  testWidgets('another rejection shows the message and unlocks the cart', (
+  testWidgets('insufficient stock re-quotes and flags the unavailable line', (
     WidgetTester tester,
   ) async {
     final FakeSaleCheckout sales = FakeSaleCheckout();
+    sales.submitFailures.add(insufficientStockRejection);
+    await tester.pumpWidget(_page(sales));
+    await tester.pumpAndSettle();
+    await _enterQuantity(tester, 'DEMO-PIN', '2');
+    await _openCart(tester);
+    sales.unavailable = <String>{'DEMO-PIN'};
+    await _tap(tester, _key('sale-charge'));
+
+    expect(
+      find.text('No hay existencias suficientes para completar la venta.'),
+      findsOneWidget,
+    );
+    expect(sales.quotedCarts, hasLength(2));
+    expect(find.text('Sin existencias suficientes'), findsOneWidget);
+    expect(_enabled(tester, _key('sale-charge')), isFalse);
+    expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
+    expect(_key('sale-retry-submit'), findsNothing);
+  });
+
+  testWidgets('any other rejection re-quotes, so a stale quote never keeps '
+      'Cobrar enabled', (WidgetTester tester) async {
+    final FakeSaleCheckout sales = FakeSaleCheckout();
     sales.submitFailures.add(
       const SaleRejectedException(
-        code: 'failed-precondition',
-        message: 'insufficient stock',
+        code: 'not-found',
+        message: 'product does not exist',
+      ),
+    );
+    await tester.pumpWidget(_page(sales));
+    await tester.pumpAndSettle();
+    await _enterQuantity(tester, 'DEMO-PIN', '2');
+    await _openCart(tester);
+    sales.holdQuotes = true;
+    await _tap(tester, _key('sale-charge'));
+
+    expect(
+      find.text('La venta fue rechazada: product does not exist'),
+      findsOneWidget,
+    );
+    expect(sales.quotedCarts, hasLength(2));
+    expect(_enabled(tester, _key('sale-charge')), isFalse);
+    expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
+
+    sales.heldQuotes.single.complete(sales.quoteNow(sales.quotedCarts.last));
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, _key('sale-charge')), isTrue);
+    expect(
+      find.text('La venta fue rechazada: product does not exist'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the English mismatch text without a reason is a plain '
+      'rejection', (WidgetTester tester) async {
+    final FakeSaleCheckout sales = FakeSaleCheckout();
+    sales.submitFailures.add(
+      const SaleRejectedException(
+        code: 'invalid-argument',
+        message: paymentMismatchMessage,
       ),
     );
     await tester.pumpWidget(_page(sales));
@@ -418,12 +486,14 @@ void main() {
     await _tap(tester, _key('sale-charge'));
 
     expect(
-      find.text('La venta fue rechazada: insufficient stock'),
+      find.text('El total cambió. Revisa el nuevo total y vuelve a cobrar.'),
+      findsNothing,
+    );
+    expect(
+      find.text('La venta fue rechazada: $paymentMismatchMessage'),
       findsOneWidget,
     );
-    expect(sales.quotedCarts, hasLength(1));
-    expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
-    expect(_key('sale-retry-submit'), findsNothing);
+    expect(sales.quotedCarts, hasLength(2));
   });
 
   testWidgets('an uncertain sale locks the cart and retries the same key', (
@@ -459,7 +529,10 @@ void main() {
     expect(sales.submittedDrafts, hasLength(2));
     expect(sales.submittedDrafts[1], same(sales.submittedDrafts[0]));
     expect(sales.submittedDrafts[1].idempotencyKey, firstSaleKey);
-    expect(find.textContaining('Folio NTE-3F2A-9C1B'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('sale-receipt-folio')).data,
+      'NTE-3F2A-9C1B',
+    );
   });
 
   testWidgets('an unresolved stored draft restores the locked cart', (
@@ -523,7 +596,10 @@ void main() {
 
     sales.holdSubmit!.complete();
     await tester.pumpAndSettle();
-    expect(find.textContaining('Folio NTE-3F2A-9C1B'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('sale-receipt-folio')).data,
+      'NTE-3F2A-9C1B',
+    );
   });
 
   testWidgets('a pending quote disables Cobrar and shows Calculando…', (

@@ -12,7 +12,57 @@ SaleCartLine _line(String quantity, {int precision = 2, String id = 'P-1'}) =>
       quantity: quantity,
     );
 
+Matcher _reason(SaleValidationReason reason) => throwsA(
+  isA<SaleValidationException>().having(
+    (SaleValidationException error) => error.reason,
+    'reason',
+    reason,
+  ),
+);
+
 void main() {
+  group('SaleValidationReason', () {
+    test('every quantity failure carries its typed reason', () {
+      expect(() => _line('1.234'), _reason(SaleValidationReason.tooPrecise));
+      expect(
+        () => _line('1.5', precision: 0),
+        _reason(SaleValidationReason.tooPrecise),
+      );
+      expect(() => _line('0.00'), _reason(SaleValidationReason.notPositive));
+      expect(
+        () => _line('9007199254.740992', precision: 6),
+        _reason(SaleValidationReason.tooLarge),
+      );
+      for (final String quantity in <String>['', '1.', '-1', '1e2']) {
+        expect(
+          () => _line(quantity),
+          _reason(SaleValidationReason.malformedQuantity),
+          reason: quantity,
+        );
+      }
+      expect(
+        () => _line('1', id: 'bad id'),
+        _reason(SaleValidationReason.invalidProduct),
+      );
+      expect(
+        () => _line('1', precision: 7),
+        _reason(SaleValidationReason.invalidSpecification),
+      );
+      expect(
+        () => SaleCart.empty().toQuoteRequest(),
+        _reason(SaleValidationReason.emptyCart),
+      );
+      expect(
+        () => SaleCart.empty().remove('P-1'),
+        _reason(SaleValidationReason.missingLine),
+      );
+      expect(
+        () => SaleCart.empty().add(_line('1')).add(_line('2')),
+        _reason(SaleValidationReason.duplicateProduct),
+      );
+    });
+  });
+
   group('SaleCartLine', () {
     test('scales canonical decimals exactly with the product precision', () {
       expect(_line('2.5').quantityScaled, 250);

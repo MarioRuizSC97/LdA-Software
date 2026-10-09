@@ -266,7 +266,7 @@ function project(operation, context, timestamp) {
     });
     replay({ idempotencyKey: key, invoiceRequested: data.invoiceRequested,
       lines: data.lines.map(({ productId, quantity }) => ({ productId, quantity })), payment }, receipt);
-    return { response: { receipt, replayed: false }, documents, sale: { receipt, createdAt: timestamp } };
+    return { response: { receipt, replayed: false, createdAt: timestamp }, documents, sale: { receipt, createdAt: timestamp } };
   }
   const sale = context.sale(operation.sale);
   const returned = context.ledger(data.saleId);

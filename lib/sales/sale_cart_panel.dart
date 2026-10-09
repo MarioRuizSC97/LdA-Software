@@ -9,18 +9,10 @@ import 'sale_quote.dart';
 // Seller point-of-sale widgets. User-visible text is neutral, professional
 // Spanish (product decision 8); identifiers stay in English.
 
-String _money(int centavos) => '${formatCentavos(centavos)} MXN';
-
-String _paymentLabel(SalePaymentMethod method) => switch (method) {
-  SalePaymentMethod.cash => 'Efectivo',
-  SalePaymentMethod.card => 'Tarjeta',
-  SalePaymentMethod.transfer => 'Transferencia',
-};
-
 /// The total as the seller should read it right now.
 String _totalLabel(SaleCartController controller) {
   final int? total = controller.totalCentavos;
-  if (total != null) return _money(total);
+  if (total != null) return formatMoney(total);
   return controller.quoteStatus == SaleQuoteStatus.loading
       ? 'Calculando…'
       : 'Total no disponible';
@@ -199,50 +191,6 @@ class SaleCartButton extends StatelessWidget {
   );
 }
 
-/// Minimal sale confirmation until the receipt screen (SALE-06) replaces it.
-class SaleCompletedNotice extends StatelessWidget {
-  const SaleCompletedNotice({required this.controller, super.key});
-
-  final SaleCartController controller;
-
-  @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: controller,
-    builder: (BuildContext context, _) {
-      final receipt = controller.lastReceipt;
-      if (receipt == null) return const SizedBox.shrink();
-      return Semantics(
-        liveRegion: true,
-        container: true,
-        child: Material(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
-            child: Row(
-              children: <Widget>[
-                const Icon(Icons.check_circle_outline),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Venta registrada · Folio ${receipt.folio} · '
-                    'Total ${_money(receipt.totalCentavos)}',
-                    key: const ValueKey<String>('sale-completed'),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Cerrar aviso',
-                  onPressed: controller.dismissReceipt,
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    },
-  );
-}
-
 /// Cart review: lines, invoice option, payment method, totals and "Cobrar".
 class SaleCartPanel extends StatelessWidget {
   const SaleCartPanel({
@@ -336,7 +284,7 @@ class SaleCartPanel extends StatelessWidget {
                         key: ValueKey<String>(
                           'sale-payment-${method.wireValue}',
                         ),
-                        label: Text(_paymentLabel(method)),
+                        label: Text(salePaymentLabel(method)),
                         selected: controller.paymentMethod == method,
                         onSelected: canEdit
                             ? (_) => controller.setPaymentMethod(method)
@@ -371,7 +319,7 @@ class _SaleLineTile extends StatelessWidget {
         priced?.quantityDecimal ??
         formatScaledQuantity(line.quantityScaled, line.quantitySpec.precision);
     final String lineTotal = priced != null
-        ? _money(priced.totalCentavos)
+        ? formatMoney(priced.totalCentavos)
         : controller.quoteStatus == SaleQuoteStatus.loading
         ? 'Calculando…'
         : '—';
@@ -459,9 +407,9 @@ class _SaleTotals extends StatelessWidget {
     final SaleQuote? quote = controller.quote;
     final List<Widget> rows = <Widget>[
       if (quote != null) ...<Widget>[
-        _row('Subtotal', _money(quote.baseCentavos)),
+        _row('Subtotal', formatMoney(quote.baseCentavos)),
         if (quote.additionalIvaCentavos > 0)
-          _row('IVA adicional', _money(quote.additionalIvaCentavos)),
+          _row('IVA adicional', formatMoney(quote.additionalIvaCentavos)),
       ],
       if (controller.totalCentavos != null || controller.isLocked)
         _row(
@@ -569,7 +517,7 @@ class _SaleActions extends StatelessWidget {
                   'Cobrar',
                   semanticsLabel: total == null
                       ? 'Cobrar'
-                      : 'Cobrar ${_money(total)}',
+                      : 'Cobrar ${formatMoney(total)}',
                 ),
         ),
       ],

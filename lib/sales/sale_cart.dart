@@ -63,12 +63,18 @@ class SaleCartLine {
 
   static int _scale(String productId, QuantitySpec spec, String quantity) {
     if (!isValidSaleId(productId)) {
-      throw const SaleValidationException('Product ID is invalid.');
+      throw const SaleValidationException(
+        'Product ID is invalid.',
+        reason: SaleValidationReason.invalidProduct,
+      );
     }
     if (!_unitPattern.hasMatch(spec.unit) ||
         spec.precision < 0 ||
         spec.precision > _maxDecimalPrecision) {
-      throw const SaleValidationException('Quantity specification is invalid.');
+      throw const SaleValidationException(
+        'Quantity specification is invalid.',
+        reason: SaleValidationReason.invalidSpecification,
+      );
     }
     final RegExpMatch? match = quantity.length > _maxQuantityInputLength
         ? null
@@ -76,12 +82,14 @@ class SaleCartLine {
     if (match == null) {
       throw const SaleValidationException(
         'Quantity must be a canonical positive decimal string.',
+        reason: SaleValidationReason.malformedQuantity,
       );
     }
     final String fraction = match.group(1) ?? '';
     if (fraction.length > spec.precision) {
       throw const SaleValidationException(
         'Quantity exceeds the product precision.',
+        reason: SaleValidationReason.tooPrecise,
       );
     }
     final String whole = quantity.split('.').first;
@@ -92,11 +100,13 @@ class SaleCartLine {
     if (scaled <= BigInt.zero) {
       throw const SaleValidationException(
         'Quantity must be strictly greater than zero.',
+        reason: SaleValidationReason.notPositive,
       );
     }
     if (scaled > _maxSafeBigInt) {
       throw const SaleValidationException(
         'Quantity exceeds safe integer bounds.',
+        reason: SaleValidationReason.tooLarge,
       );
     }
     return scaled.toInt();
@@ -169,7 +179,10 @@ class SaleCart {
   /// Exact `quoteSale` request: `{invoiceRequested, lines}`.
   Map<String, Object?> toQuoteRequest() {
     if (isEmpty) {
-      throw const SaleValidationException('The cart has no lines.');
+      throw const SaleValidationException(
+        'The cart has no lines.',
+        reason: SaleValidationReason.emptyCart,
+      );
     }
     return <String, Object?>{
       'invoiceRequested': invoiceRequested,
@@ -181,7 +194,10 @@ class SaleCart {
 
   void _requireLine(String productId) {
     if (!contains(productId)) {
-      throw const SaleValidationException('The product is not in the cart.');
+      throw const SaleValidationException(
+        'The product is not in the cart.',
+        reason: SaleValidationReason.missingLine,
+      );
     }
   }
 
@@ -202,14 +218,38 @@ class SaleCart {
   int get hashCode => Object.hash(invoiceRequested, Object.hashAll(lines));
 }
 
+/// Why local sale validation failed. The UI maps these to its own copy, so
+/// it never depends on the English diagnostic [SaleValidationException.message].
+enum SaleValidationReason {
+  invalidProduct,
+  invalidSpecification,
+  malformedQuantity,
+  tooPrecise,
+  notPositive,
+  tooLarge,
+  emptyCart,
+  missingLine,
+  duplicateProduct,
+  invalidDraft,
+}
+
 class SaleValidationException implements Exception {
-  const SaleValidationException(this.message);
+  const SaleValidationException(
+    this.message, {
+    this.reason = SaleValidationReason.invalidDraft,
+  });
+
+  /// English diagnostic for logs and tests, never shown to the seller.
   final String message;
+  final SaleValidationReason reason;
 }
 
 class SaleDuplicateProductException extends SaleValidationException {
   const SaleDuplicateProductException(this.productId)
-    : super('The product is already in the cart.');
+    : super(
+        'The product is already in the cart.',
+        reason: SaleValidationReason.duplicateProduct,
+      );
   final String productId;
 }
 

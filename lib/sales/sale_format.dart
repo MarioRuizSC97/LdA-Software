@@ -2,6 +2,18 @@
 /// never pass through binary floating point.
 library;
 
+import 'sale_cart.dart';
+
+/// Centavos with the currency, for example `12900` → `129.00 MXN`.
+String formatMoney(int centavos) => '${formatCentavos(centavos)} MXN';
+
+/// Spanish payment method label.
+String salePaymentLabel(SalePaymentMethod method) => switch (method) {
+  SalePaymentMethod.cash => 'Efectivo',
+  SalePaymentMethod.card => 'Tarjeta',
+  SalePaymentMethod.transfer => 'Transferencia',
+};
+
 /// Formats integer centavos as `units.cc`, for example `12900` → `129.00`.
 String formatCentavos(int centavos) {
   final int absolute = centavos.abs();

@@ -5,8 +5,6 @@ import 'package:lda_inventory/sales/sale_quote.dart';
 
 import 'sale_fixtures.dart';
 
-final DateTime _confirmedAt = DateTime.utc(2026, 10, 8, 18, 30);
-
 SaleQuote _quote({bool pinAvailable = true}) => SaleQuote.fromCallable(
   quoteResponse(pinAvailable: pinAvailable),
   cart: invoicedCart(),
@@ -127,7 +125,6 @@ void main() {
       final SaleReceipt receipt = SaleReceipt.fromCallable(
         submitResponse(replayed: true),
         draft: _draft(),
-        confirmedAt: _confirmedAt,
       );
       expect(receipt.saleId, saleKey);
       expect(receipt.branchId, saleBranchId);
@@ -145,7 +142,46 @@ void main() {
       );
       expect(receipt.lines.first.name, 'Ribbon');
       expect(receipt.replayed, isTrue);
-      expect(receipt.confirmedAt, _confirmedAt);
+      expect(receipt.createdAt, DateTime.utc(2026, 10, 9, 1, 42));
+      expect(receipt.createdAt.isUtc, isTrue);
+      expect(receipt.createdAt.millisecondsSinceEpoch, saleCreatedAtMillis);
+    });
+
+    test('accepts the safe createdAt bounds and rejects anything else', () {
+      for (final int millis in <int>[0, 8640000000000000]) {
+        expect(
+          SaleReceipt.fromCallable(
+            submitResponse(createdAt: millis),
+            draft: _draft(),
+          ).createdAt.millisecondsSinceEpoch,
+          millis,
+        );
+      }
+      for (final Object? createdAt in <Object?>[
+        null,
+        -1,
+        1.5,
+        1791510120000.0,
+        '1791510120000',
+        8640000000000001,
+        9007199254740992,
+        <String, Object?>{'seconds': 1},
+      ]) {
+        expect(
+          () => SaleReceipt.fromCallable(
+            submitResponse(createdAt: createdAt),
+            draft: _draft(),
+          ),
+          throwsA(isA<SaleProtocolException>()),
+          reason: '$createdAt',
+        );
+      }
+      final Map<String, Object?> missing = submitResponse()
+        ..remove('createdAt');
+      expect(
+        () => SaleReceipt.fromCallable(missing, draft: _draft()),
+        throwsA(isA<SaleProtocolException>()),
+      );
     });
 
     test('rejects forged or malformed receipts', () {
@@ -204,11 +240,7 @@ void main() {
       ];
       for (int index = 0; index < forgeries.length; index++) {
         expect(
-          () => SaleReceipt.fromCallable(
-            forgeries[index],
-            draft: _draft(),
-            confirmedAt: _confirmedAt,
-          ),
+          () => SaleReceipt.fromCallable(forgeries[index], draft: _draft()),
           throwsA(isA<SaleProtocolException>()),
           reason: 'forgery $index',
         );
@@ -227,11 +259,7 @@ void main() {
         'amountCentavos': 100,
       };
       expect(
-        () => SaleReceipt.fromCallable(
-          response,
-          draft: _draft(),
-          confirmedAt: _confirmedAt,
-        ),
+        () => SaleReceipt.fromCallable(response, draft: _draft()),
         throwsA(isA<SaleProtocolException>()),
       );
     });

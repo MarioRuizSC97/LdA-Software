@@ -111,5 +111,14 @@ Map<String, Object?> receiptV2({
   },
 };
 
-Map<String, Object?> submitResponse({bool replayed = false}) =>
-    <String, Object?>{'receipt': receiptV2(), 'replayed': replayed};
+/// Server sale time in epoch milliseconds: 2026-10-09T01:42:00Z.
+const int saleCreatedAtMillis = 1791510120000;
+
+Map<String, Object?> submitResponse({
+  bool replayed = false,
+  Object? createdAt = saleCreatedAtMillis,
+}) => <String, Object?>{
+  'receipt': receiptV2(),
+  'replayed': replayed,
+  'createdAt': createdAt,
+};

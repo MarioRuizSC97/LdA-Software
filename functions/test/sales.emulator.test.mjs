@@ -33,6 +33,9 @@ async function assertArtifacts(run, request, result, timestamp) {
   assert.equal(typeof sale.createdAt.toDate, 'function', 'actual persisted Timestamp');
   assert.equal(sale.createdAt.toDate().getTime(), timestamp.getTime());
   assert.equal(canonical(sale.receipt), canonical(result.receipt));
+  // The response time is the stored sale Timestamp in epoch milliseconds.
+  assert.deepEqual(Object.keys(result).sort(), ['createdAt', 'receipt', 'replayed']);
+  assert.equal(result.createdAt, sale.createdAt.toDate().getTime());
   for (const path of [`sales/${key}`, `saleAudits/${key}`, `saleSubmissionReceipts/${key}`,
     ...request.data.lines.map((_, index) => `inventoryMovements/sale-${key}-${index}`),
   ]) assert.equal(canonical(await record(path)), canonical(run.entries.get(path).expected));
@@ -147,6 +150,7 @@ test('INV05 real isolated atomic Firestore sales (REAL-06 invocation only)', asy
     const replay = await accept(await launch(original));
     assert.equal(replay.replayed, true);
     assert.equal(canonical(replay.receipt), canonical(historical.receipt));
+    assert.equal(replay.createdAt, historical.createdAt, 'a replay keeps the original sale time');
     assert.deepEqual(await snapshot(run), before);
   });
   await t.test('payload, actor and trusted branch key collisions leave all records unchanged', async () => {

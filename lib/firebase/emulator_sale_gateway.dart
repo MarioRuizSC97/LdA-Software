@@ -11,26 +11,44 @@ typedef SaleGatewayLoader = Future<EmulatorSaleGateway> Function(
   EmulatorSession session,
 );
 
-/// Transport-level callable failure with the server code and message.
+/// Server machine reasons (HttpsError `details.reason`) the client acts on.
+const String salePaymentMismatchReason = 'payment-mismatch';
+const String saleInsufficientStockReason = 'insufficient-stock';
+
+/// Transport-level callable failure with the server code, message and the
+/// optional machine [reason] from the error details.
 class SaleCallableException implements Exception {
-  const SaleCallableException({required this.code, required this.message});
+  const SaleCallableException({
+    required this.code,
+    required this.message,
+    this.reason,
+  });
   final String code;
   final String message;
+  final String? reason;
 }
 
 /// The server deterministically refused before writing anything. [message]
-/// is the server text, kept as data for the UI to classify (for example
-/// "full payment must equal the authoritative total" means re-quote).
+/// is the server text; classification uses only the exact [code] and the
+/// machine [reason], never the English message.
 class SaleRejectedException implements Exception {
-  const SaleRejectedException({required this.code, required this.message});
+  const SaleRejectedException({
+    required this.code,
+    required this.message,
+    this.reason,
+  });
   final String code;
   final String message;
+  final String? reason;
 
   /// The submitted amount no longer equals the authoritative total (prices
   /// changed after the quote): re-quote and let the seller confirm again.
   bool get isPaymentMismatch =>
-      code == 'invalid-argument' &&
-      message == 'full payment must equal the authoritative total';
+      code == 'invalid-argument' && reason == salePaymentMismatchReason;
+
+  /// A line can no longer be covered by the branch stock.
+  bool get isInsufficientStock =>
+      code == 'failed-precondition' && reason == saleInsufficientStockReason;
 }
 
 /// The outcome is unknown. For a submission, retry the same draft.
@@ -69,14 +87,12 @@ class EmulatorSaleGateway {
     required this.sessionChecker,
     required this.quoteInvoke,
     required this.submitInvoke,
-    DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  });
 
   final EmulatorSession expectedSession;
   final SaleSessionChecker sessionChecker;
   final SaleCallable quoteInvoke;
   final SaleCallable submitInvoke;
-  final DateTime Function() _clock;
   int _quoteGeneration = 0;
   int _submitGeneration = 0;
 
@@ -105,11 +121,7 @@ class EmulatorSaleGateway {
       () => generation != _submitGeneration,
     );
     try {
-      return SaleReceipt.fromCallable(
-        response,
-        draft: draft,
-        confirmedAt: _clock(),
-      );
+      return SaleReceipt.fromCallable(response, draft: draft);
     } on SaleProtocolException {
       throw const SaleUncertainException();
     }
@@ -175,7 +187,11 @@ class EmulatorSaleGateway {
 
   Never _throwMapped(Object error) {
     if (error is SaleCallableException && _rejectedCodes.contains(error.code)) {
-      throw SaleRejectedException(code: error.code, message: error.message);
+      throw SaleRejectedException(
+        code: error.code,
+        message: error.message,
+        reason: error.reason,
+      );
     }
     throw const SaleUncertainException();
   }
@@ -192,16 +208,21 @@ SaleCallable firebaseSaleCallable(FirebaseFunctions functions, String name) {
 }
 
 /// Translates SDK callable failures into [SaleCallableException], keeping the
-/// server code and turning a missing message into an empty one. Any other
-/// failure passes through unchanged (the gateway treats it as uncertain).
+/// server code, turning a missing message into an empty one, and keeping
+/// `details.reason` only when the details are a map whose reason is a string.
+/// Any other failure passes through unchanged (the gateway treats it as
+/// uncertain).
 SaleCallable saleCallableFromInvoker(SaleCallable invoke) {
   return (Map<String, Object?> request) async {
     try {
       return await invoke(request);
     } on FirebaseFunctionsException catch (error) {
+      final Object? details = error.details;
+      final Object? reason = details is Map ? details['reason'] : null;
       throw SaleCallableException(
         code: error.code,
         message: error.message ?? '',
+        reason: reason is String ? reason : null,
       );
     }
   };

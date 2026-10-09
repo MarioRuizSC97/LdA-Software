@@ -39,6 +39,8 @@ const String uncertainSaleMessage =
     'editar.';
 const String saleTotalChangedMessage =
     'El total cambió. Revisa el nuevo total y vuelve a cobrar.';
+const String saleInsufficientStockMessage =
+    'No hay existencias suficientes para completar la venta.';
 const String saleSessionMessage =
     'Tu sesión ya no permite registrar ventas. Vuelve a iniciar sesión.';
 
@@ -168,7 +170,7 @@ class SaleCartController extends ChangeNotifier {
       _editingProductId = productId;
       _entryError = text.isEmpty
           ? 'Escribe una cantidad.'
-          : _quantityError(error.message, quantitySpec.precision);
+          : _quantityError(error.reason, quantitySpec.precision);
       _notify();
       return false;
     }
@@ -262,15 +264,16 @@ class SaleCartController extends ChangeNotifier {
       if (_disposed) return;
       _submitting = false;
       _lockedDraft = null;
-      if (error.isPaymentMismatch) {
-        _message = saleTotalChangedMessage;
-        _requote();
-        return;
-      }
-      _message = error.message.isEmpty
+      _message = error.isPaymentMismatch
+          ? saleTotalChangedMessage
+          : error.isInsufficientStock
+          ? saleInsufficientStockMessage
+          : error.message.isEmpty
           ? 'La venta fue rechazada.'
           : 'La venta fue rechazada: ${error.message}';
-      _notify();
+      // Every rejection re-quotes: the old ready quote may be stale (a
+      // changed price, short stock), so it must never keep "Cobrar" enabled.
+      _requote();
     } on SaleSessionException {
       if (_disposed) return;
       _submitting = false;
@@ -373,14 +376,15 @@ class SaleCartController extends ChangeNotifier {
   }
 }
 
-String _quantityError(String message, int precision) => switch (message) {
-  'Quantity exceeds the product precision.' =>
-    precision == 0
-        ? 'Este producto solo admite cantidades enteras.'
-        : 'Usa como máximo $precision '
-              '${precision == 1 ? 'decimal' : 'decimales'}.',
-  'Quantity must be strictly greater than zero.' =>
-    'La cantidad debe ser mayor que cero.',
-  'Quantity exceeds safe integer bounds.' => 'La cantidad es demasiado grande.',
-  _ => 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
-};
+String _quantityError(SaleValidationReason reason, int precision) =>
+    switch (reason) {
+      SaleValidationReason.tooPrecise =>
+        precision == 0
+            ? 'Este producto solo admite cantidades enteras.'
+            : 'Usa como máximo $precision '
+                  '${precision == 1 ? 'decimal' : 'decimales'}.',
+      SaleValidationReason.notPositive =>
+        'La cantidad debe ser mayor que cero.',
+      SaleValidationReason.tooLarge => 'La cantidad es demasiado grande.',
+      _ => 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
+    };

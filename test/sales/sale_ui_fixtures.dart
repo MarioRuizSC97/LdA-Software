@@ -47,6 +47,22 @@ const String secondSaleKey = '7c1d0e2f-1a2b-4c3d-8e4f-5a6b7c8d9e0f';
 const String paymentMismatchMessage =
     'full payment must equal the authoritative total';
 
+/// Server sale time of every fake sale: 2026-10-09T01:42:00Z.
+const int fakeSaleCreatedAtMillis = 1791510120000;
+
+/// The structured rejections `submitSale` sends for a changed total and for
+/// a line the stock can no longer cover.
+const SaleRejectedException paymentMismatchRejection = SaleRejectedException(
+  code: 'invalid-argument',
+  message: paymentMismatchMessage,
+  reason: 'payment-mismatch',
+);
+const SaleRejectedException insufficientStockRejection = SaleRejectedException(
+  code: 'failed-precondition',
+  message: 'insufficient stock',
+  reason: 'insufficient-stock',
+);
+
 CatalogSnapshot sellerSaleSnapshot({String branchId = 'branch-north'}) =>
     CatalogSnapshot(<CatalogItem>[
       for (final CatalogProduct product in saleProducts.values)
@@ -173,6 +189,7 @@ Map<String, Object?> submitResponseForRequest(
   String branchId = 'branch-north',
   bool replayed = false,
   int priceDelta = 0,
+  int createdAt = fakeSaleCreatedAtMillis,
 }) {
   final SaleCart cart = cartForRequest(request);
   final String key = request['idempotencyKey']! as String;
@@ -190,6 +207,7 @@ Map<String, Object?> submitResponseForRequest(
       'payment': request['payment'],
     },
     'replayed': replayed,
+    'createdAt': createdAt,
   };
 }
 
@@ -215,6 +233,7 @@ class FakeSaleCheckout {
   Completer<void>? holdSubmit;
   Set<String> unavailable = <String>{};
   int priceDelta = 0;
+  bool replayed = false;
 
   SaleCheckout get checkout => SaleCheckout(
     branchId: branchId,
@@ -259,9 +278,9 @@ class FakeSaleCheckout {
         draft.toRequest(),
         branchId: branchId,
         priceDelta: priceDelta,
+        replayed: replayed,
       ),
       draft: draft,
-      confirmedAt: DateTime.utc(2026, 10, 8, 18, 30),
     );
   }
 }
