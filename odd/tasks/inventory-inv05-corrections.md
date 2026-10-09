@@ -21,6 +21,7 @@ Today a sale (`functions/src/sales.js`) is final. `inventory-mvp.md:6` puts part
 9. Returns from invoiced sales refund the IVA actually charged, proportionally. The correction is flagged as an invoiced sale so the administrator can handle the credit note or CFDI outside the app; CFDI emission stays out of scope.
 10. Every correction requires a reason from a fixed list (`change-of-mind`, `wrong-product`, `factory-defect`, `other`) plus an optional free-text note.
 11. A factory-defect replacement does not consume returnable quantity. The customer still holds what was bought, so a replaced unit can later be replaced again or refunded, within the original sale's 15-day window. A replacement is capped at the line's remaining returnable quantity. (user, 2026-10-08)
+12. Before confirming a return or an exchange, the seller sees the exact refund or difference from a new read-only server preview callable. It mirrors `quoteSale` and computes with the same code as the correction services. The same backend work adds structured `details.reason` to correction rejections the UI must distinguish, starting with an ambiguous folio. The other open findings (the `SaleDraftStore` revision reset in sales) wait until after it. (user, 2026-10-09)
 
 ## Technical defaults
 
@@ -53,7 +54,8 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
 - [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
   - [x] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
-  - [ ] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
+  - [x] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
+  - [ ] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
   - [ ] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
   - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
@@ -207,7 +209,22 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - CORR-07A closure: native review `review-de5042722e54d2a1` (medium, one lens) approved and acknowledged; commit tree exactly the approved candidate `88f11977`; commit `862120b`. Follow-ups, folded into CORR-07B:
   - `R3-001` (WARNING): only `CorrectionProtocolException` becomes Uncertain after a submit returns. Any other parse error, such as a `SaleValidationException` from the exchange calculation or a cast error, escapes raw, so the UI could drop a possibly committed draft. Catch all post-submit parse failures.
   - `R3-002` (SUGGESTION): `CorrectionDraftStore` lacks tests for seller and branch isolation, `isCurrent` after resolve, and a stale attempt clearing a newer draft.
+- CORR-07B writer (delegated, Flutter entry, lookup and detail):
+  - **Screens:** a "Correcciones" app-bar action for sellers only. `CorrectionLookupView` has folio search (format checked before calling) and the 15-day recent list with loading, empty, error and retry states. `CorrectionSaleDetail` shows per-line sold, returned and remaining quantities, with names from the catalog snapshot. Return, replace and exchange are disabled ("Próximamente").
+  - **Shell:** `correctionGatewayLoader`, cached per `userId|branchId`, dropped after a failed initialization, with the exact seller checked before and after each read.
+  - **Navigation:** the view replaces the page body, like the receipt view, so it is disposed on a session change; Android back does not navigate back.
+  - **Review follow-ups:** `R3-001` fixed (any post-submit parse failure becomes Uncertain). `R3-002` tests found a real bug: draft revisions restarted after a resolve, so a stale attempt could match a newly begun equal draft. Fixed with a counter that never resets.
+  - **Evidence (author-reported):** RED, then GREEN; 14 mutation probes, all killed.
+- CORR-07B parent spot check: full `flutter test` 499/499.
+- CORR-07B closure: high-risk four-lens native review `review-ba46d4b60125453a` approved and acknowledged; commit tree exactly the approved candidate `3f8f97af`; commit `28a5715`. Follow-ups, folded into CORR-07C:
+  - `R4-uncertain-catch-all-drops-cause` (WARNING): log or attach the original parse error before mapping it to Uncertain.
+  - `R2-stale-comment-misleading` and `R3-stale-search-silently-dropped` (WARNING): a stale rejection from `find` with a matching generation clears the spinner and shows nothing; show an error or retry, add a test and fix the comment.
+  - `R3-post-read-session-check-untested` (SUGGESTION): add a test for a session change during a pending correction read.
+  - `R2-unexplained-15-day-window` and `R2-unused-branchId` (SUGGESTION): name the window constant; remove or use `SaleCorrections.branchId`.
+- Open findings deferred by the user until after CORR-07P:
+  - `SaleDraftStore` in `lib/sales/sale_draft.dart` has the same revision-reset bug.
+  - The folio lookup's `failed-precondition` also covers non-ambiguous cases; CORR-07P addresses it with a reason.
 
 ## Next step
 
-CORR-07B (entry, lookup, list and detail), folding in R3-001 and R3-002. Product decision pending before CORR-07C/D: how sellers see the refund or exchange difference before confirming, since no server preview exists.
+CORR-07P: backend correction preview and structured reasons (delegated writer).
