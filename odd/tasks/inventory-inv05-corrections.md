@@ -56,7 +56,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - [x] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
   - [x] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
   - [x] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
-  - [ ] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
+  - [x] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
   - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
@@ -255,7 +255,30 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `payment-mismatch` and `folio-ambiguous` reached the caller as `details.reason`.
   - Preview denials passed.
   - The fixture hash `5ddfb8b8…` was equal before and after; Firestore stayed at 104 documents with an identical listing; Auth stayed at 2 users with 0 `acceptance-*`. No residue.
+- CORR-07C writer (delegated, Flutter return form). The writer stopped once on a usage limit and was resumed with its context; no work was lost.
+  - **Gateway:**
+    - `previewReturn` binds `previewSaleReturn`. Its strict parser is bound to the request; a malformed preview is Protocol and the cause is logged.
+    - `CorrectionRejection` helpers: `folio-ambiguous` uses the server reason. The expired window is matched from the English server message, because the server sends no reason for it.
+  - **Form** (`correction_return_controller.dart`, `correction_return_form.dart`):
+    - per-line BigInt quantity up to the remaining quantity, condition, reason and note;
+    - a 400 ms debounced preview; "Confirmar" only when the preview matches the form;
+    - an uncertain lock with same-key retry, and a re-preview after a rejection.
+  - **Receipt** (`correction_return_receipt_view.dart`): no time shown, an invoice note, and the replay label. The detail is refetched with `find` by saleId.
+  - **Shell:** `CorrectionDraftStore` and `_submitReturn` mirror `_submitSale`. `SaleCorrections.branchId` is now used to freeze drafts and check receipts.
+  - **CORR-07B follow-ups resolved:**
+    - the Uncertain cause is kept and logged;
+    - a stale search shows an error and retry;
+    - a post-read session-change test was added;
+    - `correctionWindowDays` is a named constant;
+    - `branchId` is used.
+  - **Evidence (author-reported):** RED, then GREEN; 15 mutation probes, 13 killed, 2 equivalent.
+- CORR-07C parent spot check: full `flutter test` 538/538.
+- CORR-07C closure: high-risk four-lens native review `review-355565ba53c0baba` approved and acknowledged; commit tree exactly the approved candidate `766d3bbb`; commit `3fb71d0`. Follow-ups, fixed immediately in CORR-07C1 (delegated writer) before CORR-07D:
+  - `R4-receipt-dropped-on-dispose` (WARNING, money risk): disposing the form during an in-flight submit that then succeeds loses the receipt while the shell resolves the draft, which risks a double refund.
+  - `R3-shell-rejection-resolve-untested` (WARNING) and `R3-lookup-reopen-untested` (SUGGESTION).
+  - R2 cleanups: `setQuantity` ignores its arguments, a silent confirm bail, the `onReturn` doc, and a duplicated session message.
+- Open (backend, later): the correction services send no `details.reason` for an expired window.
 
 ## Next step
 
-CORR-07C: return form using `previewSaleReturn`, folding in the CORR-07B follow-ups (delegated writer).
+CORR-07C1: fix the lost receipt on dispose and the review follow-ups (delegated writer, running). Then CORR-07D.
