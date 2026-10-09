@@ -26,7 +26,7 @@ const TIMESTAMP = /acceptance\/timestamp-type/;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CALLABLE = { create: 'createProduct', price: 'setProductPrice', reprice: 'setProductPrice',
-  intake: 'stockIntake', sale: 'submitSale', resale: 'submitSale' };
+  intake: 'stockIntake', sale: 'submitSale', resale: 'submitSale', quote: 'quoteSale' };
 const FUNCTIONS = [...new Set(Object.values(CALLABLE))];
 const SALE_KINDS = ['sale', 'resale'];
 // Each operation requires its predecessor; repricing happens between two seller sales.
@@ -76,6 +76,7 @@ const SALE_DENIAL = {
   product: 'product does not exist',
   unauthenticated: 'authentication is required',
   seller: 'an assigned seller is required',
+  quote: 'quote request contains missing, invalid or unsupported fields',
 };
 
 // Sellers may read their own branch's sale movements by published rule; the movement must carry
@@ -334,6 +335,19 @@ function createManifest(context, adapter) {
     receipt(kind) { // Copy of a confirmed private sale receipt, for replay comparison only.
       if (!SALE_KINDS.includes(kind) || !completed.has(kind)) throw new Error('acceptance/operation-order');
       return copy(entries.get(`sales/${key(kind)}`).expected.receipt);
+    },
+    // The exact read-only quote of a sale's cart at the current private pricing and own-branch
+    // stock: the same independent calculation the confirmed sale must charge.
+    quote(kind, quantity) {
+      if (!SALE_KINDS.includes(kind) || !completed.has('intake')) throw new Error('acceptance/operation-order');
+      const { invoiceRequested, lines } = request(kind);
+      if (quantity !== undefined) lines[0].quantity = quantity;
+      const calculation = saleCalculation({ invoiceRequested, lines }, requests.create.quantitySpec,
+        entries.get(`products/${productId}`).expected.pricing);
+      const stock = entries.get(`branches/${branch}/stock/${productId}`).expected;
+      const available = stock.quantityScaled >= calculation.lines[0].quantity.scaled;
+      return copy({ request: { invoiceRequested, lines },
+        expected: { calculation, totalCentavos: calculation.totalCentavos, lines: [{ productId, available }] } });
     },
     saleReplay(kind) { // The exact replay response: the stored receipt and the original sale time.
       if (!SALE_KINDS.includes(kind) || !completed.has(kind)) throw new Error('acceptance/operation-order');
@@ -730,6 +744,10 @@ test('offline: fake HTTP enforces exact URLs, redirects and response/request bou
   assert.equal(calls, 0);
   assert.equal((await http(LOGIN, 'POST', {})).status, 200);
   for (mode of ['redirect', 'large']) await assert.rejects(http(LOGIN, 'POST', {}));
+  mode = 'valid';
+  assert.equal((await http(`${BASE}/quoteSale`, 'POST', { data: {} })).status, 200);
+  // Correction callables belong to their own harness and are refused here.
+  await assert.rejects(http(`${BASE}/findCorrectableSale`, 'POST', { data: {} }), /acceptance\/url-refused/);
   await assert.rejects(makeHttp(PINNED, [], fakeRequest)(LOGIN));
 });
 
@@ -882,6 +900,90 @@ test('offline: denial payments follow the priced product and denials match the e
   assert.throws(() => callableDenied(denied(SALE_DENIAL.payment), 'INVALID_ARGUMENT', SALE_DENIAL.fields),
     /acceptance\/callable-denial/);
   assert.doesNotThrow(() => callableDenied(denied(SALE_DENIAL.payment), 'INVALID_ARGUMENT'));
+});
+
+test('offline: denials require exact error fields and only the expected structured reason', () => {
+  const denied = (error) => ({ status: 400, body: { error } });
+  const payment = { status: 'INVALID_ARGUMENT', message: SALE_DENIAL.payment };
+  const reasoned = { ...payment, details: { reason: 'payment-mismatch' } };
+  assert.doesNotThrow(() => callableDenied(denied(reasoned), 'INVALID_ARGUMENT', SALE_DENIAL.payment, 'payment-mismatch'));
+  assert.doesNotThrow(() => callableDenied(denied({ status: 'FAILED_PRECONDITION', message: SALE_DENIAL.stock,
+    details: { reason: 'insufficient-stock' } }), 'FAILED_PRECONDITION', SALE_DENIAL.stock, 'insufficient-stock'));
+  for (const [error, reason] of [
+    [payment, 'payment-mismatch'], // The reason is missing from the HTTP body.
+    [reasoned, undefined], // A reason the rule does not publish.
+    [reasoned, 'insufficient-stock'],
+    [{ ...payment, details: { reason: 'payment-mismatch', extra: true } }, 'payment-mismatch'],
+    [{ ...payment, details: 'payment-mismatch' }, 'payment-mismatch'],
+    [{ ...payment, details: null }, undefined],
+    [{ ...payment, stack: 'private' }, undefined],
+  ]) {
+    assert.throws(() => callableDenied(denied(error), 'INVALID_ARGUMENT', SALE_DENIAL.payment, reason),
+      /acceptance\/callable-denial/);
+  }
+});
+
+test('offline: quote projections follow private pricing and stock and equal the later charge', async () => {
+  const sample = specimen();
+  await ownProduct(sample);
+  assert.throws(() => sample.manifest.quote('sale'), ORDER);
+  await fakePrice(sample, 'price', taxable(1234, 'iva-included'));
+  assert.throws(() => sample.manifest.quote('sale'), ORDER);
+  await fakeIntake(sample);
+  assert.throws(() => sample.manifest.quote('reprice'), ORDER);
+  const id = sample.manifest.view().productId;
+  const quoted = sample.manifest.quote('sale');
+  // The request is exactly the cart: no key, payment or branch.
+  assert.deepEqual(quoted.request, { invoiceRequested: false, lines: [{ productId: id, quantity: '1.00' }] });
+  assert.deepEqual(Object.keys(quoted.expected).sort(), ['calculation', 'lines', 'totalCentavos']);
+  assert.deepEqual(quoted.expected.lines, [{ productId: id, available: true }]);
+  assert.equal(quoted.expected.totalCentavos, 1234);
+  assert.equal(quoted.expected.totalCentavos, sample.manifest.request('sale').payment.amountCentavos);
+  assert.equal(/cost/i.test(JSON.stringify(quoted)), false, 'no cost field reaches the quote');
+  // 9.00 kg exceeds the 2.50 kg stocked: reported per line, priced all the same.
+  const short = sample.manifest.quote('sale', '9.00');
+  assert.deepEqual(short.expected.lines, [{ productId: id, available: false }]);
+  assert.equal(short.expected.totalCentavos, 11106);
+  assert.equal(sample.manifest.quote('sale', '2.50').expected.lines[0].available, true);
+  quoted.expected.calculation.totalCentavos = 1; // Copies cannot poison the private projection.
+  quoted.request.lines[0].quantity = '9.00';
+  const first = await fakeSale(sample, 'sale', FIRST_SALE);
+  assert.deepEqual(first.receipt.calculation, sample.manifest.quote('sale').expected.calculation);
+  assert.equal(sample.manifest.quote('sale', '1.50').expected.lines[0].available, true);
+  assert.equal(sample.manifest.quote('sale', '1.51').expected.lines[0].available, false);
+  await fakePrice(sample, 'reprice', taxable(1500, 'iva-additional-on-invoice'));
+  const repriced = sample.manifest.quote('resale');
+  assert.equal(repriced.expected.totalCentavos, 870);
+  assert.equal(repriced.expected.calculation.additionalIvaCentavos, 120);
+  const second = await fakeSale(sample, 'resale', { scaled: 50, base: 750, iva: 120, stock: 100,
+    pricing: taxable(1500, 'iva-additional-on-invoice') });
+  assert.deepEqual(second.receipt.calculation, repriced.expected.calculation);
+  assert.throws(() => sample.manifest.quote('create'), ORDER);
+  await sample.manifest.cleanup();
+  assert.equal(sample.store.documents.size, 0);
+});
+
+test('offline: forged v2 receipt identity, folio and sale time are retained, never adopted', async () => {
+  const key = `http-${RUN}-sale`;
+  // The genuine folio is the seeded code plus the first eight alphanumerics of the key: HTS-HTTP-1234.
+  for (const forge of [
+    (_docs, response) => { response.receipt.folio = 'HTS-HTTP-1235'; },
+    (_docs, response) => { response.receipt.folio = 'hts-http-1234'; },
+    (_docs, response) => { response.receipt.branchCode = 'HTO'; },
+    (_docs, response) => { response.receipt.version = 1; },
+    (_docs, response) => { delete response.receipt.folio; delete response.receipt.branchCode; },
+    (_docs, response) => { delete response.createdAt; },
+    (_docs, response) => { response.createdAt = 1001; },
+    (_docs, response) => { response.createdAt = new Date(1000).toISOString(); },
+    (docs) => { docs.get(`sales/${key}`).receipt.folio = 'HTO-HTTP-1234'; },
+    (docs) => { docs.get(`saleSubmissionReceipts/${key}`).result.branchCode = 'HTO'; },
+  ]) {
+    const sample = specimen();
+    await stockedProduct(sample);
+    await assert.rejects(fakeSale(sample, 'sale', FIRST_SALE, forge), UNCERTAIN);
+    await assert.rejects(sample.manifest.cleanup(), RETAINED);
+    assert.equal(sample.store.events.some(([event]) => event === 'delete'), false);
+  }
 });
 
 test('offline: live SDK credential is a local certificate and initialization errors stay diagnosable', () => {
@@ -1151,9 +1253,14 @@ function callableSuccess(outcome) {
   if (outcome.status !== 200 || !same(Object.keys(outcome.body), ['result'])) throw new Error('acceptance/callable-result');
   return outcome.body.result;
 }
-function callableDenied(outcome, code, message) {
-  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || outcome.body.error?.status !== code
-    || (message !== undefined && outcome.body.error.message !== message)) {
+// A denial carries exactly status and message, plus details { reason } only when the rule
+// publishes a structured reason; anything else in the error body fails closed.
+function callableDenied(outcome, code, message, reason) {
+  const error = outcome.body?.error;
+  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || error?.status !== code
+    || (message !== undefined && error.message !== message)
+    || !same(Object.keys(error).sort(), reason === undefined ? ['message', 'status'] : ['details', 'message', 'status'])
+    || (reason !== undefined && !same(error.details, { reason }))) {
     throw new Error('acceptance/callable-denial');
   }
 }
@@ -1265,16 +1372,45 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     // FUNC-02B: seller sales over real HTTP. The seller branch comes only from token claims.
     const line = (quantity, productId = manifest.view().productId) => ({ productId, quantity });
     const paid = (quantities) => denialPayment(manifest, quantities);
-    const denySale = (label, overrides, token, code, message) => t.test(`sale denial: ${label}`, () => manifest.unchanged(async () => {
-      const input = { ...manifest.request('sale'), idempotencyKey: manifest.denialKey(`sale-${label}`), ...overrides };
-      callableDenied(await call('sale', input, token), code, message);
+    const denySale = (label, overrides, token, code, message, reason) => t.test(`sale denial: ${label}`,
+      () => manifest.unchanged(async () => {
+        const input = { ...manifest.request('sale'), idempotencyKey: manifest.denialKey(`sale-${label}`), ...overrides };
+        callableDenied(await call('sale', input, token), code, message, reason);
+      }));
+    // SALE-02/06: the read-only quote must be exactly what the following sale charges.
+    const quoted = async (kind) => {
+      const { request, expected } = manifest.quote(kind);
+      await manifest.unchanged(async () => requireSame(callableSuccess(await call('quote', request, tokens.seller)), expected));
+      if (expected.totalCentavos !== manifest.request(kind).payment.amountCentavos) throw new Error('acceptance/quote-charge');
+      return expected;
+    };
+    const charged = (kind, expected) => {
+      const receipt = manifest.receipt(kind);
+      requireSame(receipt.calculation, expected.calculation);
+      if (receipt.payment.amountCentavos !== expected.totalCentavos) throw new Error('acceptance/quote-charge');
+    };
+    for (const role of ['anonymous', 'unassigned', 'client', 'administrator']) {
+      await t.test(`quote denial: ${role}`, () => manifest.unchanged(async () => {
+        callableDenied(await call('quote', manifest.quote('sale').request, tokens[role]), ...(role === 'anonymous'
+          ? ['UNAUTHENTICATED', SALE_DENIAL.unauthenticated] : ['PERMISSION_DENIED', SALE_DENIAL.seller]));
+      }));
+    }
+    await t.test('quote denial: the seller cannot choose a branch', () => manifest.unchanged(async () => {
+      const input = { ...manifest.quote('sale').request, branchId: manifest.paths().branches[1].slice(9) };
+      callableDenied(await call('quote', input, tokens.seller), 'INVALID_ARGUMENT', SALE_DENIAL.quote);
+    }));
+    await t.test('seller quote reports insufficient stock per line without writing', () => manifest.unchanged(async () => {
+      const { request, expected } = manifest.quote('sale', '9.00');
+      if (expected.lines[0].available !== false) throw new Error('acceptance/quote-stock');
+      requireSame(callableSuccess(await call('quote', request, tokens.seller)), expected);
     }));
     for (const role of ['anonymous', 'unassigned', 'client', 'administrator']) {
       await denySale(role, {}, tokens[role], ...(role === 'anonymous'
         ? ['UNAUTHENTICATED', SALE_DENIAL.unauthenticated] : ['PERMISSION_DENIED', SALE_DENIAL.seller]));
     }
-    for (const [label, overrides, code, message] of [
-      ['insufficient', { lines: [line('9.00')], payment: paid(['9.00']) }, 'FAILED_PRECONDITION', SALE_DENIAL.stock],
+    for (const [label, overrides, code, message, reason] of [
+      ['insufficient', { lines: [line('9.00')], payment: paid(['9.00']) }, 'FAILED_PRECONDITION', SALE_DENIAL.stock,
+        'insufficient-stock'],
       ['branch', { branchId: manifest.paths().branches[1].slice(9) }, 'INVALID_ARGUMENT', SALE_DENIAL.fields],
       ['duplicate', { lines: [line('1.00'), line('1.00')], payment: paid(['1.00', '1.00']) }, 'INVALID_ARGUMENT',
         SALE_DENIAL.fields],
@@ -1282,11 +1418,14 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
       ['precision', { lines: [line('1.001')] }, 'INVALID_ARGUMENT', SALE_DENIAL.quantity],
       ['method', { payment: { ...paid(['1.00']), method: 'crypto' } }, 'INVALID_ARGUMENT', SALE_DENIAL.fields],
       ['payment', { payment: { method: 'cash', amountCentavos: paid(['1.00']).amountCentavos - 1 } }, 'INVALID_ARGUMENT',
-        SALE_DENIAL.payment],
+        SALE_DENIAL.payment, 'payment-mismatch'],
       ['missing', { lines: [line('1.00', `missing-${runId}`)] }, 'NOT_FOUND', SALE_DENIAL.product],
-    ]) await denySale(label, overrides, tokens.seller, code, message);
-    await t.test('seller sale success, replay and conflict', async () => {
+    ]) await denySale(label, overrides, tokens.seller, code, message, reason);
+    await t.test('seller sale success with its v2 folio receipt and sale time, replay and conflict', async () => {
+      const expected = await quoted('sale');
+      // The manifest projects version 2, the owned branch code, the folio and createdAt exactly.
       await manifest.execute('sale', async (input) => callableSuccess(await call('sale', input, tokens.seller)));
+      charged('sale', expected);
       await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
         manifest.saleReplay('sale')));
       await manifest.unchanged(async () => callableDenied(await call('sale',
@@ -1302,9 +1441,12 @@ test('live FUNC-02A/B HTTP/Auth/catalog/pricing/intake/sales/client boundaries (
     }));
     await t.test('administrator reprices between sales', () => manifest.execute('reprice',
       async (input) => callableSuccess(await call('reprice', input, tokens.administrator))));
-    await denySale('stale', {}, tokens.seller, 'INVALID_ARGUMENT'); // Pre-repricing payment no longer matches.
-    await t.test('repriced sale and immutable replay snapshot', async () => {
+    // The pre-repricing payment no longer matches, with the same structured reason.
+    await denySale('stale', {}, tokens.seller, 'INVALID_ARGUMENT', SALE_DENIAL.payment, 'payment-mismatch');
+    await t.test('repriced sale equals its quote; the replay keeps the snapshot and sale time', async () => {
+      const expected = await quoted('resale');
       await manifest.execute('resale', async (input) => callableSuccess(await call('resale', input, tokens.seller)));
+      charged('resale', expected);
       await manifest.unchanged(async () => requireSame(callableSuccess(await call('sale', manifest.request('sale'), tokens.seller)),
         manifest.saleReplay('sale')));
     });

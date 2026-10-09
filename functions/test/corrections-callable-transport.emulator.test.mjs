@@ -62,6 +62,7 @@ const DENIAL = {
   unauthenticated: 'authentication is required',
   seller: 'an assigned seller is required',
   notFound: 'sale was not found in this branch',
+  ambiguous: 'folio is ambiguous; use the full receipt id or the recent list',
   overReturn: 'return exceeds the remaining sold quantity',
   stock: 'insufficient stock',
   payment: 'difference payment must equal the amount the customer owes',
@@ -700,9 +701,11 @@ function callableSuccess(outcome) {
   return outcome.body.result;
 }
 
+// Correction and lookup denials carry exactly status and message: no structured reason.
 function callableDenied(outcome, code, message) {
-  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || outcome.body.error?.status !== code
-    || (message !== undefined && outcome.body.error.message !== message)) {
+  const error = outcome.body?.error;
+  if (outcome.status === 200 || !same(Object.keys(outcome.body), ['error']) || error?.status !== code
+    || (message !== undefined && error.message !== message) || !same(Object.keys(error).sort(), ['message', 'status'])) {
     throw new Error('acceptance/callable-denial');
   }
 }
@@ -728,7 +731,24 @@ async function runScenario({ manifest, call, step }) {
     }));
 
   await succeed('sale-u', 'sale');
+  // SALE-03: while sale-u is the only own sale, its folio is unique and finds exactly the sale
+  // the saleId finds; a foreign seller and a folio nobody holds get the same not-found.
+  const folio = () => manifest.lookup('sale-u').sale.folio;
+  await observe('find: own-branch folio returns the same sale as its saleId', 'findCorrectableSale',
+    { folio: folio() }, 'seller', () => manifest.lookup('sale-u'));
+  await observe('find: a lowercase, padded folio is normalized', 'findCorrectableSale',
+    { folio: ` ${folio().toLowerCase()} ` }, 'seller', () => manifest.lookup('sale-u'));
+  await deny('find: foreign seller by folio gets not-found', 'findCorrectableSale', { folio: folio() }, 'foreign',
+    'NOT_FOUND', DENIAL.notFound);
+  await deny('find: a folio no sale holds gets the same not-found', 'findCorrectableSale',
+    { folio: `${folio().split('-')[0]}-0000-0000` }, 'seller', 'NOT_FOUND', DENIAL.notFound);
   await succeed('sale-i', 'sale');
+  // Both owned sale keys share their first eight alphanumerics, so their folios collide.
+  await step('find: both owned sales share one folio', async () => {
+    if (manifest.lookup('sale-i').sale.folio !== folio()) throw new Error('acceptance/folio-collision');
+  });
+  await deny('find: a folio shared by two own sales is ambiguous', 'findCorrectableSale', { folio: folio() }, 'seller',
+    'FAILED_PRECONDITION', DENIAL.ambiguous);
   // 1. findCorrectableSale: own branch only; missing and foreign share one answer.
   await observe('find: own-branch sale with full remaining quantities', 'findCorrectableSale', { saleId: saleU }, 'seller',
     () => manifest.lookup('sale-u'));
@@ -883,7 +903,7 @@ function rehearsal(options = {}) {
   const now = () => new Date((time.now += 1000));
   const shared = { firestore, environment: SERVICE_ENVIRONMENT, now };
   const lookup = createSaleLookupService(shared);
-  const services = {
+  const real = {
     submitSale: createSaleService(shared),
     findCorrectableSale: lookup.findSale,
     listRecentCorrectableSales: lookup.listRecentSales,
@@ -891,6 +911,9 @@ function rehearsal(options = {}) {
     submitSaleReplacement: createSaleReplacementService(shared),
     submitSaleExchange: createSaleExchangeService(shared),
   };
+  // Optional offline fault injection around one real service; live runs never use it.
+  const services = Object.fromEntries(Object.entries(real).map(([name, service]) => [name,
+    options.wrap?.(name, service, real) ?? service]));
   const auth = {
     administrator: { uid: `acceptance-${RUN}-administrator`, token: { role: 'administrator' } },
     seller: { uid: `acceptance-${RUN}-seller`, token: { role: 'seller', branchId: `branch-${RUN}` } },
@@ -901,14 +924,16 @@ function rehearsal(options = {}) {
   };
   const calls = [];
   const call = async (name, data, role) => {
-    calls.push([name, role]);
+    calls.push([name, role, Object.keys(data ?? {}).sort().join(',')]);
     try {
       const result = await services[name]({ auth: copy(auth[role]), data: copy(data) });
       await options.afterCall?.(name, data, store);
       return { status: 200, body: { result: JSON.parse(JSON.stringify(result)) } };
     } catch (error) {
       if (!(error instanceof SaleError)) throw error;
-      return { status: 400, body: { error: { status: error.code.toUpperCase().replaceAll('-', '_'), message: error.message } } };
+      // Mirrors saleHttpsError: details { reason } only when the SaleError carries one.
+      return { status: 400, body: { error: { status: error.code.toUpperCase().replaceAll('-', '_'), message: error.message,
+        ...(error.reason === undefined ? {} : { details: { reason: error.reason } }) } } };
     }
   };
   return { store, manifest, call, calls, time };
@@ -986,6 +1011,10 @@ test('offline: the full scenario rehearsed against the real services matches eve
   for (const role of ['anonymous', 'unassigned', 'client', 'administrator', 'foreign']) {
     assert.ok(sample.calls.some(([, caller]) => caller === role), role);
   }
+  // Folio lookups reached the real service for the own seller (unique, normalized and
+  // ambiguous) and for the foreign seller.
+  const folioCalls = sample.calls.filter(([name, , fields]) => name === 'findCorrectableSale' && fields === 'folio');
+  assert.deepEqual(folioCalls.map(([, caller]) => caller), ['seller', 'seller', 'foreign', 'seller', 'seller']);
   // The live REST step covers all ten private collections and all three movement families.
   assert.deepEqual([...new Set(sample.manifest.privateDocuments().map((path) => path.split('/')[0]))].sort(),
     CORRECTION_COLLECTIONS);
@@ -1034,6 +1063,48 @@ test('offline: forged correction artifacts after a success are retained, never a
     await assert.rejects(runScenario({ manifest: sample.manifest, call: sample.call, step: direct }), UNCERTAIN);
     assert.equal(sample.manifest.view().uncertain, true);
     await assert.rejects(sample.manifest.execute('return-invoiced', async () => ({})), ORDER);
+    sample.store.events.length = 0;
+    await assert.rejects(sample.manifest.cleanup(), RETAINED);
+    assert.equal(sample.store.events.some(([kind]) => kind === 'delete'), false);
+  }
+});
+
+test('offline: a folio lookup that drifts from the saleId lookup or leaks across branches fails closed', async () => {
+  const folio = (data) => Object.hasOwn(data ?? {}, 'folio');
+  const forgeries = [
+    // The folio resolves to a different projection than the saleId lookup.
+    (find) => async (request) => {
+      const result = await find(request);
+      return folio(request.data) ? { sale: { ...result.sale, folio: 'CRA-0000-0000' } } : result;
+    },
+    // A foreign-branch seller finds the sale by its folio.
+    (find) => async (request) => (folio(request.data) && request.auth?.token?.branchId === `branch-${FOREIGN_RUN}`
+      ? find({ ...request, auth: { uid: `acceptance-${RUN}-seller`, token: { role: 'seller', branchId: `branch-${RUN}` } } })
+      : find(request)),
+    // A missing folio answers differently from a missing saleId.
+    (find) => async (request) => {
+      try { return await find(request); }
+      catch (error) {
+        if (folio(request.data) && error.code === 'not-found') throw new SaleError('not-found', 'folio was not found');
+        throw error;
+      }
+    },
+    // A folio shared by two sales silently picks the newest instead of refusing.
+    (find, services) => async (request) => {
+      try { return await find(request); }
+      catch (error) {
+        if (!folio(request.data) || error.code !== 'failed-precondition') throw error;
+        const { sales } = await services.listRecentCorrectableSales({ auth: request.auth, data: {} });
+        return { sale: sales[0] };
+      }
+    },
+  ];
+  for (const forge of forgeries) {
+    const sample = rehearsal({ wrap: (name, service, services) => (name === 'findCorrectableSale'
+      ? forge(service, services) : service) });
+    await sample.manifest.seed();
+    await assert.rejects(runScenario({ manifest: sample.manifest, call: sample.call, step: direct }), OBSERVATION);
+    assert.equal(sample.manifest.view().uncertain, true);
     sample.store.events.length = 0;
     await assert.rejects(sample.manifest.cleanup(), RETAINED);
     assert.equal(sample.store.events.some(([kind]) => kind === 'delete'), false);
@@ -1174,6 +1245,11 @@ test('offline: fake HTTP enforces exact URLs, redirects and bounds; callable env
   assert.doesNotThrow(() => callableDenied(denied, 'OUT_OF_RANGE', DENIAL.overReturn));
   assert.throws(() => callableDenied(denied, 'OUT_OF_RANGE', DENIAL.notFound), /acceptance\/callable-denial/);
   assert.throws(() => callableDenied({ status: 200, body: { result: {} } }, 'OUT_OF_RANGE'), /acceptance\/callable-denial/);
+  // Correction denials publish no structured reason; any extra error field fails closed.
+  for (const extra of [{ details: { reason: 'insufficient-stock' } }, { details: null }, { stack: 'private' }]) {
+    const forged = { status: 400, body: { error: { ...denied.body.error, ...extra } } };
+    assert.throws(() => callableDenied(forged, 'OUT_OF_RANGE', DENIAL.overReturn), /acceptance\/callable-denial/);
+  }
   assert.deepEqual(callableSuccess({ status: 200, body: { result: { a: 1 } } }), { a: 1 });
   assert.throws(() => callableSuccess({ status: 200, body: { result: {}, extra: 1 } }), /acceptance\/callable-result/);
 });
