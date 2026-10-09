@@ -33,3 +33,27 @@ String formatScaledQuantity(int scaled, int precision) {
   final String fraction = (scaled % divisor).toString().padLeft(precision, '0');
   return '${scaled ~/ divisor}.$fraction';
 }
+
+const List<String> _spanishMonths = <String>[
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+
+/// Formats a date and time already in the zone to show, in Spanish, for
+/// example "8 de octubre de 2026, 19:42" (24-hour clock).
+String formatSaleDateTime(DateTime value) {
+  final String hour = value.hour.toString().padLeft(2, '0');
+  final String minute = value.minute.toString().padLeft(2, '0');
+  return '${value.day} de ${_spanishMonths[value.month - 1]} de '
+      '${value.year}, $hour:$minute';
+}

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../auth/emulator_session.dart';
+import '../corrections/correction_lookup_view.dart';
+import '../corrections/sale_corrections.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
 import '../sales/sale_cart_controller.dart';
 import '../sales/sale_cart_panel.dart';
@@ -128,6 +130,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.unresolvedIntakeDraftFor,
     this.saleCheckout,
     this.onSaleCompleted,
+    this.saleCorrections,
     super.key,
   });
 
@@ -151,6 +154,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   /// Receives each confirmed sale. Optional: the page itself shows the
   /// receipt from its cart controller.
   final ValueChanged<SaleReceipt>? onSaleCompleted;
+
+  /// Seller-only sale corrections; null hides the "Correcciones" action.
+  final SaleCorrections? saleCorrections;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -210,6 +216,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   int _intakeGeneration = 0;
   SaleCartController? _sale;
   bool _cartVisible = false;
+  bool _correctionsVisible = false;
 
   @override
   void initState() {
@@ -281,8 +288,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     } else if (checkout != null) {
       _sale?.checkout = checkout;
     }
+    if (sessionChanged ||
+        (widget.saleCorrections == null) !=
+            (oldWidget.saleCorrections == null)) {
+      _correctionsVisible = false;
+    }
     if (sessionChanged) _requestCatalog();
   }
+
+  SaleCorrections? get _corrections =>
+      widget.session.role == InventoryRole.seller
+      ? widget.saleCorrections
+      : null;
+
+  void _showCorrections() {
+    _presentationRevision += 1;
+    setState(() {
+      _cartVisible = false;
+      _correctionsVisible = true;
+    });
+  }
+
+  void _closeCorrections() {
+    _presentationRevision += 1;
+    setState(() => _correctionsVisible = false);
+  }
+
+  /// Product names from the loaded catalog, for correction lines.
+  Map<String, String> _productNames() => <String, String>{
+    for (final CatalogItem item in _snapshot?.items ?? const <CatalogItem>[])
+      item.product.internalCode: item.product.name,
+  };
 
   void _configureSale() {
     final SaleCheckout? checkout = widget.saleCheckout;
@@ -512,8 +548,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   Widget build(BuildContext context) {
     final SaleCartController? sale = _sale;
     final SaleReceipt? receipt = sale?.lastReceipt;
+    final SaleCorrections? corrections = _corrections;
+    final bool showCorrections = corrections != null && _correctionsVisible;
     return Scaffold(
-      bottomNavigationBar: sale != null && receipt == null && !_cartVisible
+      bottomNavigationBar:
+          sale != null && receipt == null && !_cartVisible && !showCorrections
           ? SaleCartButton(
               controller: sale,
               onPressed: () => setState(() => _cartVisible = true),
@@ -522,6 +561,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       appBar: AppBar(
         title: const Text('LDA Inventory'),
         actions: <Widget>[
+          if (corrections != null)
+            TextButton.icon(
+              key: const ValueKey<String>('corrections-open'),
+              onPressed: showCorrections ? null : _showCorrections,
+              icon: const Icon(Icons.assignment_return_outlined),
+              label: const Text('Correcciones'),
+            ),
           IconButton(
             tooltip: 'Refresh catalog',
             onPressed: _loading ? null : _requestCatalog,
@@ -549,7 +595,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: receipt != null
+              child: showCorrections
+                  ? CorrectionLookupView(
+                      corrections: corrections,
+                      productNames: _productNames(),
+                      onClose: _closeCorrections,
+                    )
+                  : receipt != null
                   ? SaleReceiptView(receipt: receipt, onNewSale: _startNewSale)
                   : sale != null && _cartVisible
                   ? SaleCartPanel(

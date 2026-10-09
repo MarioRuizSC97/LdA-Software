@@ -6,6 +6,9 @@ import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
 import '../catalog/stock_intake.dart';
+import '../corrections/correction_sale.dart';
+import '../corrections/sale_corrections.dart';
+import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
 import '../sales/sale_cart.dart';
@@ -34,6 +37,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.productPricingGatewayLoader,
     this.stockIntakeGatewayLoader,
     this.saleGatewayLoader,
+    this.correctionGatewayLoader,
     this.retryLoader,
     super.key,
   });
@@ -46,6 +50,9 @@ class EmulatorLoginShell extends StatefulWidget {
 
   /// Seller sale gateway loader; null hides the cart for every role.
   final SaleGatewayLoader? saleGatewayLoader;
+
+  /// Seller correction gateway loader; null hides corrections for every role.
+  final CorrectionGatewayLoader? correctionGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -89,6 +96,11 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // whole cart. A failed initialization is dropped and retried next call.
   String? _saleGatewayOwner;
   Future<EmulatorSaleGateway>? _saleGateway;
+
+  // Likewise one correction gateway per exact seller session; a failed
+  // initialization is dropped and retried on the next call.
+  String? _correctionGatewayOwner;
+  Future<EmulatorCorrectionGateway>? _correctionGateway;
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -507,6 +519,56 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
   }
 
+  Future<EmulatorCorrectionGateway> _correctionGatewayFor(
+    EmulatorSession session,
+  ) async {
+    final String owner = '${session.userId}|${session.branchId}';
+    if (_correctionGatewayOwner != owner) {
+      _correctionGatewayOwner = owner;
+      _correctionGateway = null;
+    }
+    final Future<EmulatorCorrectionGateway> pending = _correctionGateway ??=
+        widget.correctionGatewayLoader!(session);
+    try {
+      return await pending;
+    } catch (_) {
+      if (identical(_correctionGateway, pending)) _correctionGateway = null;
+      rethrow;
+    }
+  }
+
+  /// Runs one correction read for the exact current seller, checked before
+  /// the gateway is loaded and again after the call returns.
+  Future<T> _correctionRead<T>(
+    Future<T> Function(EmulatorCorrectionGateway gateway) read,
+  ) async {
+    final EmulatorSession? session = _session;
+    if (!_isExactSeller(session) || widget.correctionGatewayLoader == null) {
+      throw const SaleSessionException();
+    }
+    final EmulatorCorrectionGateway gateway = await _correctionGatewayFor(
+      session!,
+    );
+    final T result = await read(gateway);
+    if (!_isSameCurrentSeller(session)) throw const SaleSessionException();
+    return result;
+  }
+
+  SaleCorrections? _saleCorrectionsFor(EmulatorSession session) {
+    if (!_isExactSeller(session) || widget.correctionGatewayLoader == null) {
+      return null;
+    }
+    return SaleCorrections(
+      branchId: session.branchId!,
+      find: (SaleLookupQuery query) => _correctionRead<CorrectableSale>(
+        (EmulatorCorrectionGateway gateway) => gateway.find(query),
+      ),
+      listRecent: () => _correctionRead<RecentCorrectableSales>(
+        (EmulatorCorrectionGateway gateway) => gateway.listRecent(),
+      ),
+    );
+  }
+
   SaleCheckout? _saleCheckoutFor(EmulatorSession session) {
     if (!_isExactSeller(session) || widget.saleGatewayLoader == null) {
       return null;
@@ -615,6 +677,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
                   _unresolvedIntakeDraftFor(session, productId, branchId)
             : null,
         saleCheckout: _saleCheckoutFor(session),
+        saleCorrections: _saleCorrectionsFor(session),
         onLogout: _logout,
       );
     }

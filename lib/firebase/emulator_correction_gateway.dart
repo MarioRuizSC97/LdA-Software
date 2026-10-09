@@ -135,10 +135,13 @@ class EmulatorCorrectionGateway {
     );
   }
 
+  /// Once a submit returned, the correction may have committed, so any
+  /// failure to parse its response (a protocol, validation, cast or range
+  /// error alike) keeps the draft for a same-key retry instead of escaping.
   T _uncertainIfMalformed<T>(T Function() parse) {
     try {
       return parse();
-    } on CorrectionProtocolException {
+    } catch (_) {
       throw const SaleUncertainException();
     }
   }

@@ -240,6 +240,51 @@ void main() {
     },
   );
 
+  test(
+    'any parse failure after a submit returned is uncertain, not raw',
+    () async {
+      // A malformed new-items calculation: the right shape, but one value
+      // read through a mistyped view fails with a cast error, which the
+      // strict parsers never anticipated.
+      final Map<String, Object?> calculationResponse = exchangeResponse();
+      final Map<String, Object?> receipt = Map<String, Object?>.of(
+        calculationResponse['receipt']! as Map<String, Object?>,
+      );
+      final Map<String, Object?> newItems = Map<String, Object?>.of(
+        receipt['newItems']! as Map<String, Object?>,
+      );
+      newItems['calculation'] = tapeCalculation().cast<String, String>();
+      receipt['newItems'] = newItems;
+      calculationResponse['receipt'] = receipt;
+
+      // A wrong-type field read through a typed view of the response.
+      final Map<String, Object?> wrongType = Map<String, Object?>.of(
+        returnResponse(),
+      )..['receipt'] = returnReceiptJson().cast<String, int>();
+
+      final EmulatorCorrectionGateway gateway = _gateway(
+        exchangeInvoke: (_) async => calculationResponse,
+        returnInvoke: (_) async => wrongType,
+        replacementInvoke: (_) async => <String, Object?>{
+          'receipt': replacementReceiptJson(),
+          'replayed': 'no',
+        }.cast<String, bool>(),
+      );
+      await expectLater(
+        gateway.submitExchange(exchangeDraft()),
+        throwsA(isA<SaleUncertainException>()),
+      );
+      await expectLater(
+        gateway.submitReturn(returnDraft()),
+        throwsA(isA<SaleUncertainException>()),
+      );
+      await expectLater(
+        gateway.submitReplacement(replacementDraft()),
+        throwsA(isA<SaleUncertainException>()),
+      );
+    },
+  );
+
   test('a different or missing seller before the call never invokes', () async {
     int invoked = 0;
     Future<Object?> count(Map<String, Object?> _) async {

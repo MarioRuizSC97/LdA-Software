@@ -9,30 +9,6 @@ import 'sale_quote.dart';
 // professional Spanish (product decision 8); identifiers stay in English.
 // Ticket printing is deferred.
 
-const List<String> _spanishMonths = <String>[
-  'enero',
-  'febrero',
-  'marzo',
-  'abril',
-  'mayo',
-  'junio',
-  'julio',
-  'agosto',
-  'septiembre',
-  'octubre',
-  'noviembre',
-  'diciembre',
-];
-
-/// Formats a date and time already in the zone to show, in Spanish, for
-/// example "8 de octubre de 2026, 19:42" (24-hour clock).
-String formatSaleDateTime(DateTime value) {
-  final String hour = value.hour.toString().padLeft(2, '0');
-  final String minute = value.minute.toString().padLeft(2, '0');
-  return '${value.day} de ${_spanishMonths[value.month - 1]} de '
-      '${value.year}, $hour:$minute';
-}
-
 /// The confirmed sale: folio, QR of the full sale ID, lines, totals, payment,
 /// invoice option, server time and branch, plus "Nueva venta".
 class SaleReceiptView extends StatelessWidget {

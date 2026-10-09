@@ -502,6 +502,10 @@ class CorrectionDraftStore {
   final Map<String, Map<String, _StoredCorrectionDraft>> _drafts =
       <String, Map<String, _StoredCorrectionDraft>>{};
 
+  // Store-wide and never reset, so an attempt from before a resolution can
+  // never match an equal draft begun again afterwards.
+  int _lastRevision = 0;
+
   SaleCorrectionDraft? unresolvedFor(String ownerUserId, String branchId) =>
       _drafts[ownerUserId]?[branchId]?.draft;
 
@@ -516,7 +520,7 @@ class CorrectionDraftStore {
     if (current != null && current.draft != draft) {
       throw const CorrectionUnresolvedException();
     }
-    final int revision = (current?.revision ?? 0) + 1;
+    final int revision = ++_lastRevision;
     branchDrafts[draft.branchId] = _StoredCorrectionDraft(draft, revision);
     return CorrectionAttempt._(
       ownerUserId: ownerUserId,

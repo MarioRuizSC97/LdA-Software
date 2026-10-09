@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
 import 'package:lda_inventory/sales/sale_draft.dart';
+import 'package:lda_inventory/sales/sale_format.dart';
 import 'package:lda_inventory/sales/sale_quote.dart';
 import 'package:lda_inventory/sales/sale_receipt_view.dart';
 import 'package:qr_flutter/qr_flutter.dart';

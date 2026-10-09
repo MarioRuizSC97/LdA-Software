@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/catalog/product_pricing.dart';
+import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/main.dart';
 
@@ -41,6 +43,10 @@ Future<ProductPricingGateway> _unexpectedPricingLoad(EmulatorSession session) =>
 Future<EmulatorStockIntakeGateway> _unexpectedStockIntakeLoad(
   EmulatorSession session,
 ) => throw StateError('fixture mode must never initialize intake Functions');
+
+Future<EmulatorCorrectionGateway> _unexpectedCorrectionLoad(
+  EmulatorSession session,
+) => throw StateError('the shell must not initialize corrections eagerly');
 
 void main() {
   testWidgets('ordinary bootstrap fails closed without fixture products', (
@@ -88,6 +94,25 @@ void main() {
     expect(find.text('Local emulator sign in'), findsOneWidget);
     expect(find.text('Catalog data is not connected.'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
+  });
+
+  testWidgets('local-emulator mode hands the correction loader to the shell', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        localEmulatorsEnabled: true,
+        emulatorLoader: _loadUnauthenticatedGateway,
+        emulatorCorrectionLoader: _unexpectedCorrectionLoad,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+      find.byType(EmulatorLoginShell),
+    );
+    expect(shell.correctionGatewayLoader, same(_unexpectedCorrectionLoad));
   });
 
   testWidgets('fixture mode stays disconnected when both flags are enabled', (

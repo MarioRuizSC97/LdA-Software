@@ -381,5 +381,79 @@ void main() {
         throwsA(isA<SaleSessionException>()),
       );
     });
+
+    test('isolates drafts between sellers and between branches', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReturnDraft north = returnDraft();
+      final SaleReturnDraft south = _return(branchId: 'branch-south');
+      final CorrectionAttempt sellerNorth = store.begin(
+        ownerUserId: 'seller-1',
+        draft: north,
+      );
+      // Neither another seller on the same branch nor the same seller on
+      // another branch is blocked by seller-1's unresolved north draft.
+      final CorrectionAttempt otherSeller = store.begin(
+        ownerUserId: 'seller-2',
+        draft: replacementDraft(),
+      );
+      final CorrectionAttempt sellerSouth = store.begin(
+        ownerUserId: 'seller-1',
+        draft: south,
+      );
+      expect(store.unresolvedFor('seller-1', saleBranchId), same(north));
+      expect(
+        store.unresolvedFor('seller-2', saleBranchId),
+        isA<SaleReplacementDraft>(),
+      );
+      expect(store.unresolvedFor('seller-1', 'branch-south'), same(south));
+      expect(store.unresolvedFor('seller-2', 'branch-south'), isNull);
+
+      expect(store.resolve(sellerNorth), isTrue);
+      expect(store.unresolvedFor('seller-1', saleBranchId), isNull);
+      expect(store.isCurrent(otherSeller), isTrue);
+      expect(store.isCurrent(sellerSouth), isTrue);
+      expect(store.unresolvedFor('seller-1', 'branch-south'), same(south));
+    });
+
+    test('an attempt is no longer current once resolved', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final CorrectionAttempt attempt = store.begin(
+        ownerUserId: 'seller-1',
+        draft: returnDraft(),
+      );
+      expect(store.isCurrent(attempt), isTrue);
+      expect(store.resolve(attempt), isTrue);
+      expect(store.isCurrent(attempt), isFalse);
+      expect(store.resolve(attempt), isFalse);
+    });
+
+    test('a stale attempt never clears a newer draft', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReturnDraft draft = returnDraft();
+      final CorrectionAttempt stale = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      final CorrectionAttempt retry = store.begin(
+        ownerUserId: 'seller-1',
+        draft: returnDraft(),
+      );
+      expect(store.resolve(stale), isFalse);
+      expect(store.unresolvedFor('seller-1', saleBranchId), equals(draft));
+      expect(store.resolve(retry), isTrue);
+
+      // The same draft begun again after resolution is a newer attempt: the
+      // first-generation attempt must not resolve it.
+      final CorrectionAttempt again = store.begin(
+        ownerUserId: 'seller-1',
+        draft: returnDraft(),
+      );
+      expect(store.isCurrent(stale), isFalse);
+      expect(store.resolve(stale), isFalse);
+      expect(store.isCurrent(retry), isFalse);
+      expect(store.resolve(retry), isFalse);
+      expect(store.unresolvedFor('seller-1', saleBranchId), isNotNull);
+      expect(store.resolve(again), isTrue);
+    });
   });
 }

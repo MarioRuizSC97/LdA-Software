@@ -6,6 +6,7 @@ import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
 import 'firebase/emulator_bootstrap.dart';
+import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
@@ -30,6 +31,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorProductPricingLoader,
     this.emulatorStockIntakeLoader,
     this.emulatorSaleLoader,
+    this.emulatorCorrectionLoader,
     super.key,
   });
 
@@ -41,6 +43,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final ProductPricingGatewayLoader? emulatorProductPricingLoader;
   final StockIntakeGatewayLoader? emulatorStockIntakeLoader;
   final SaleGatewayLoader? emulatorSaleLoader;
+  final CorrectionGatewayLoader? emulatorCorrectionLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +68,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
             DemoEmulatorBootstrap.initializeStockIntakeGateway,
         saleGatewayLoader:
             emulatorSaleLoader ?? DemoEmulatorBootstrap.initializeSaleGateway,
+        correctionGatewayLoader:
+            emulatorCorrectionLoader ??
+            DemoEmulatorBootstrap.initializeCorrectionGateway,
       );
     }
     return const CatalogSetupApp();
@@ -79,6 +85,8 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     required this.productPricingGatewayLoader,
     required this.stockIntakeGatewayLoader,
     this.saleGatewayLoader = DemoEmulatorBootstrap.initializeSaleGateway,
+    this.correctionGatewayLoader =
+        DemoEmulatorBootstrap.initializeCorrectionGateway,
     super.key,
   });
 
@@ -89,6 +97,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final StockIntakeGatewayLoader stockIntakeGatewayLoader;
 
   final SaleGatewayLoader saleGatewayLoader;
+  final CorrectionGatewayLoader correctionGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -121,6 +130,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       productPricingGatewayLoader: widget.productPricingGatewayLoader,
       stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
       saleGatewayLoader: widget.saleGatewayLoader,
+      correctionGatewayLoader: widget.correctionGatewayLoader,
     ),
   );
 }
