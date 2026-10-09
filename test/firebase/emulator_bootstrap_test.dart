@@ -1,12 +1,15 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
+import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
+import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
 import 'package:lda_inventory/sales/sale_draft.dart';
 import 'package:lda_inventory/sales/sale_quote.dart';
 
+import '../corrections/correction_fixtures.dart';
 import '../sales/sale_fixtures.dart';
 
 class _Gateway implements EmulatorSessionGateway {
@@ -548,5 +551,62 @@ void main() {
         expect(invoked, <String>['quoteSale', 'submitSale']);
       },
     );
+    test('correction gateway initializer matches the loader contract', () {
+      const CorrectionGatewayLoader loader =
+          DemoEmulatorBootstrap.initializeCorrectionGateway;
+      expect(loader, same(DemoEmulatorBootstrap.initializeCorrectionGateway));
+    });
+
+    test('correction gateway binds each callable to its operation', () async {
+      const EmulatorSession seller = EmulatorSession(
+        userId: 'seller-1',
+        email: 'seller@demo.invalid',
+        role: InventoryRole.seller,
+        branchId: saleBranchId,
+      );
+      final List<String> requested = <String>[];
+      final List<String> invoked = <String>[];
+      final Map<String, Object? Function()> responses =
+          <String, Object? Function()>{
+            'findCorrectableSale': findResponse,
+            'listRecentCorrectableSales': () => <String, Object?>{
+              'sales': <Object?>[lookupSaleJson()],
+            },
+            'submitSaleReturn': returnResponse,
+            'submitSaleReplacement': replacementResponse,
+            'submitSaleExchange': exchangeResponse,
+          };
+      final EmulatorCorrectionGateway gateway =
+          DemoEmulatorBootstrap.createCorrectionGateway(
+            session: seller,
+            sessionChecker: () async => seller,
+            callable: (String name) {
+              requested.add(name);
+              return (Map<String, Object?> request) async {
+                invoked.add(name);
+                return responses[name]!();
+              };
+            },
+          );
+
+      expect(requested, unorderedEquals(responses.keys));
+      expect(gateway.expectedSession, same(seller));
+      await gateway.find(SaleLookupQuery.bySaleId(saleKey));
+      expect(invoked.last, 'findCorrectableSale');
+      await gateway.listRecent();
+      expect(invoked.last, 'listRecentCorrectableSales');
+      await gateway.submitReturn(returnDraft());
+      expect(invoked.last, 'submitSaleReturn');
+      await gateway.submitReplacement(replacementDraft());
+      expect(invoked.last, 'submitSaleReplacement');
+      await gateway.submitExchange(exchangeDraft());
+      expect(invoked, <String>[
+        'findCorrectableSale',
+        'listRecentCorrectableSales',
+        'submitSaleReturn',
+        'submitSaleReplacement',
+        'submitSaleExchange',
+      ]);
+    });
   });
 }

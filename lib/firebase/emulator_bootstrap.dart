@@ -12,6 +12,7 @@ import '../catalog/product_pricing.dart';
 import 'emulator_auth_routing.dart';
 import 'emulator_auth_routing_platform.dart';
 import 'emulator_auth_routing_preinit.dart';
+import 'emulator_correction_gateway.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
 import 'emulator_sale_gateway.dart';
@@ -504,6 +505,40 @@ class DemoEmulatorBootstrap {
     sessionChecker: sessionChecker,
     quoteInvoke: callable('quoteSale'),
     submitInvoke: callable('submitSale'),
+  );
+
+  /// Seller correction gateway over the five sale-correction callables,
+  /// wired exactly like the sale gateway.
+  static Future<EmulatorCorrectionGateway> initializeCorrectionGateway(
+    EmulatorSession session,
+  ) {
+    return _initializeLiveFunctionsGateway<EmulatorCorrectionGateway>(
+      (FirebaseAuth auth, FirebaseFunctions functions) =>
+          createCorrectionGateway(
+            session: session,
+            sessionChecker: _firebaseActiveSessionChecker(auth),
+            callable: (String name) => firebaseSaleCallable(functions, name),
+          ),
+    );
+  }
+
+  /// Binds `findCorrectableSale`, `listRecentCorrectableSales`,
+  /// `submitSaleReturn`, `submitSaleReplacement` and `submitSaleExchange` by
+  /// name. Separate from [initializeCorrectionGateway] so the binding is
+  /// testable without Firebase.
+  @visibleForTesting
+  static EmulatorCorrectionGateway createCorrectionGateway({
+    required EmulatorSession session,
+    required SaleSessionChecker sessionChecker,
+    required SaleCallable Function(String name) callable,
+  }) => EmulatorCorrectionGateway(
+    expectedSession: session,
+    sessionChecker: sessionChecker,
+    findInvoke: callable('findCorrectableSale'),
+    listInvoke: callable('listRecentCorrectableSales'),
+    returnInvoke: callable('submitSaleReturn'),
+    replacementInvoke: callable('submitSaleReplacement'),
+    exchangeInvoke: callable('submitSaleExchange'),
   );
 
   static Future<T> _initializeLiveFunctionsGateway<T>(
