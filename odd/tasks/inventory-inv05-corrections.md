@@ -52,12 +52,12 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
 - [x] CORR-05 — Exchange for a different product: return at the snapshot price, new product at the current price, settlement of the difference. Route: delegated writer. Native review `review-fe7aec16af968495` approved; commit recorded in Evidence.
 - [x] CORR-06A — Callables and rules: export callables for lookup, list, return, replacement and exchange in `functions/src/index.js` with the existing guard and error-mapping pattern; add explicit deny-all rules for every new correction collection; callable unit tests. Route: delegated writer. (Split from CORR-06 on 2026-10-08 because the repository has no rules unit-test harness; rules are accepted over real HTTP, as in FUNC-03.)
 - [x] CORR-06B — HTTP transport acceptance for corrections against the running emulators: real Auth tokens and callables, the seller REST denials on the new collections, the seller read of the new movement types, and owned teardown. It folds in the CORR-05 test follow-ups. Route: delegated writer, then a live run with user approval.
-- [ ] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
+- [x] CORR-07 — Seller Flutter screens: lookup and list, return, replacement and exchange. Split on resume (2026-10-09) into reviewable work units, each its own commit:
   - [x] CORR-07A — Flutter correction domain and gateway: strict parsers for lookup/list/return/replacement/exchange responses, request builders with BigInt quantities at product precision, one idempotency key per correction draft, a gateway for the five callables following the sale gateway pattern (session re-check, stale generation, code whitelist, uncertain handling, structured reasons), bootstrap wiring, unit tests. No UI. Route: delegated writer.
   - [x] CORR-07B — Seller entry and lookup: an app-bar action on the seller catalog opens corrections; folio search plus the recent-sales list (15 days); a sale detail with per-line sold, returned and remaining quantities. Neutral Spanish copy. Widget tests. Route: delegated writer.
   - [x] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
   - [x] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
-  - [ ] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
+  - [x] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
 - [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
 ## Acceptance criteria
@@ -294,7 +294,35 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - `SaleDraftStore` revision reset in `lib/sales/sale_draft.dart`;
   - the sale receipt is lost when the cart controller is disposed during a submit;
   - no server reason for an expired correction window.
+- CORR-07D writer (delegated, Flutter replacement and exchange forms, no backend change):
+  - **Typed store:** sealed `SaleCorrectionReceipt` and `CompletedCorrection` types make the draft store typed. The lookup view routes drafts and receipts with exhaustive switches, so every kind shows its receipt.
+  - **Gateway:** `previewExchange` is bound to `previewSaleExchange`, with a strict parser bound to the request.
+  - **Shell:** a generic `_submitCorrection<D, R>` serves all three kinds.
+  - **Replacement form:** factory-defect only, capped at the remaining quantity, "Sin costo para el cliente".
+  - **Exchange form:**
+    - new items come from the priced catalog products the page passes in;
+    - the debounced settlement preview shows "El cliente paga", "Se reembolsa" or "Sin diferencia", and per-line availability;
+    - the difference payment is always `{method, amountCentavos: preview.customerPaysCentavos}`, with the method defaulting to the sale's;
+    - a `payment-mismatch` triggers a re-preview.
+  - **Both forms** get receipts, an uncertain lock with same-key retry, the complete/acknowledge recovery and a refetch.
+  - **CORR-07C1 follow-ups resolved:** a distinct committed-pending message, a typed receipt, the drift re-preview test and the `quantityChanged` tests.
+  - **Evidence (author-reported):** RED from compile failures, then GREEN; 16 mutation probes, all killed (one after adding a test).
+- CORR-07D parent spot check: full `flutter test` 615/615.
+- **Split for review:** the single 07D review START refused the candidate as too large (`lens_context_budget_exceeded`: 33 files, about 5,889 lines). The user chose 3 commits that each compile and pass tests. A delegated agent built them; each commit passed `flutter analyze` and the full suite (571, 589 and 615). The final tree equals the pre-split snapshot `53308d97`.
+  - `e3d04f0`: typed receipts and the exchange preview client. Review `review-e6d787f6b1a9d8db`, high risk, 4 lenses, approved.
+    - Its warnings (`R4-unacknowledged-non-return-dead-end`, `R2-lookup-nonexhaustive-completed`, `R3-lookup-hides-non-return-receipt`) concern the slice-only lookup. The parent verified the final lookup shows any completed kind's receipt through the exhaustive switch.
+    - Suggestions: unused exchange fixtures in this slice (used by slice 3), and a hard-coded 16% IVA in `catalogCalculationFor`.
+  - `f54bac3`: the replacement form. Review `review-4dd5131d0e8e19cd`, medium risk, approved. `R3-untested-failure-branches` (SUGGESTION): unresolved, stale and session-with-draft branches are untested.
+  - `5526fda`: the exchange form. Review `review-c859fcb48bfab3ed`, medium risk, approved. Suggestions:
+    - `R3-blocked-message-not-refreshed`: the block does not clear while the form stays open;
+    - `R3-controller-disposed-before-field-unmount`: dispose new-line controllers after the rebuild.
+  - Each slice was reviewed from a temporary detached worktree at its commit, then the worktree was removed.
+- Open findings for after CORR-07, per the user's order:
+  - `SaleDraftStore` revision reset;
+  - a sale receipt lost on dispose;
+  - no server reason for an expired window or insufficient stock in corrections (the client matches English messages);
+  - money copy reads "20.70 MXN".
 
 ## Next step
 
-CORR-07D: the replacement and exchange forms (with `previewSaleExchange` and the same complete/acknowledge receipt handling), folding in the CORR-07C1 follow-ups.
+CORR-08: reconcile evidence and commits for INV-05 and report failed, skipped and pending checks (parent).
