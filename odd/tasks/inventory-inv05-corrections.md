@@ -58,7 +58,7 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - [x] CORR-07P — Backend correction preview (decision 12): read-only, seller-only callable(s) for return and exchange that run the same window, branch, ledger, stock and pricing checks and the same calculation as `submitSaleReturn`/`submitSaleExchange`, without writing anything; the exchange preview returns the exact `customerPaysCentavos`/`refundCentavos`. Add structured `details.reason` for an ambiguous folio and an exchange difference-payment mismatch. Unit, emulator and callable tests, plus the HTTP transport harness, with one live run only with user approval. Route: delegated writer.
   - [x] CORR-07C — Return form: per-line quantity and condition (`good`/`factory-defect`), reason and note, server-computed refund, confirmation and correction receipt, uncertain-retry lock. Widget tests. Route: delegated writer.
   - [x] CORR-07D — Replacement and exchange forms: factory-defect replacement of the same product; exchange for a different priced product with the settlement difference; receipts. Widget tests. Route: delegated writer.
-- [ ] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
+- [x] CORR-08 — Reconcile evidence and commits; report failed, skipped and pending checks. Route: parent.
 
 ## Acceptance criteria
 
@@ -323,6 +323,29 @@ Out of scope: repair tracking, per-product windows, CFDI or credit-note emission
   - no server reason for an expired window or insufficient stock in corrections (the client matches English messages);
   - money copy reads "20.70 MXN".
 
+## Final report (CORR-08, 2026-10-10, parent, HEAD `3bc87b6`)
+
+- **Outcome:** INV-05 is complete. The backend corrections (CORR-01..06B) and the corrections preview (CORR-07P) are accepted live. The seller Flutter screens (CORR-07A..07D) cover lookup by folio or recent list, return, factory-defect replacement and exchange, each with a server preview where money is involved, an uncertain same-key retry, and receipt recovery.
+- **Commit reconciliation:** every commit recorded in this document is an ancestor of HEAD (checked with `git merge-base --is-ancestor`). The branch chain is `feat/inventory-mvp-sales-corrections` (CORR-01..06B), then `feat/inventory-mvp-seller-sale-ui` (SALE-01..07), then `feat/inventory-mvp-sale-corrections-ui` (CORR-07..08). Nothing is pushed.
+- **Final checks at HEAD (parent, observed):**
+  - backend non-emulator unit tests from the repository root: 318/318;
+  - transport offline: 41 tests, 39 pass, 2 live roots skipped;
+  - `flutter analyze`: no issues;
+  - `flutter test`: 615/615.
+- **Live evidence:**
+  - The last live HTTP transport run was CORR-07P, 138/138 at `3aaf73e`. No backend source changed after it; CORR-07C and 07D are Flutter only.
+  - The emulator suites for returns, exchanges and lookup last ran at CORR-07P (6/6, 6/6, 10/10). Demo fixtures were unchanged across every live run.
+- **Skipped or not available:**
+  - no device or integration run of the Flutter screens against the emulators (widget tests use fakes);
+  - the Flutter SDK exposing `details` as a Map is proven only with fakes;
+  - `firestore.rules` reload is unprovable (see CORR-06B).
+- **Open follow-ups, queued by the user after CORR-07:**
+  1. `SaleDraftStore` revision reset in `lib/sales/sale_draft.dart`.
+  2. A sale receipt is lost when the cart controller is disposed during a submit.
+  3. The correction services send no `details.reason` for an expired window or insufficient stock; the client matches English messages.
+  4. Non-blocking review suggestions recorded per task above: untested replacement failure branches, the exchange block not refreshing, new-line controller disposal timing, the hard-coded 16% IVA in a test fixture, and the "20.70 MXN" money copy.
+- **Delivery:** push, pull requests and merge order are the user's decision.
+
 ## Next step
 
-CORR-08: reconcile evidence and commits for INV-05 and report failed, skipped and pending checks (parent).
+INV-05 complete. Next, per the user's order: the open follow-ups 1–3 (sale draft store and receipt recovery, then correction server reasons), as a new small feature.
