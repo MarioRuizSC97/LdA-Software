@@ -1,7 +1,7 @@
 import { assertCorrectionWindow, calculateRemainingReturnable } from './corrections-calculation.js';
 import { createQuantitySpec } from './quantity.js';
 import { isOwnBranchSale, validateStoredSale } from './sale-lookup.js';
-import { SaleError } from './sales.js';
+import { SALE_ERROR_REASONS, SaleError } from './sales.js';
 
 /**
  * Shared trusted-input, persisted-state and replay helpers for the sale
@@ -75,7 +75,8 @@ export async function correctableSale(transaction, firestore, saleId, branchId, 
   try {
     assertCorrectionWindow(sale.createdAt, nowMs);
   } catch {
-    throw new SaleError('failed-precondition', 'sale is outside the correction window');
+    throw new SaleError('failed-precondition', 'sale is outside the correction window',
+      SALE_ERROR_REASONS.correctionWindowClosed);
   }
   return sale;
 }

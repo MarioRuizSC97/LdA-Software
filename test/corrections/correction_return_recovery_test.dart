@@ -177,6 +177,7 @@ void main() {
       const SaleRejectedException(
         code: 'out-of-range',
         message: 'return exceeds the remaining sold quantity',
+        reason: 'over-return',
       ),
     );
     await tester.pump();

@@ -259,7 +259,7 @@ test('after partial returns the preview applies cumulative rounding exactly like
   const over = await previewUnchanged(firestore, () => previewReturn(asRequest(returnData({
     saleId: 'inv', lines: [{ lineIndex: 1, quantity: '0.001', condition: 'good' }] }))));
   assert.deepEqual(over.error,
-    { code: 'out-of-range', message: 'return exceeds the remaining sold quantity', reason: undefined });
+    { code: 'out-of-range', message: 'return exceeds the remaining sold quantity', reason: 'over-return' });
 });
 
 // Every rejection the submit gives for these states, the preview gives too.
@@ -321,18 +321,19 @@ test('submit error precedence is unchanged: replay, then sale, ledger, lines, co
       { code: 'already-exists', message: 'idempotency key collides with existing correction records' }],
     ['window before ledger', [badLedger, ['saleReturnLedgers/expired', badLedger[1]]],
       returnData({ saleId: 'expired' }),
-      { code: 'failed-precondition', message: 'sale is outside the correction window' }],
+      { code: 'failed-precondition', message: 'sale is outside the correction window',
+        reason: 'correction-window-closed' }],
     ['ledger before over-return', [badLedger], returnData({ lines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] }),
       { code: 'failed-precondition', message: 'persisted sale return ledger is invalid' }],
     ['over-return before stock', [badStock], returnData({ lines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] }),
-      { code: 'out-of-range', message: 'return exceeds the remaining sold quantity' }],
+      { code: 'out-of-range', message: 'return exceeds the remaining sold quantity', reason: 'over-return' }],
     ['stock last', [badStock], returnData(),
       { code: 'failed-precondition', message: 'stock projection is invalid' }],
   ];
   for (const [label, overrides, data, error] of cases) {
     const { submitReturn } = fixture(withRecords(overrides));
     assert.deepEqual(await outcome(submitReturn(asRequest({ idempotencyKey: 'r1', ...data }))),
-      { error: { ...error, reason: undefined } }, label);
+      { error: { reason: undefined, ...error } }, label);
   }
   const exchangeCases = [
     ['collision before restock and new stock', [badStock, ['branches/north/stock/p3', { bad: true }],
@@ -345,13 +346,13 @@ test('submit error precedence is unchanged: replay, then sale, ledger, lines, co
     { code: 'failed-precondition', message: 'product pricing is invalid' }],
     ['stock before a later line', [['branches/north/stock/p3', { ...piece, quantityScaled: 0 }],
       ['products/p4', { quantitySpec: kg, pricing: { bad: true } }]],
-    { code: 'failed-precondition', message: 'insufficient stock' }],
+    { code: 'failed-precondition', message: 'insufficient stock', reason: 'insufficient-stock' }],
   ];
   const twoNew = exchangeData({ newLines: [{ productId: 'p3', quantity: '1' }, { productId: 'p4', quantity: '0.5' }] });
   for (const [label, overrides, error] of exchangeCases) {
     const { submitExchange } = fixture(withRecords(overrides));
     assert.deepEqual(await outcome(submitExchange(asRequest({ idempotencyKey: 'x1', ...twoNew,
-      differencePayment: { method: 'card', amountCentavos: 900 } }))), { error: { ...error, reason: undefined } }, label);
+      differencePayment: { method: 'card', amountCentavos: 900 } }))), { error: { reason: undefined, ...error } }, label);
   }
 });
 
@@ -416,7 +417,7 @@ test('short stock is reported per new line without throwing; the submit still re
   assert.equal(preview.value.settlement.customerPaysCentavos, 3300 - 1000);
   assert.deepEqual(await outcome(submitExchange(asRequest({ idempotencyKey: 'x1', ...data,
     differencePayment: { method: 'cash', amountCentavos: 2300 } }))),
-  { error: { code: 'failed-precondition', message: 'insufficient stock', reason: undefined } });
+  { error: { code: 'failed-precondition', message: 'insufficient stock', reason: 'insufficient-stock' } });
 });
 
 const exchangeFailures = [
@@ -452,6 +453,19 @@ test('an exchange preview rejects exactly as the submit does', async () => {
     const previewed = fixture(withRecords(overrides, removals));
     const actual = await previewUnchanged(previewed.firestore, () => previewed.previewExchange(asRequest(data)));
     assert.deepEqual(actual, expected, label);
+  }
+});
+
+test('preview rejections carry the window and over-return reasons, and no others', async () => {
+  const reasons = { expired: 'correction-window-closed', future: 'correction-window-closed', 'over-return': 'over-return' };
+  const cases = [
+    ...returnFailures.map(([label, overrides, removals, data]) => [label, overrides, removals, 'previewReturn', data]),
+    ...exchangeFailures.map(([label, overrides, removals, data]) => [label, overrides, removals, 'previewExchange', data]),
+  ];
+  for (const [label, overrides, removals, name, data] of cases) {
+    const service = fixture(withRecords(overrides, removals));
+    const { error } = await previewUnchanged(service.firestore, () => service[name](asRequest(data)));
+    assert.equal(error.reason, reasons[label], `${name} ${label}`);
   }
 });
 

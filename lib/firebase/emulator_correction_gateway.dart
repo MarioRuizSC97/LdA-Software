@@ -27,37 +27,33 @@ const Set<String> _rejectedCodes = <String>{
 /// Server `details.reason` for a folio that matches more than one sale.
 const String correctionFolioAmbiguousReason = 'folio-ambiguous';
 
-/// Exact server message for a sale outside the correction window. The
-/// correction services give it no `details.reason`, so it is the only signal;
-/// the server owns the window rule.
-const String correctionWindowClosedMessage =
-    'sale is outside the correction window';
+/// Server `details.reason` for a sale outside the correction window. The
+/// server owns the window rule.
+const String correctionWindowClosedReason = 'correction-window-closed';
 
-/// Exact server message for a replacement or new exchange item the branch
-/// stock cannot cover. Like the window, it carries no `details.reason`.
-const String correctionInsufficientStockMessage = 'insufficient stock';
+/// Server `details.reason` for a line that would exceed its remaining
+/// returnable quantity, in returns, replacements, exchanges and previews.
+const String correctionOverReturnReason = 'over-return';
 
-/// Correction meanings of a deterministic refusal.
+/// Correction meanings of a deterministic refusal. Each one is identified by
+/// its code and structured server reason only, never by the English message.
 extension CorrectionRejection on SaleRejectedException {
-  /// The folio matches several sales; only the structured reason counts.
+  /// The folio matches several sales.
   bool get isFolioAmbiguous =>
       code == 'failed-precondition' && reason == correctionFolioAmbiguousReason;
 
-  /// A line would exceed its remaining returnable quantity. Returns and
-  /// their previews use `out-of-range` only for that.
-  bool get isOverReturn => code == 'out-of-range';
+  /// A line would exceed its remaining returnable quantity.
+  bool get isOverReturn =>
+      code == 'out-of-range' && reason == correctionOverReturnReason;
 
   /// The sale's correction window has closed.
   bool get isOutsideCorrectionWindow =>
-      code == 'failed-precondition' && message == correctionWindowClosedMessage;
+      code == 'failed-precondition' && reason == correctionWindowClosedReason;
 
   /// The branch's sellable stock cannot cover a replacement or a new exchange
-  /// item. The correction services give it no `details.reason`, so the exact
-  /// server message is matched too; the sale reason is accepted for parity.
+  /// item. The server uses the same reason as for a sale.
   bool get isOutOfStock =>
-      code == 'failed-precondition' &&
-      (reason == saleInsufficientStockReason ||
-          message == correctionInsufficientStockMessage);
+      code == 'failed-precondition' && reason == saleInsufficientStockReason;
 }
 
 /// An uncertain submission whose response arrived but could not be parsed.

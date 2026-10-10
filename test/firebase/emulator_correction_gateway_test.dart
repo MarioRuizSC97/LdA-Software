@@ -462,6 +462,7 @@ void main() {
         const SaleCallableException(
           code: 'out-of-range',
           message: 'return exceeds the remaining sold quantity',
+          reason: 'over-return',
         ),
       );
       expect(over.isOverReturn, isTrue);
@@ -470,7 +471,8 @@ void main() {
       final SaleRejectedException window = await rejection(
         const SaleCallableException(
           code: 'failed-precondition',
-          message: correctionWindowClosedMessage,
+          message: 'sale is outside the correction window',
+          reason: 'correction-window-closed',
         ),
       );
       expect(window.isOutsideCorrectionWindow, isTrue);
@@ -682,36 +684,96 @@ void main() {
     });
   });
 
-  test('replacement and exchange stock refusals are recognized', () {
-    expect(
-      const SaleRejectedException(
-        code: 'failed-precondition',
-        message: 'insufficient stock',
-      ).isOutOfStock,
-      isTrue,
-    );
-    expect(
-      const SaleRejectedException(
-        code: 'failed-precondition',
-        message: 'insufficient stock',
-        reason: 'insufficient-stock',
-      ).isOutOfStock,
-      isTrue,
-    );
-    expect(
-      const SaleRejectedException(
-        code: 'failed-precondition',
-        message: correctionWindowClosedMessage,
-      ).isOutOfStock,
-      isFalse,
-    );
-    expect(
-      const SaleRejectedException(
-        code: 'invalid-argument',
-        message: 'insufficient stock',
-      ).isOutOfStock,
-      isFalse,
-    );
+  test('correction rejections are recognized by server reason only', () {
+    SaleRejectedException rejected(
+      String code,
+      String message, [
+      String? reason,
+    ]) => SaleRejectedException(code: code, message: message, reason: reason);
+    const String window = 'sale is outside the correction window';
+    const String over = 'return exceeds the remaining sold quantity';
+
+    final List<(SaleRejectedException, bool, bool, bool)> cases = [
+      (
+        rejected(
+          'failed-precondition',
+          'insufficient stock',
+          'insufficient-stock',
+        ),
+        true,
+        false,
+        false,
+      ),
+      (
+        rejected('failed-precondition', window, 'correction-window-closed'),
+        false,
+        true,
+        false,
+      ),
+      (rejected('out-of-range', over, 'over-return'), false, false, true),
+      // The English message alone no longer identifies the rule.
+      (
+        rejected('failed-precondition', 'insufficient stock'),
+        false,
+        false,
+        false,
+      ),
+      (rejected('failed-precondition', window), false, false, false),
+      (rejected('out-of-range', over), false, false, false),
+      (
+        rejected('out-of-range', 'exchange calculation exceeds safe bounds'),
+        false,
+        false,
+        false,
+      ),
+      // A reason under another code is not that rule either.
+      (
+        rejected(
+          'invalid-argument',
+          'insufficient stock',
+          'insufficient-stock',
+        ),
+        false,
+        false,
+        false,
+      ),
+      (
+        rejected('not-found', window, 'correction-window-closed'),
+        false,
+        false,
+        false,
+      ),
+      (
+        rejected('failed-precondition', over, 'over-return'),
+        false,
+        false,
+        false,
+      ),
+    ];
+    for (final (
+          SaleRejectedException error,
+          bool stock,
+          bool closed,
+          bool overReturn,
+        )
+        in cases) {
+      expect(
+        error.isOutOfStock,
+        stock,
+        reason: '${error.code} ${error.reason}',
+      );
+      expect(
+        error.isOutsideCorrectionWindow,
+        closed,
+        reason: '${error.code} ${error.reason}',
+      );
+      expect(
+        error.isOverReturn,
+        overReturn,
+        reason: '${error.code} ${error.reason}',
+      );
+      expect(error.isFolioAmbiguous, isFalse);
+    }
   });
 
   test('a malformed submit keeps its original error as the cause', () async {

@@ -227,14 +227,17 @@ void main() {
         const SaleRejectedException(
           code: 'failed-precondition',
           message: 'insufficient stock',
+          reason: 'insufficient-stock',
         ),
         const SaleRejectedException(
           code: 'out-of-range',
           message: 'replacement exceeds the remaining returnable quantity',
+          reason: correctionOverReturnReason,
         ),
         const SaleRejectedException(
           code: 'failed-precondition',
-          message: correctionWindowClosedMessage,
+          message: 'sale is outside the correction window',
+          reason: correctionWindowClosedReason,
         ),
         const SaleRejectedException(code: 'not-found', message: 'missing'),
       ]);

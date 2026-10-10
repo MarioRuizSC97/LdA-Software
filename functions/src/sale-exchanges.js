@@ -9,7 +9,7 @@ import {
 import { addStockMovement } from './quantity.js';
 import { RETURN_REASONS, returnAmounts, returnLinesInput } from './sale-returns.js';
 import {
-  assertLocalSalesEmulator, calculateSale, SaleError, saleQuantity, saleStoredPricing,
+  assertLocalSalesEmulator, calculateSale, SALE_ERROR_REASONS, SaleError, saleQuantity, saleStoredPricing,
 } from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
@@ -109,7 +109,9 @@ export function createSaleExchangeService({
       // Line by line, so the first failing new line decides the error.
       const prepared = plan.newReads.map((read) => {
         const line = prepareNewLine(read);
-        if (line.next === null) throw new SaleError('failed-precondition', 'insufficient stock');
+        if (line.next === null) {
+          throw new SaleError('failed-precondition', 'insufficient stock', SALE_ERROR_REASONS.insufficientStock);
+        }
         return line;
       });
       const { calculation, settlement } = exchangeAmounts(sale, refund, prepared);
@@ -366,9 +368,10 @@ function exchangeRefund(sale, returned, lines) {
     // Mirrors returns: unknown lines and precision mismatches are request
     // errors; an over-return is out-of-range; anything else is stored state.
     if (error instanceof CorrectionError && ['invalid-argument', 'out-of-range'].includes(error.code)) {
-      throw new SaleError(error.code, error.code === 'out-of-range'
-        ? 'exchange exceeds the remaining sold quantity'
-        : 'exchange return lines do not match the sale');
+      if (error.code === 'out-of-range') {
+        throw new SaleError(error.code, 'exchange exceeds the remaining sold quantity', SALE_ERROR_REASONS.overReturn);
+      }
+      throw new SaleError(error.code, 'exchange return lines do not match the sale');
     }
     throw new SaleError('failed-precondition', 'exchange cannot be calculated from the stored sale');
   }
@@ -422,13 +425,13 @@ function settledPayment(settlement, payment) {
   if (settlement.customerPaysCentavos > 0) {
     if (payment === null || payment.amountCentavos !== settlement.customerPaysCentavos) {
       throw new SaleError('invalid-argument', 'difference payment must equal the amount the customer owes',
-        'payment-mismatch');
+        SALE_ERROR_REASONS.paymentMismatch);
     }
     return payment;
   }
   if (payment !== null) {
     throw new SaleError('invalid-argument', 'difference payment is only accepted when the customer owes money',
-      'payment-mismatch');
+      SALE_ERROR_REASONS.paymentMismatch);
   }
   return null;
 }

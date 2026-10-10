@@ -299,6 +299,7 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
     assert.equal(swap.status, 'rejected');
     assert.equal(swap.reason?.code, 'out-of-range');
     assert.equal(swap.reason?.message, 'replacement exceeds the remaining returnable quantity');
+    assert.equal(swap.reason?.reason, 'over-return');
     for (const path of planReplacement(replaceKey)) await run.absent(path);
     await confirmRaceReturns(returnFirstSale, prior, returnKey);
     // Factory-defect returns and a rejected replacement leave sellable stock as it was.
@@ -316,6 +317,7 @@ test('INV05 real Firestore factory-defect replacements (CORR-04)', async (t) => 
     const loser = results[1 - winners[0]];
     assert.equal(loser.reason?.code, 'failed-precondition');
     assert.equal(loser.reason?.message, 'insufficient stock');
+    assert.equal(loser.reason?.reason, 'insufficient-stock');
     const key = keys[winners[0]];
     assert.deepEqual(results[winners[0]].value.receipt, await confirmReplacement(key, '2', saleId, p1));
     await run.confirm(stockPath(p1), {

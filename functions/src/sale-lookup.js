@@ -2,7 +2,7 @@ import {
   CORRECTION_WINDOW_MS, assertCorrectionWindow, calculateRemainingReturnable,
 } from './corrections-calculation.js';
 import {
-  SaleError, assertLocalSalesEmulator, calculateSale, isValidBranchCode, saleFolio,
+  SALE_ERROR_REASONS, SaleError, assertLocalSalesEmulator, calculateSale, isValidBranchCode, saleFolio,
 } from './sales.js';
 
 const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
@@ -72,7 +72,7 @@ export function createSaleLookupService({
       if (docs.length === 0) throw notFound();
       if (docs.length > 1) {
         throw new SaleError('failed-precondition',
-          'folio is ambiguous; use the full receipt id or the recent list', 'folio-ambiguous');
+          'folio is ambiguous; use the full receipt id or the recent list', SALE_ERROR_REASONS.folioAmbiguous);
       }
       return correctableSale(transaction, docs[0].id, docs[0].data());
     }, { readOnly: true });
@@ -84,7 +84,8 @@ export function createSaleLookupService({
       try {
         assertCorrectionWindow(sale.createdAt, nowMs);
       } catch {
-        throw new SaleError('failed-precondition', 'sale is outside the correction window');
+        throw new SaleError('failed-precondition', 'sale is outside the correction window',
+          SALE_ERROR_REASONS.correctionWindowClosed);
       }
       const ledger = await transaction.get(firestore.doc(`saleReturnLedgers/${id}`));
       return Object.freeze({ sale: lookupResult(sale, ledger) });

@@ -183,13 +183,29 @@ function folioHead(saleId) {
 const SALE_REASON_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /**
+ * Stable machine reasons a SaleError may carry, shared by sales and corrections:
+ * - paymentMismatch: a full payment differs from the authoritative total, or an
+ *   exchange difference payment differs from what the customer owes;
+ * - insufficientStock: branch stock cannot cover a sale line, a replacement or
+ *   a new exchange item;
+ * - folioAmbiguous: a correction folio lookup matched more than one sale;
+ * - correctionWindowClosed: the sale is outside the correction window;
+ * - overReturn: a return, replacement or exchange exceeds the remaining
+ *   returnable quantity of a sale line.
+ */
+export const SALE_ERROR_REASONS = Object.freeze({
+  paymentMismatch: 'payment-mismatch',
+  insufficientStock: 'insufficient-stock',
+  folioAmbiguous: 'folio-ambiguous',
+  correctionWindowClosed: 'correction-window-closed',
+  overReturn: 'over-return',
+});
+
+/**
  * Domain refusal with a public code and message. The optional `reason` is a
- * stable kebab-case machine signal the callable forwards as HttpsError
- * details { reason }, so clients never match English messages. Reasons used:
- * 'payment-mismatch' (full payment differs from the authoritative total, or an
- * exchange difference payment differs from what the customer owes),
- * 'insufficient-stock' (a sale line cannot be covered) and 'folio-ambiguous'
- * (a correction folio lookup matched more than one sale).
+ * stable kebab-case machine signal (see SALE_ERROR_REASONS) the callable
+ * forwards as HttpsError details { reason }, so clients never match English
+ * messages.
  */
 export class SaleError extends Error {
   constructor(code, message, reason) {
@@ -300,13 +316,14 @@ export function createSaleService({
       const prepared = inputs.map((read) => {
         const line = prepareSaleLine(read);
         if (line.next === null) {
-          throw new SaleError('failed-precondition', 'insufficient stock', 'insufficient-stock');
+          throw new SaleError('failed-precondition', 'insufficient stock', SALE_ERROR_REASONS.insufficientStock);
         }
         return line;
       });
       const calculation = authoritativeCalculation(input.invoiceRequested, prepared);
       if (input.payment.amountCentavos !== calculation.totalCentavos) {
-        throw new SaleError('invalid-argument', 'full payment must equal the authoritative total', 'payment-mismatch');
+        throw new SaleError('invalid-argument', 'full payment must equal the authoritative total',
+          SALE_ERROR_REASONS.paymentMismatch);
       }
       if (Object.hasOwn(invocationTime, 'error')) throw invocationTime.error;
       const { timestamp } = invocationTime;

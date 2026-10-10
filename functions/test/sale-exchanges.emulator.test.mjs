@@ -308,6 +308,7 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     assert.equal(back.status, 'rejected');
     assert.equal(back.reason?.code, 'out-of-range');
     assert.equal(back.reason?.message, 'return exceeds the remaining sold quantity');
+    assert.equal(back.reason?.reason, 'over-return');
     for (const path of planReturn(returnKey)) await run.absent(path);
     assert.equal(canonical(swap.value.receipt), canonical(await confirmExchange(
       exchangeKey, '3', exchangeFirstSale, null)));
@@ -333,6 +334,7 @@ test('INV05 real Firestore exchanges for a different product (CORR-05)', async (
     assert.equal(swap.status, 'rejected');
     assert.equal(swap.reason?.code, 'out-of-range');
     assert.equal(swap.reason?.message, 'exchange exceeds the remaining sold quantity');
+    assert.equal(swap.reason?.reason, 'over-return');
     for (const path of planExchange(exchangeKey)) await run.absent(path);
     await run.confirm(`saleReturnLedgers/${returnFirstSale}`,
       { returned: { 0: 2 }, lastReturnId: returnKey, updatedAt: AT });

@@ -810,9 +810,10 @@ async function runScenario({ manifest, call, step }) {
   await previewMatches('return-good');
   await observe('return: exact replay', 'submitSaleReturn', manifest.request('return-good'), 'seller',
     () => ({ receipt: manifest.receipt('return-good'), replayed: true }));
-  await deny('return: over-return', 'submitSaleReturn', manifest.request('return-over'), 'seller', 'OUT_OF_RANGE', DENIAL.overReturn);
+  await deny('return: over-return', 'submitSaleReturn', manifest.request('return-over'), 'seller', 'OUT_OF_RANGE', DENIAL.overReturn,
+    'over-return');
   await deny('preview return: the same over-return', 'previewSaleReturn', previewData('return-over'), 'seller',
-    'OUT_OF_RANGE', DENIAL.overReturn);
+    'OUT_OF_RANGE', DENIAL.overReturn, 'over-return');
   await deny('return: foreign seller', 'submitSaleReturn', manifest.request('return-foreign'), 'foreign', 'NOT_FOUND', DENIAL.notFound);
   await preview('return-invoiced');
   await succeed('return-invoiced', 'return');
@@ -831,7 +832,7 @@ async function runScenario({ manifest, call, step }) {
   await succeed('replace-ok', 'replacement');
   await remaining([2, 100]);
   await deny('replacement: insufficient stock', 'submitSaleReplacement', manifest.request('replace-stock'), 'seller',
-    'FAILED_PRECONDITION', DENIAL.stock);
+    'FAILED_PRECONDITION', DENIAL.stock, 'insufficient-stock');
   // 5. submitSaleExchange: exact difference paid, refund, same product refused.
   await preview('exchange-pay');
   await step('preview: exchange-pay owes exactly the difference payment it will submit', async () => {

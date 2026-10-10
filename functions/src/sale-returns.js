@@ -5,7 +5,7 @@ import {
 } from './correction-support.js';
 import { calculateReturnRefund, CorrectionError } from './corrections-calculation.js';
 import { addStockMovement } from './quantity.js';
-import { assertLocalSalesEmulator, SaleError } from './sales.js';
+import { assertLocalSalesEmulator, SALE_ERROR_REASONS, SaleError } from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'reason', 'lines'];
@@ -260,9 +260,10 @@ function returnRefund(sale, returned, lines) {
     // is out-of-range. The stored snapshot was validated, so anything else is
     // an inconsistent persisted state.
     if (error instanceof CorrectionError && ['invalid-argument', 'out-of-range'].includes(error.code)) {
-      throw new SaleError(error.code, error.code === 'out-of-range'
-        ? 'return exceeds the remaining sold quantity'
-        : 'return lines do not match the sale');
+      if (error.code === 'out-of-range') {
+        throw new SaleError(error.code, 'return exceeds the remaining sold quantity', SALE_ERROR_REASONS.overReturn);
+      }
+      throw new SaleError(error.code, 'return lines do not match the sale');
     }
     throw new SaleError('failed-precondition', 'return cannot be calculated from the stored sale');
   }

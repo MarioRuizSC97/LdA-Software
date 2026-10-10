@@ -216,11 +216,16 @@ test('findCorrectableSale forwards a folio request unchanged to the lookup servi
   assert.equal(events.at(-1), 'createSaleLookupService.findSale');
 });
 
-test('a correction reason such as folio-ambiguous or payment-mismatch passes through every callable', async () => {
+test('every correction reason passes through every callable with its code and message unchanged', async () => {
   for (const { name } of CALLABLES) {
     for (const [code, message, reason] of [
       ['failed-precondition', 'folio is ambiguous; use the full receipt id or the recent list', 'folio-ambiguous'],
       ['invalid-argument', 'difference payment must equal the amount the customer owes', 'payment-mismatch'],
+      ['failed-precondition', 'sale is outside the correction window', 'correction-window-closed'],
+      ['failed-precondition', 'insufficient stock', 'insufficient-stock'],
+      ['out-of-range', 'return exceeds the remaining sold quantity', 'over-return'],
+      ['out-of-range', 'replacement exceeds the remaining returnable quantity', 'over-return'],
+      ['out-of-range', 'exchange exceeds the remaining sold quantity', 'over-return'],
     ]) {
       reset();
       failure = { at: 'operation', error: new sales.SaleError(code, message, reason) };
@@ -231,6 +236,15 @@ test('a correction reason such as folio-ambiguous or payment-mismatch passes thr
       });
     }
   }
+});
+
+test('correction reasons are the shared SaleError reason constants', () => {
+  assert.deepEqual({ ...sales.SALE_ERROR_REASONS }, {
+    paymentMismatch: 'payment-mismatch', insufficientStock: 'insufficient-stock',
+    folioAmbiguous: 'folio-ambiguous', correctionWindowClosed: 'correction-window-closed',
+    overReturn: 'over-return',
+  });
+  assert.ok(Object.isFrozen(sales.SALE_ERROR_REASONS));
 });
 
 test('the preview callables forward requests unchanged to their own read-only services', async () => {

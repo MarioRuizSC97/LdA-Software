@@ -167,6 +167,7 @@ Finder _key(String value) => find.byKey(ValueKey<String>(value));
 const SaleCallableException _overReturn = SaleCallableException(
   code: 'out-of-range',
   message: 'return exceeds the remaining sold quantity',
+  reason: 'over-return',
 );
 
 /// The default return under another idempotency key.
@@ -679,6 +680,7 @@ void main() {
         const SaleCallableException(
           code: 'failed-precondition',
           message: 'insufficient stock',
+          reason: 'insufficient-stock',
         ),
       );
     await tester.pumpWidget(

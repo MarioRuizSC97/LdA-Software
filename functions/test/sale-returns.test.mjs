@@ -122,12 +122,14 @@ function request(data = {}, actor = auth) {
   };
 }
 
-async function rejectsUnchanged(firestore, promise, code, message) {
+// Every refusal states its machine reason; none is the default.
+async function rejectsUnchanged(firestore, promise, code, message, reason) {
   const before = clone([...firestore.records]);
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SaleError, `unexpected ${error}`);
     assert.equal(error.code, code);
     if (message) assert.equal(error.message, message);
+    assert.equal(error.reason, reason);
     return true;
   });
   assert.deepEqual([...firestore.records], before, 'failure leaves no artifacts');
@@ -295,7 +297,7 @@ test('three partial returns complete a line with exact cumulative refunds and le
   assert.equal(stock(firestore, 'p2').quantityScaled, 3250);
   await rejectsUnchanged(firestore, service(request({
     idempotencyKey: 'r4', lines: [{ lineIndex: 1, quantity: '0.001', condition: 'good' }],
-  })), 'out-of-range');
+  })), 'out-of-range', undefined, 'over-return');
 });
 
 test('an over-return after partial returns is out-of-range and writes nothing', async () => {
@@ -303,12 +305,12 @@ test('an over-return after partial returns is out-of-range and writes nothing', 
   await service(request({ lines: [{ lineIndex: 0, quantity: '2', condition: 'good' }] }));
   await rejectsUnchanged(firestore, service(request({
     idempotencyKey: 'r2', lines: [{ lineIndex: 0, quantity: '2', condition: 'factory-defect' }],
-  })), 'out-of-range');
+  })), 'out-of-range', undefined, 'over-return');
   await rejectsUnchanged(firestore, service(request({
     idempotencyKey: 'r3',
     lines: [{ lineIndex: 1, quantity: '0.5', condition: 'good' },
       { lineIndex: 0, quantity: '2', condition: 'good' }],
-  })), 'out-of-range');
+  })), 'out-of-range', undefined, 'over-return');
   const { receipt } = await service(request({ idempotencyKey: 'r4' }));
   assert.equal(receipt.lines[0].totalCentavos, 1160);
   assert.deepEqual(ledger(firestore).returned, { 0: 3 });
@@ -390,8 +392,10 @@ test('foreign and missing sales are the same not-found; expired and future sales
   const message = 'sale was not found in this branch';
   await rejectsUnchanged(firestore, service(request({ saleId: 'foreign' })), 'not-found', message);
   await rejectsUnchanged(firestore, service(request({ saleId: 'missing' })), 'not-found', message);
-  await rejectsUnchanged(firestore, service(request({ saleId: 'expired' })), 'failed-precondition');
-  await rejectsUnchanged(firestore, service(request({ saleId: 'future' })), 'failed-precondition');
+  await rejectsUnchanged(firestore, service(request({ saleId: 'expired' })), 'failed-precondition',
+    'sale is outside the correction window', 'correction-window-closed');
+  await rejectsUnchanged(firestore, service(request({ saleId: 'future' })), 'failed-precondition',
+    'sale is outside the correction window', 'correction-window-closed');
   const south = { uid: 'seller-two', token: { role: 'seller', branchId: 'south' } };
   const records = [...baseRecords(), ['branches/south/stock/p1', { ...piece, quantityScaled: 0 }]];
   const own = fixture({}, records);

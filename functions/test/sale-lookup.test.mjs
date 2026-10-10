@@ -102,13 +102,13 @@ function fixture(records = [], options = {}) {
   return { firestore, service };
 }
 
-async function rejectsWith(promise, code, message) {
+async function rejectsWith(promise, code, message, reason) {
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SaleError, `unexpected ${error}`);
     assert.equal(error.code, code);
     if (message) assert.equal(error.message, message);
-    // Only the ambiguous folio publishes a structured reason.
-    assert.equal(error.reason, undefined);
+    // A refusal without a stated reason publishes none.
+    assert.equal(error.reason, reason);
     return true;
   });
 }
@@ -209,8 +209,10 @@ test('missing and foreign sales are indistinguishable; expired and future own sa
   const notFound = 'sale was not found in this branch';
   await rejectsWith(service.findSale({ auth, data: { saleId: 'missing' } }), 'not-found', notFound);
   await rejectsWith(service.findSale({ auth, data: { saleId: 'foreign' } }), 'not-found', notFound);
-  await rejectsWith(service.findSale({ auth, data: { saleId: 'expired' } }), 'failed-precondition');
-  await rejectsWith(service.findSale({ auth, data: { saleId: 'future' } }), 'failed-precondition');
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'expired' } }), 'failed-precondition',
+    'sale is outside the correction window', 'correction-window-closed');
+  await rejectsWith(service.findSale({ auth, data: { saleId: 'future' } }), 'failed-precondition',
+    'sale is outside the correction window', 'correction-window-closed');
   const { sale } = await service.findSale({ auth, data: { saleId: 'edge' } });
   assert.equal(sale.createdAt, NOW - CORRECTION_WINDOW_MS + 1);
   const south = { uid: 'seller-two', token: { role: 'seller', branchId: 'south' } };

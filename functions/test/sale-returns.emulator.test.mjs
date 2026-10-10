@@ -197,6 +197,7 @@ test('INV05 real Firestore seller returns (CORR-03)', async (t) => {
     assert.equal(winners.length, 1, 'exactly one concurrent return commits');
     const loser = results[1 - winners[0]];
     assert.equal(loser.reason?.code, 'out-of-range');
+    assert.equal(loser.reason?.reason, 'over-return');
     const key = keys[winners[0]];
     const expected = receiptFor(key, '2', 'good', 'change-of-mind', 500, 80);
     assert.deepEqual(results[winners[0]].value.receipt, expected);
@@ -220,7 +221,8 @@ test('INV05 real Firestore seller returns (CORR-03)', async (t) => {
       refund: { method: 'cash', baseCentavos: 250, additionalIvaCentavos: 40, totalCentavos: 290 },
       invoiced: true }));
     await assert.rejects(preview({ auth, data: data('2') }), (error) => error.code === 'out-of-range'
-      && error.message === 'return exceeds the remaining sold quantity');
+      && error.message === 'return exceeds the remaining sold quantity'
+      && error.reason === 'over-return');
     await assert.rejects(preview({ auth, data: data('1', foreign) }), (error) => error.code === 'not-found'
       && error.message === 'sale was not found in this branch');
     await assert.rejects(preview({ auth: { uid: run.ns.actor, token: { role: 'administrator' } }, data: data('1') }),

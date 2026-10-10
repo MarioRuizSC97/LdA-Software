@@ -298,7 +298,8 @@ void main() {
       ..previewResults.add(
         const SaleRejectedException(
           code: 'failed-precondition',
-          message: correctionWindowClosedMessage,
+          message: 'sale is outside the correction window',
+          reason: correctionWindowClosedReason,
         ),
       );
     await _pump(tester, backend: backend);
@@ -516,12 +517,14 @@ void main() {
         const SaleRejectedException(
           code: 'out-of-range',
           message: 'return exceeds the remaining sold quantity',
+          reason: correctionOverReturnReason,
         ),
       )
       ..submitResults.add(
         const SaleRejectedException(
           code: 'failed-precondition',
-          message: correctionWindowClosedMessage,
+          message: 'sale is outside the correction window',
+          reason: correctionWindowClosedReason,
         ),
       )
       ..submitResults.add(

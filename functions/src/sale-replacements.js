@@ -5,7 +5,7 @@ import {
 } from './correction-support.js';
 import { calculateRemainingReturnable } from './corrections-calculation.js';
 import { addStockMovement, formatQuantity, parseQuantity } from './quantity.js';
-import { assertLocalSalesEmulator, SaleError } from './sales.js';
+import { assertLocalSalesEmulator, SALE_ERROR_REASONS, SaleError } from './sales.js';
 
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'lines'];
 const LINE_FIELDS = ['lineIndex', 'quantity'];
@@ -100,7 +100,7 @@ export function createSaleReplacementService({
         try {
           next = addStockMovement(current, -entry.scaled, productSpec, entry.spec);
         } catch {
-          throw new SaleError('failed-precondition', 'insufficient stock');
+          throw new SaleError('failed-precondition', 'insufficient stock', SALE_ERROR_REASONS.insufficientStock);
         }
         return { entry, productSpec, next };
       });
@@ -185,7 +185,8 @@ function replacementLines(sale, returned, requested) {
       throw new SaleError('invalid-argument', 'replacement lines do not match the sale');
     }
     if (scaled > remaining[lineIndex].remainingScaled) {
-      throw new SaleError('out-of-range', 'replacement exceeds the remaining returnable quantity');
+      throw new SaleError('out-of-range', 'replacement exceeds the remaining returnable quantity',
+        SALE_ERROR_REASONS.overReturn);
     }
     const { spec } = saleLine.quantity;
     return {

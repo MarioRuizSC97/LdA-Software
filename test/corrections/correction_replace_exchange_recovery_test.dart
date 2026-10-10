@@ -232,6 +232,7 @@ void main() {
         const SaleRejectedException(
           code: 'failed-precondition',
           message: 'insufficient stock',
+          reason: 'insufficient-stock',
         ),
       );
       await tester.pump();
