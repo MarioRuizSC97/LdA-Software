@@ -50,7 +50,7 @@ New decision (user, 2026-10-10):
 
 - [x] SP-01 — Port the profile service and its unit tests: the main-style guard (demo project, Firestore 8080, Auth 9099), an injected environment, and a `SaleError`-style reason where useful. Route: delegated writer.
 - [x] SP-02 — The `setSellerProfile` administrator callable in `functions/src/index.js`, with callable unit tests and an emulator test. Route: delegated writer.
-- [ ] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
+- [x] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
 - [ ] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
 - [ ] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
 - [ ] SP-06 — Reconcile and report. Route: parent.
@@ -76,7 +76,15 @@ New decision (user, 2026-10-10):
   - **Not done:** the emulator test is not in `package.json` `test:emulator`, which was outside the edit surface.
 - SP-01 and SP-02 parent spot check: backend non-emulator 388/388.
 - SP-01 and SP-02 closure: native review `review-2fa427f257bb3e7e` (medium, one lens) approved with no findings and acknowledged; commit tree exactly the approved candidate `4dc33528`; commit `46e2170`.
+- SP-03 writer (delegated):
+  - **`sellerProfiles` rule:** an administrator may GET; LIST and every write are denied.
+  - **Movements:** every movement type writes `occurredAt` from the transaction timestamp, plus `type`, `branchId`, `productId`, a signed `quantityScaled`, `unit`, `precision` and `actorId`. The SP-04 query is `inventoryMovements`, with an optional `where(branchId ==)`, then `orderBy(occurredAt desc)` and `limit(50)`. The existing rule lets an administrator list with or without the filter. A seller can list only with their own branch filter.
+  - **Index:** `branchId` ASC plus `occurredAt` DESC.
+  - **Rules tests:** `firebase/tests/rules.test.mjs` adds describes for "seller profiles" and "administrator movements query".
+  - **Rules tests not run (exception):** the harness uses project `demo-lda-inventory` and calls `clearFirestore()` in `beforeEach`, so running it against the live demo emulator would destroy the fixtures. Checks run instead: syntax OK, index JSON OK, backend 388/388. Rules behavior is accepted over HTTP in SP-05.
+- SP-03 closure: native review `review-bc843d4f439b60fa` (medium, one lens) approved and acknowledged; commit tree exactly the approved candidate `17f5186e`; commit `40c2970`.
+  - Suggestion `R3-001`: no filtered-order case with two north movements. The emulator does not enforce composite indexes, so the index is proven only on deploy.
 
 ## Next step
 
-SP-03: rules and the movements index (delegated writer).
+SP-04: Flutter administrator movements screen with names and the assign-name form (delegated writer).
