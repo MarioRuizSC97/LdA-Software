@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/corrections/correction_draft.dart';
+import 'package:lda_inventory/corrections/correction_exchange_receipt_view.dart';
 import 'package:lda_inventory/corrections/correction_receipt.dart';
 import 'package:lda_inventory/corrections/correction_replacement_receipt_view.dart';
+import 'package:lda_inventory/sales/sale_cart.dart';
 
+import '../sales/sale_fixtures.dart';
 import 'correction_fixtures.dart';
 import 'correction_ui_fixtures.dart';
 
@@ -89,5 +93,97 @@ void main() {
       'replacement-receipt',
     );
     expect(find.text('Reemplazo repetido (ya registrado)'), findsOneWidget);
+  });
+
+  testWidgets('a paid, invoiced exchange shows both sides and the payment', (
+    WidgetTester tester,
+  ) async {
+    final SaleExchangeReceipt receipt = SaleExchangeReceipt.fromCallable(
+      exchangeResponse(),
+      draft: exchangeDraft(),
+    );
+    final (int backs, int searches) = await _pump(
+      tester,
+      (VoidCallback back, VoidCallback search) => CorrectionExchangeReceiptView(
+        receipt: receipt,
+        sale: lookupSale(),
+        productNames: catalogNames,
+        onBackToSale: back,
+        onNewSearch: search,
+      ),
+      'exchange-receipt',
+    );
+    _expectTexts(<String>[
+      'Cambio registrado',
+      'Venta NTE-3F2A-9C1B',
+      'Motivo: Producto equivocado',
+      'Productos devueltos',
+      'Pin',
+      'Cantidad: 1 piece',
+      'Estado: En buen estado',
+      'Valor: 2.50 MXN',
+      'Valor devuelto: 2.50 MXN',
+      'Productos nuevos',
+      'Tape',
+      'Cantidad: 2 piece',
+      'Importe: 23.20 MXN',
+      'IVA de productos nuevos: 3.20 MXN',
+      'Total de productos nuevos: 23.20 MXN',
+      'El cliente pagó: 20.70 MXN',
+      'Método de pago: Efectivo',
+      'Venta con factura: el administrador gestionará el ajuste de la '
+          'factura',
+    ]);
+    expect(find.text('Cambio repetido (ya registrado)'), findsNothing);
+    expect((backs, searches), (1, 1));
+  });
+
+  testWidgets('a replayed refund exchange shows the refund method', (
+    WidgetTester tester,
+  ) async {
+    final SaleExchangeDraft draft = SaleExchangeDraft.create(
+      sale: uninvoicedSale(),
+      branchId: saleBranchId,
+      reason: CorrectionReason.factoryDefect,
+      returnLines: const <ReturnLineInput>[
+        ReturnLineInput(
+          lineIndex: 0,
+          quantity: '2',
+          condition: ReturnCondition.factoryDefect,
+        ),
+      ],
+      newItems: SaleCart.empty().add(
+        SaleCartLine(
+          productId: 'DEMO-CORD',
+          name: 'Cord',
+          quantitySpec: cordProduct.quantitySpec,
+          quantity: '1',
+        ),
+      ),
+      createKey: () => exchangeKey,
+    );
+    final SaleExchangeReceipt receipt = SaleExchangeReceipt.fromCallable(
+      exchangeResponseFor(draft, replayed: true),
+      draft: draft,
+    );
+    await _pump(
+      tester,
+      (VoidCallback back, VoidCallback search) => CorrectionExchangeReceiptView(
+        receipt: receipt,
+        sale: uninvoicedSale(),
+        productNames: catalogNames,
+        onBackToSale: back,
+        onNewSearch: search,
+      ),
+      'exchange-receipt',
+    );
+    _expectTexts(<String>[
+      'Cambio repetido (ya registrado)',
+      'Estado: Defecto de fábrica',
+      // 5.00 returned for 0.40: 4.60 back in cash.
+      'Se reembolsó: 4.60 MXN por Efectivo',
+    ]);
+    expect(find.textContaining('factura'), findsNothing);
+    expect(find.textContaining('IVA'), findsNothing);
   });
 }

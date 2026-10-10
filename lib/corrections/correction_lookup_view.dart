@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../catalog/catalog_product.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
 import 'correction_draft.dart';
+import 'correction_exchange_form.dart';
+import 'correction_exchange_receipt_view.dart';
 import 'correction_form_support.dart' show correctionSessionMessage;
 import 'correction_receipt.dart';
 import 'correction_replacement_form.dart';
@@ -24,9 +27,9 @@ const String _searchFailedMessage =
 
 /// Seller correction lookup: a folio search plus the branch's recent sales
 /// (last [correctionWindowDays] days). Choosing a sale shows its
-/// [CorrectionSaleDetail], whose actions open the return and replacement
-/// forms; a registered correction shows its receipt, then the refetched
-/// sale. A correction of any kind committed while no form was
+/// [CorrectionSaleDetail], whose actions open the return, replacement and
+/// exchange forms; a registered correction shows its receipt, then the
+/// refetched sale. A correction of any kind committed while no form was
 /// shown (for example, the view closed during its submit) shows its receipt
 /// on entry, and an unresolved one reopens its locked form; leaving the
 /// receipt acknowledges it.
@@ -35,6 +38,7 @@ class CorrectionLookupView extends StatefulWidget {
     required this.corrections,
     required this.productNames,
     required this.onClose,
+    this.products = const <CatalogProduct>[],
     super.key,
   });
 
@@ -42,6 +46,10 @@ class CorrectionLookupView extends StatefulWidget {
 
   /// Catalog product names by product ID, for the sale detail.
   final Map<String, String> productNames;
+
+  /// The branch catalog snapshot; its priced products are the new items an
+  /// exchange may offer.
+  final List<CatalogProduct> products;
   final VoidCallback onClose;
 
   @override
@@ -50,7 +58,7 @@ class CorrectionLookupView extends StatefulWidget {
 
 enum _RecentStatus { loading, failed, ready }
 
-enum _FormKind { returning, replacing }
+enum _FormKind { returning, replacing, exchanging }
 
 class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   final TextEditingController _folio = TextEditingController();
@@ -81,12 +89,17 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     final CompletedCorrection? committed = widget.corrections.unacknowledged();
     final SaleCorrectionDraft? unresolved = widget.corrections
         .unresolvedDraft();
-    if (committed is CompletedReturn || committed is CompletedReplacement) {
-      _receipt = (committed!.receipt, committed.draft.sale);
-    } else if (unresolved is SaleReturnDraft) {
-      _form = (_FormKind.returning, unresolved.sale);
-    } else if (unresolved is SaleReplacementDraft) {
-      _form = (_FormKind.replacing, unresolved.sale);
+    if (committed != null) {
+      _receipt = (committed.receipt, committed.draft.sale);
+    } else if (unresolved != null) {
+      _form = (
+        switch (unresolved) {
+          SaleReturnDraft() => _FormKind.returning,
+          SaleReplacementDraft() => _FormKind.replacing,
+          SaleExchangeDraft() => _FormKind.exchanging,
+        },
+        unresolved.sale,
+      );
     }
     _loadRecent();
   }
@@ -247,6 +260,8 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         onReturn: () => setState(() => _form = (_FormKind.returning, selected)),
         onReplace: () =>
             setState(() => _form = (_FormKind.replacing, selected)),
+        onExchange: () =>
+            setState(() => _form = (_FormKind.exchanging, selected)),
       );
     }
     final ThemeData theme = Theme.of(context);
@@ -315,8 +330,8 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     );
   }
 
-  /// Return and replacement receipts have their views; exchanges are not
-  /// offered yet. Leaving a receipt acknowledges exactly that receipt.
+  /// Every receipt kind has its view: the switch is exhaustive over the
+  /// sealed receipt type. Leaving it acknowledges exactly that receipt.
   Widget _receiptView(SaleCorrectionReceipt receipt, CorrectableSale sale) {
     void back() {
       widget.corrections.acknowledge(receipt);
@@ -329,7 +344,6 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     }
 
     return switch (receipt) {
-      SaleExchangeReceipt() => throw StateError('exchanges are not offered'),
       final SaleReturnReceipt value => CorrectionReturnReceiptView(
         receipt: value,
         sale: sale,
@@ -341,6 +355,13 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         receipt: value,
         sale: sale,
         productNames: widget.productNames,
+        onBackToSale: back,
+        onNewSearch: search,
+      ),
+      final SaleExchangeReceipt value => CorrectionExchangeReceiptView(
+        receipt: value,
+        sale: sale,
+        productNames: _allNames(),
         onBackToSale: back,
         onNewSearch: search,
       ),
@@ -369,8 +390,24 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         onBack: back,
         onCompleted: _complete,
       ),
+      _FormKind.exchanging => CorrectionExchangeForm(
+        key: ValueKey<String>('exchange-form-${sale.saleId}'),
+        sale: sale,
+        corrections: widget.corrections,
+        products: widget.products,
+        productNames: _allNames(),
+        onBack: back,
+        onCompleted: _complete,
+      ),
     };
   }
+
+  /// Sale product names plus the catalog products' names, for new items.
+  Map<String, String> _allNames() => <String, String>{
+    for (final CatalogProduct product in widget.products)
+      product.internalCode: product.name,
+    ...widget.productNames,
+  };
 
   Widget _refreshView(String saleId) {
     final String? error = _refreshError;

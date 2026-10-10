@@ -379,28 +379,20 @@ void main() {
       findsNothing,
     );
 
-    // The pin is still returnable, so return and replacement are enabled;
-    // the exchange is not offered yet.
+    // The pin is still returnable, so every action is enabled.
     expect(find.text('Devolver'), findsOneWidget);
     expect(
       tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
       isNotNull,
     );
-    expect(find.text('Reemplazar (defecto de fábrica)'), findsOneWidget);
-    expect(
-      tester
-          .widget<OutlinedButton>(_key('correction-action-replace'))
-          .onPressed,
-      isNotNull,
-    );
-    expect(find.text('Cambiar producto'), findsOneWidget);
-    expect(
-      tester
-          .widget<OutlinedButton>(_key('correction-action-exchange'))
-          .onPressed,
-      isNull,
-    );
-    expect(find.text('Próximamente'), findsOneWidget);
+    for (final (String key, String label) in <(String, String)>[
+      ('correction-action-replace', 'Reemplazar (defecto de fábrica)'),
+      ('correction-action-exchange', 'Cambiar producto'),
+    ]) {
+      expect(find.text(label), findsOneWidget);
+      expect(tester.widget<OutlinedButton>(_key(key)).onPressed, isNotNull);
+    }
+    expect(find.text('Próximamente'), findsNothing);
 
     await _tap(tester, _key('correction-detail-back'));
     expect(_key('correction-detail'), findsNothing);
@@ -504,13 +496,13 @@ void main() {
       tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
       isNull,
     );
-    // Nothing remains, so nothing can be replaced either.
-    expect(
-      tester
-          .widget<OutlinedButton>(_key('correction-action-replace'))
-          .onPressed,
-      isNull,
-    );
+    // Nothing remains, so nothing can be replaced or exchanged either.
+    for (final String key in <String>[
+      'correction-action-replace',
+      'correction-action-exchange',
+    ]) {
+      expect(tester.widget<OutlinedButton>(_key(key)).onPressed, isNull);
+    }
   });
 
   testWidgets('a return shows its receipt, then the refetched sale', (

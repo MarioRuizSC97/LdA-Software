@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/corrections/correction_draft.dart';
+import 'package:lda_inventory/corrections/correction_exchange_form.dart';
 import 'package:lda_inventory/corrections/correction_lookup_view.dart';
 import 'package:lda_inventory/corrections/correction_receipt.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
@@ -11,7 +12,7 @@ import '../sales/sale_fixtures.dart';
 import 'correction_fixtures.dart';
 import 'correction_ui_fixtures.dart';
 
-// Replacements follow the return's receipt recovery: whatever
+// Replacements and exchanges follow the return's receipt recovery: whatever
 // a submit's outcome after its form closed, reopening corrections shows the
 // committed receipt, or the locked same-key draft, never a lost correction.
 
@@ -24,6 +25,7 @@ Future<void> _pumpLookup(WidgetTester tester, FakeCorrections backend) async {
         body: CorrectionLookupView(
           corrections: backend.corrections,
           productNames: catalogNames,
+          products: exchangeCatalog,
           onClose: () {},
         ),
       ),
@@ -74,6 +76,30 @@ Future<void> _confirmReplacement(
   expect(backend.replacementSubmits, hasLength(sent + 1));
 }
 
+/// Opens the exchange form, returns one pin for two tapes and confirms.
+Future<void> _confirmExchange(
+  WidgetTester tester,
+  FakeCorrections backend,
+  Object result,
+) async {
+  final int sent = backend.exchangeSubmits.length;
+  backend.exchangeResults.add(result);
+  await _openSale(tester);
+  await _tap(tester, _key('correction-action-exchange'));
+  await _tap(tester, _key('exchange-line-select-1'));
+  await _enter(tester, 'exchange-line-quantity-1', '1');
+  await _tap(tester, _key('exchange-reason-wrong-product'));
+  await _tap(tester, _key('exchange-product-add-DEMO-TAPE'));
+  await _enter(tester, 'exchange-new-quantity-DEMO-TAPE', '2');
+  await tester.pump(exchangePreviewDelay);
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(_key('exchange-confirm'));
+  await tester.pumpAndSettle();
+  await tester.tap(_key('exchange-confirm'));
+  await tester.pump();
+  expect(backend.exchangeSubmits, hasLength(sent + 1));
+}
+
 void main() {
   testWidgets('a replacement shows its receipt, then the refetched sale', (
     WidgetTester tester,
@@ -93,15 +119,34 @@ void main() {
     expect(backend.completed, isNull);
   });
 
-  for (final String kind in <String>['replacement']) {
+  testWidgets('an exchange shows its receipt, then a new search', (
+    WidgetTester tester,
+  ) async {
+    final FakeCorrections backend = FakeCorrections();
+    await _pumpLookup(tester, backend);
+    await _confirmExchange(tester, backend, answerNormally);
+    await tester.pumpAndSettle();
+    expect(_key('exchange-receipt'), findsOneWidget);
+    expect(find.text('El cliente pagó: 20.70 MXN'), findsOneWidget);
+
+    await _tap(tester, _key('exchange-receipt-back'));
+    expect(backend.finds.last, <String, Object?>{'saleId': saleKey});
+    expect(_key('correction-detail'), findsOneWidget);
+    expect(backend.acknowledged.single, isA<SaleExchangeReceipt>());
+  });
+
+  for (final String kind in <String>['replacement', 'exchange']) {
     Future<void> confirm(
       WidgetTester tester,
       FakeCorrections backend,
       Object result,
-    ) => _confirmReplacement(tester, backend, result);
+    ) => kind == 'replacement'
+        ? _confirmReplacement(tester, backend, result)
+        : _confirmExchange(tester, backend, result);
 
-    SaleCorrectionDraft sent(FakeCorrections backend) =>
-        backend.replacementSubmits.last;
+    SaleCorrectionDraft sent(FakeCorrections backend) => kind == 'replacement'
+        ? backend.replacementSubmits.last
+        : backend.exchangeSubmits.last;
 
     SaleCorrectionReceipt receiptFor(SaleCorrectionDraft draft) =>
         switch (draft) {
@@ -165,7 +210,10 @@ void main() {
       expect(_key('$kind-retry'), findsOneWidget);
       expect(_key('$kind-confirm'), findsNothing);
 
-      backend.replacementResults.add(answerReplayed);
+      (kind == 'replacement'
+              ? backend.replacementResults
+              : backend.exchangeResults)
+          .add(answerReplayed);
       await _tap(tester, _key('$kind-retry'));
       expect(sent(backend), same(draft));
       expect(_key('$kind-receipt'), findsOneWidget);
@@ -209,5 +257,31 @@ void main() {
     expect(_key('replacement-receipt'), findsOneWidget);
     await _tap(tester, _key('replacement-receipt-back'));
     expect(backend.finds.single, <String, Object?>{'saleId': saleKey});
+  });
+
+  testWidgets('a stored unresolved exchange reopens its form', (
+    WidgetTester tester,
+  ) async {
+    final FakeCorrections backend = FakeCorrections(unresolved: exchangeDraft())
+      ..exchangeResults.add(answerReplayed);
+    await _pumpLookup(tester, backend);
+    expect(_key('exchange-form'), findsOneWidget);
+    await _tap(tester, _key('exchange-retry'));
+    expect(backend.exchangeSubmits.single.idempotencyKey, exchangeKey);
+    expect(_key('exchange-receipt'), findsOneWidget);
+  });
+
+  testWidgets('a stored committed exchange shows its receipt first', (
+    WidgetTester tester,
+  ) async {
+    final SaleExchangeDraft draft = exchangeDraft();
+    final FakeCorrections backend = FakeCorrections()
+      ..completed = CompletedCorrection.of(
+        draft,
+        SaleExchangeReceipt.fromCallable(exchangeResponse(), draft: draft),
+      );
+    await _pumpLookup(tester, backend);
+    expect(_key('exchange-receipt'), findsOneWidget);
+    expect(backend.exchangeSubmits, isEmpty);
   });
 }

@@ -4,8 +4,7 @@ import '../sales/sale_format.dart';
 import 'correction_sale.dart';
 
 // User-visible text is neutral, professional Spanish; identifiers stay in
-// English. The exchange form arrives later in CORR-07D, so that action is
-// shown disabled here.
+// English.
 
 /// One looked-up sale: folio, date, total, payment, invoice flag, the
 /// client-derived correction window (display only; the server decides), and
@@ -17,6 +16,7 @@ class CorrectionSaleDetail extends StatelessWidget {
     required this.onBack,
     this.onReturn,
     this.onReplace,
+    this.onExchange,
     super.key,
   });
 
@@ -34,6 +34,9 @@ class CorrectionSaleDetail extends StatelessWidget {
   /// A replacement consumes nothing but is capped at the remaining quantity
   /// (decision 11).
   final VoidCallback? onReplace;
+
+  /// Opens the exchange form; disabled like [onReturn].
+  final VoidCallback? onExchange;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +85,7 @@ class CorrectionSaleDetail extends StatelessWidget {
             _Actions(
               onReturn: sale.hasReturnableQuantity ? onReturn : null,
               onReplace: sale.hasReturnableQuantity ? onReplace : null,
+              onExchange: sale.hasReturnableQuantity ? onExchange : null,
             ),
           ],
         ),
@@ -125,38 +129,36 @@ class _CorrectionLine extends StatelessWidget {
 }
 
 class _Actions extends StatelessWidget {
-  const _Actions({required this.onReturn, required this.onReplace});
+  const _Actions({
+    required this.onReturn,
+    required this.onReplace,
+    required this.onExchange,
+  });
 
   final VoidCallback? onReturn;
   final VoidCallback? onReplace;
+  final VoidCallback? onExchange;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget build(BuildContext context) => Wrap(
+    spacing: 8,
+    runSpacing: 8,
     children: <Widget>[
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: <Widget>[
-          FilledButton(
-            key: const ValueKey<String>('correction-action-return'),
-            onPressed: onReturn,
-            child: const Text('Devolver'),
-          ),
-          OutlinedButton(
-            key: const ValueKey<String>('correction-action-replace'),
-            onPressed: onReplace,
-            child: const Text('Reemplazar (defecto de fábrica)'),
-          ),
-          const OutlinedButton(
-            key: ValueKey<String>('correction-action-exchange'),
-            onPressed: null,
-            child: Text('Cambiar producto'),
-          ),
-        ],
+      FilledButton(
+        key: const ValueKey<String>('correction-action-return'),
+        onPressed: onReturn,
+        child: const Text('Devolver'),
       ),
-      const SizedBox(height: 4),
-      Text('Próximamente', style: Theme.of(context).textTheme.bodySmall),
+      OutlinedButton(
+        key: const ValueKey<String>('correction-action-replace'),
+        onPressed: onReplace,
+        child: const Text('Reemplazar (defecto de fábrica)'),
+      ),
+      OutlinedButton(
+        key: const ValueKey<String>('correction-action-exchange'),
+        onPressed: onExchange,
+        child: const Text('Cambiar producto'),
+      ),
     ],
   );
 }

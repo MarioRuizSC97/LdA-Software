@@ -320,6 +320,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       item.product.internalCode: item.product.name,
   };
 
+  /// The loaded catalog's products; the exchange form offers the priced
+  /// ones as new items. Prices are shown for reference only: the server
+  /// prices every exchange.
+  List<CatalogProduct> _catalogProducts() => <CatalogProduct>[
+    for (final CatalogItem item in _snapshot?.items ?? const <CatalogItem>[])
+      item.product,
+  ];
+
   void _configureSale() {
     final SaleCheckout? checkout = widget.saleCheckout;
     _sale = widget.session.role == InventoryRole.seller && checkout != null
@@ -599,6 +607,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   ? CorrectionLookupView(
                       corrections: corrections,
                       productNames: _productNames(),
+                      products: _catalogProducts(),
                       onClose: _closeCorrections,
                     )
                   : receipt != null
