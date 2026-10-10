@@ -560,12 +560,19 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     return result;
   }
 
-  /// Seller return submit, mirroring [_submitSale]: freezes ownership and
-  /// the draft before gateway initialization or transport. Only the current
-  /// attempt's deterministic rejection drops the draft, and only its proven
-  /// success completes it, keeping the receipt until the seller acknowledges
-  /// it. Anything else keeps the draft stored for a same-key retry.
-  Future<SaleReturnReceipt> _submitReturn(SaleReturnDraft draft) async {
+  /// Seller correction submit of any kind, mirroring [_submitSale]: freezes
+  /// ownership and the draft before gateway initialization or transport.
+  /// Only the current attempt's deterministic rejection drops the draft, and
+  /// only its proven success completes it, keeping the receipt until the
+  /// seller acknowledges it. Anything else keeps the draft stored for a
+  /// same-key retry.
+  Future<R> _submitCorrection<
+    D extends SaleCorrectionDraft,
+    R extends SaleCorrectionReceipt
+  >(
+    D draft,
+    Future<R> Function(EmulatorCorrectionGateway gateway, D draft) submit,
+  ) async {
     final EmulatorSession? session = _session;
     if (!_isExactSeller(session) ||
         widget.correctionGatewayLoader == null ||
@@ -580,7 +587,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       final EmulatorCorrectionGateway gateway = await _correctionGatewayFor(
         session,
       );
-      final SaleReturnReceipt receipt = await gateway.submitReturn(draft);
+      final R receipt = await submit(gateway, draft);
       if (!_isSameCurrentSeller(session)) {
         throw const SaleUncertainException();
       }
@@ -617,13 +624,33 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             (EmulatorCorrectionGateway gateway) =>
                 gateway.previewReturn(request),
           ),
-      submitReturn: _submitReturn,
+      submitReturn: (SaleReturnDraft draft) => _submitCorrection(
+        draft,
+        (EmulatorCorrectionGateway gateway, SaleReturnDraft draft) =>
+            gateway.submitReturn(draft),
+      ),
+      previewExchange: (SaleExchangePreviewRequest request) =>
+          _correctionRead<SaleExchangePreview>(
+            (EmulatorCorrectionGateway gateway) =>
+                gateway.previewExchange(request),
+          ),
+      submitReplacement: (SaleReplacementDraft draft) => _submitCorrection(
+        draft,
+        (EmulatorCorrectionGateway gateway, SaleReplacementDraft draft) =>
+            gateway.submitReplacement(draft),
+      ),
+      submitExchange: (SaleExchangeDraft draft) => _submitCorrection(
+        draft,
+        (EmulatorCorrectionGateway gateway, SaleExchangeDraft draft) =>
+            gateway.submitExchange(draft),
+      ),
       unresolvedDraft: () => _isSameCurrentSeller(session)
           ? _correctionDrafts.unresolvedFor(session.userId, session.branchId!)
           : null,
-      unacknowledgedReturn: () =>
-          _isSameCurrentSeller(session) ? _unacknowledgedReturn(session) : null,
-      acknowledgeReturn: (SaleReturnReceipt receipt) {
+      unacknowledged: () => _isSameCurrentSeller(session)
+          ? _correctionDrafts.completedFor(session.userId, session.branchId!)
+          : null,
+      acknowledge: (SaleCorrectionReceipt receipt) {
         if (!_isSameCurrentSeller(session)) return;
         _correctionDrafts.acknowledge(
           session.userId,
@@ -632,19 +659,6 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         );
       },
     );
-  }
-
-  UnacknowledgedReturn? _unacknowledgedReturn(EmulatorSession session) {
-    final CompletedCorrection? completed = _correctionDrafts.completedFor(
-      session.userId,
-      session.branchId!,
-    );
-    if (completed == null) return null;
-    final SaleCorrectionDraft draft = completed.draft;
-    final Object receipt = completed.receipt;
-    return draft is SaleReturnDraft && receipt is SaleReturnReceipt
-        ? (draft: draft, receipt: receipt)
-        : null;
   }
 
   SaleCheckout? _saleCheckoutFor(EmulatorSession session) {

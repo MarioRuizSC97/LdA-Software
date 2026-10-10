@@ -85,9 +85,12 @@ class _Backend {
         draft: draft,
       );
     },
+    previewExchange: (_) async => throw UnimplementedError(),
+    submitReplacement: (_) async => throw UnimplementedError(),
+    submitExchange: (_) async => throw UnimplementedError(),
     unresolvedDraft: () => null,
-    unacknowledgedReturn: () => null,
-    acknowledgeReturn: (_) {},
+    unacknowledged: () => null,
+    acknowledge: (_) {},
   );
 }
 

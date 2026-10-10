@@ -6,12 +6,30 @@ import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import 'correction_draft.dart';
+import 'correction_form_support.dart';
 import 'correction_receipt.dart';
 import 'correction_sale.dart';
 import 'sale_corrections.dart';
 
+export 'correction_form_support.dart'
+    show
+        correctionSessionMessage,
+        correctionUnacknowledgedMessage,
+        correctionUnresolvedMessage;
+
 // User-visible text is neutral, professional Spanish; identifiers stay in
 // English.
+
+/// Builds the return draft at confirmation; [SaleReturnDraft.create] except
+/// in tests that need the derivation to drift from the preview.
+typedef ReturnDraftBuilder = SaleReturnDraft Function({
+  required CorrectableSale sale,
+  required String branchId,
+  required CorrectionReason reason,
+  required List<ReturnLineInput> lines,
+  String? note,
+  String Function() createKey,
+});
 
 /// Quiet time after the last edit before the refund is previewed.
 const Duration returnPreviewDelay = Duration(milliseconds: 400);
@@ -21,24 +39,17 @@ const String returnUncertainMessage =
     'antes de hacer otro cambio.';
 const String returnOverMessage =
     'La cantidad supera lo que queda por devolver. Revisa las cantidades.';
-const String returnWindowMessage =
-    'La venta ya está fuera del plazo de $correctionWindowDays días para '
-    'correcciones.';
+const String returnWindowMessage = correctionWindowMessage;
 const String returnRejectedMessage =
     'La devolución fue rechazada. Revisa los datos e intenta de nuevo.';
 const String returnPreviewFailedMessage = 'No se pudo calcular el reembolso.';
-const String correctionSessionMessage =
-    'Tu sesión cambió. Inicia sesión de nuevo para continuar.';
-const String correctionUnresolvedMessage =
-    'Hay otra corrección sin confirmar. Reinténtala antes de registrar una '
-    'nueva.';
 
 enum ReturnPreviewStatus { incomplete, loading, ready, failed }
 
 /// Form state of one sale line. Only lines with a remaining returnable
 /// quantity can be selected.
 class ReturnLineEntry {
-  ReturnLineEntry._(this.line);
+  ReturnLineEntry(this.line);
 
   final CorrectableSaleLine line;
   final TextEditingController quantity = TextEditingController();
@@ -64,20 +75,20 @@ class CorrectionReturnController extends ChangeNotifier {
     required SaleCorrections corrections,
     this.onCompleted,
     this.previewDelay = returnPreviewDelay,
+    this.buildDraft = SaleReturnDraft.create,
   }) : _corrections = corrections,
        lines = List<ReturnLineEntry>.unmodifiable(<ReturnLineEntry>[
          for (final CorrectableSaleLine line in sale.lines)
-           ReturnLineEntry._(line),
+           ReturnLineEntry(line),
        ]) {
     final SaleCorrectionDraft? unresolved = corrections.unresolvedDraft();
     final SaleReturnDraft? own = _ownDraft(unresolved);
     if (own != null) {
       _lock(own);
-    } else if (unresolved != null ||
-        corrections.unacknowledgedReturn() != null) {
+    } else {
       // The lookup shows an unacknowledged receipt before any form; this only
       // guards a form opened anyway.
-      _blockedMessage = correctionUnresolvedMessage;
+      _blockedMessage = correctionBlockedMessage(corrections);
     }
   }
 
@@ -86,6 +97,10 @@ class CorrectionReturnController extends ChangeNotifier {
   final Duration previewDelay;
   final List<ReturnLineEntry> lines;
   final TextEditingController note = TextEditingController();
+
+  /// Builds the draft at confirmation; only tests replace it.
+  @visibleForTesting
+  final ReturnDraftBuilder buildDraft;
   SaleCorrections _corrections;
 
   CorrectionReason? _reason;
@@ -176,7 +191,7 @@ class CorrectionReturnController extends ChangeNotifier {
     if (!canConfirm || current == null) return;
     final SaleReturnDraft draft;
     try {
-      draft = SaleReturnDraft.create(
+      draft = buildDraft(
         sale: sale,
         branchId: _corrections.branchId,
         reason: current.request.reason,
@@ -235,7 +250,8 @@ class CorrectionReturnController extends ChangeNotifier {
     } on CorrectionUnresolvedException {
       if (_disposed) return;
       _submitting = false;
-      _blockedMessage = correctionUnresolvedMessage;
+      _blockedMessage =
+          correctionBlockedMessage(_corrections) ?? correctionUnresolvedMessage;
       _notify();
     } on SaleSessionException {
       if (_disposed) return;
@@ -431,44 +447,9 @@ String? _rejectionMessage(SaleRejectedException error) {
   return null;
 }
 
-String? _validateNote(String text) {
-  try {
-    normalizeCorrectionNote(text);
-    return null;
-  } on CorrectionValidationException {
-    return 'La nota admite como máximo $correctionNoteMaxLength caracteres.';
-  }
-}
+String? _validateNote(String text) => correctionNoteError(text);
 
 /// Validates one selected line at its precision with BigInt, against its
 /// remaining quantity.
-String? _lineError(ReturnLineEntry entry) {
-  final String text = entry.quantity.text.trim();
-  if (text.isEmpty) return 'Escribe una cantidad.';
-  final CorrectableSaleLine line = entry.line;
-  final String over =
-      'No puedes devolver más de lo restante '
-      '(${line.remainingDecimal} ${line.quantitySpec.unit}).';
-  final int scaled;
-  try {
-    scaled = scaleCorrectionQuantity(
-      text,
-      line.quantitySpec,
-      productId: line.productId,
-    );
-  } on CorrectionValidationException catch (error) {
-    final int precision = line.quantitySpec.precision;
-    return switch (error.reason) {
-      CorrectionValidationReason.tooPrecise =>
-        precision == 0
-            ? 'Este producto solo admite cantidades enteras.'
-            : 'Usa como máximo $precision '
-                  '${precision == 1 ? 'decimal' : 'decimales'}.',
-      CorrectionValidationReason.notPositive =>
-        'La cantidad debe ser mayor que cero.',
-      CorrectionValidationReason.tooLarge => over,
-      _ => 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
-    };
-  }
-  return scaled > line.remainingScaled ? over : null;
-}
+String? _lineError(ReturnLineEntry entry) =>
+    correctionLineError(entry.quantity.text, entry.line, verb: 'devolver');

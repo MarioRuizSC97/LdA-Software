@@ -5,8 +5,8 @@ import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
 import 'correction_draft.dart';
+import 'correction_form_support.dart' show correctionSessionMessage;
 import 'correction_receipt.dart';
-import 'correction_return_controller.dart' show correctionSessionMessage;
 import 'correction_return_form.dart';
 import 'correction_return_receipt_view.dart';
 import 'correction_sale.dart';
@@ -73,11 +73,10 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     super.initState();
     // A committed but unseen return shows its receipt first; otherwise an
     // unresolved return reopens its form, locked to the stored draft.
-    final UnacknowledgedReturn? committed = widget.corrections
-        .unacknowledgedReturn();
+    final CompletedCorrection? committed = widget.corrections.unacknowledged();
     final SaleCorrectionDraft? unresolved = widget.corrections
         .unresolvedDraft();
-    if (committed != null) {
+    if (committed is CompletedReturn) {
       _receipt = (committed.receipt, committed.draft.sale);
     } else if (unresolved is SaleReturnDraft) {
       _returning = unresolved.sale;
@@ -233,11 +232,11 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         sale: receipt.$2,
         productNames: widget.productNames,
         onBackToSale: () {
-          widget.corrections.acknowledgeReturn(receipt.$1);
+          widget.corrections.acknowledge(receipt.$1);
           _refreshSale(receipt.$2.saleId);
         },
         onNewSearch: () {
-          widget.corrections.acknowledgeReturn(receipt.$1);
+          widget.corrections.acknowledge(receipt.$1);
           _newSearch();
         },
       );

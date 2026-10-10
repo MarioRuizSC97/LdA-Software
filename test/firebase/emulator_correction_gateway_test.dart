@@ -39,6 +39,7 @@ EmulatorCorrectionGateway _gateway({
   SaleCallable? replacementInvoke,
   SaleCallable? exchangeInvoke,
   SaleCallable? previewReturnInvoke,
+  SaleCallable? previewExchangeInvoke,
 }) => EmulatorCorrectionGateway(
   expectedSession: expected,
   sessionChecker: sessionChecker ?? () async => _seller,
@@ -52,6 +53,8 @@ EmulatorCorrectionGateway _gateway({
   replacementInvoke: replacementInvoke ?? (_) async => replacementResponse(),
   exchangeInvoke: exchangeInvoke ?? (_) async => exchangeResponse(),
   previewReturnInvoke: previewReturnInvoke ?? (_) async => returnPreviewJson(),
+  previewExchangeInvoke:
+      previewExchangeInvoke ?? (_) async => exchangePreviewJson(),
 );
 
 SaleCallable _throwing(Object error) =>
@@ -541,6 +544,174 @@ void main() {
       await expectLater(second, throwsA(isA<SaleStaleException>()));
       expect((await third).totalCentavos, 1410);
     });
+  });
+
+  group('previewExchange', () {
+    test('checks the seller around one exact preview request', () async {
+      final List<String> events = <String>[];
+      final EmulatorCorrectionGateway gateway = _gateway(
+        sessionChecker: () async {
+          events.add('session');
+          return _seller;
+        },
+        previewExchangeInvoke: (Map<String, Object?> request) async {
+          events.add('preview');
+          expect(request, <String, Object?>{
+            'saleId': saleKey,
+            'reason': 'wrong-product',
+            'returnLines': <Object?>[
+              <String, Object?>{
+                'lineIndex': 1,
+                'quantity': '1',
+                'condition': 'good',
+              },
+            ],
+            'newLines': <Object?>[
+              <String, Object?>{'productId': 'DEMO-TAPE', 'quantity': '2'},
+            ],
+          });
+          return exchangePreviewJson();
+        },
+      );
+      final SaleExchangePreview preview = await gateway.previewExchange(
+        exchangePreviewRequest(),
+      );
+      expect(preview.customerPaysCentavos, 2070);
+      expect(events, <String>['session', 'preview', 'session']);
+    });
+
+    test('a different seller before the call never invokes', () async {
+      int calls = 0;
+      await expectLater(
+        _gateway(
+          sessionChecker: () async => _otherSeller,
+          previewExchangeInvoke: (_) async {
+            calls += 1;
+            return exchangePreviewJson();
+          },
+        ).previewExchange(exchangePreviewRequest()),
+        throwsA(isA<SaleSessionException>()),
+      );
+      expect(calls, 0);
+    });
+
+    test('a malformed preview is a protocol error, never uncertain', () async {
+      final List<Object?> responses = <Object?>[
+        null,
+        exchangeResponse(),
+        Map<String, Object?>.of(exchangePreviewJson())
+          ..['saleId'] = otherSaleId,
+        Map<String, Object?>.of(exchangePreviewJson())..['newLines'] = 'none',
+        // A wrong-type field read through a typed view: a cast error.
+        exchangePreviewJson().cast<String, int>(),
+      ];
+      for (int index = 0; index < responses.length; index++) {
+        await expectLater(
+          _gateway(previewExchangeInvoke: (_) async => responses[index])
+              .previewExchange(exchangePreviewRequest()),
+          throwsA(isA<CorrectionProtocolException>()),
+          reason: 'response $index',
+        );
+      }
+    });
+
+    test(
+      'rejections keep code, message and reason; others are uncertain',
+      () async {
+        try {
+          await _gateway(
+            previewExchangeInvoke: _throwing(
+              const SaleCallableException(
+                code: 'invalid-argument',
+                message:
+                    'exchange new items must differ from the returned products',
+              ),
+            ),
+          ).previewExchange(exchangePreviewRequest());
+          fail('expected a rejection');
+        } on SaleRejectedException catch (rejected) {
+          expect(rejected.code, 'invalid-argument');
+          expect(
+            rejected.message,
+            'exchange new items must differ from the returned products',
+          );
+        }
+        await expectLater(
+          _gateway(
+            previewExchangeInvoke: _throwing(
+              const SaleCallableException(code: 'internal', message: 'boom'),
+            ),
+          ).previewExchange(exchangePreviewRequest()),
+          throwsA(isA<SaleUncertainException>()),
+        );
+      },
+    );
+
+    test('a superseded preview is stale whatever its outcome', () async {
+      final List<Completer<Object?>> pending = <Completer<Object?>>[];
+      final EmulatorCorrectionGateway gateway = _gateway(
+        previewExchangeInvoke: (_) {
+          final Completer<Object?> completer = Completer<Object?>();
+          pending.add(completer);
+          return completer.future;
+        },
+      );
+      final Future<SaleExchangePreview> first = gateway.previewExchange(
+        exchangePreviewRequest(),
+      );
+      final Future<SaleExchangePreview> second = gateway.previewExchange(
+        exchangePreviewRequest(),
+      );
+      // A return preview counts separately and never makes it stale.
+      final Future<SaleReturnPreview> other = gateway.previewReturn(
+        returnPreviewRequest(),
+      );
+      final Future<SaleExchangePreview> third = gateway.previewExchange(
+        exchangePreviewRequest(),
+      );
+      await pumpEventQueue();
+      pending[0].complete(exchangePreviewJson());
+      pending[1].completeError(
+        const SaleCallableException(code: 'out-of-range', message: 'over'),
+      );
+      pending[2].complete(exchangePreviewJson());
+      await expectLater(first, throwsA(isA<SaleStaleException>()));
+      await expectLater(second, throwsA(isA<SaleStaleException>()));
+      expect((await third).customerPaysCentavos, 2070);
+      expect((await other).totalCentavos, 1410);
+    });
+  });
+
+  test('replacement and exchange stock refusals are recognized', () {
+    expect(
+      const SaleRejectedException(
+        code: 'failed-precondition',
+        message: 'insufficient stock',
+      ).isOutOfStock,
+      isTrue,
+    );
+    expect(
+      const SaleRejectedException(
+        code: 'failed-precondition',
+        message: 'insufficient stock',
+        reason: 'insufficient-stock',
+      ).isOutOfStock,
+      isTrue,
+    );
+    expect(
+      const SaleRejectedException(
+        code: 'failed-precondition',
+        message: correctionWindowClosedMessage,
+      ).isOutOfStock,
+      isFalse,
+    );
+    expect(
+      const SaleRejectedException(
+        code: 'invalid-argument',
+        message: 'insufficient stock',
+      ).isOutOfStock,
+      isFalse,
+    );
   });
 
   test('a malformed submit keeps its original error as the cause', () async {

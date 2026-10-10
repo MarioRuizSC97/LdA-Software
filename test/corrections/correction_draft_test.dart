@@ -1,10 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/corrections/correction_draft.dart';
+import 'package:lda_inventory/corrections/correction_receipt.dart';
 import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
 
 import '../sales/sale_fixtures.dart';
 import 'correction_fixtures.dart';
+
+SaleReturnReceipt _returnReceipt(SaleReturnDraft draft) =>
+    SaleReturnReceipt.fromCallable(returnResponseFor(draft), draft: draft);
 
 Matcher _invalid(CorrectionValidationReason reason) => throwsA(
   isA<CorrectionValidationException>().having(
@@ -459,7 +463,7 @@ void main() {
     test('a completed draft keeps its receipt until acknowledged', () {
       final CorrectionDraftStore store = CorrectionDraftStore();
       final SaleReturnDraft draft = returnDraft();
-      final Object receipt = Object();
+      final SaleReturnReceipt receipt = _returnReceipt(draft);
       final CorrectionAttempt stale = store.begin(
         ownerUserId: 'seller-1',
         draft: draft,
@@ -477,6 +481,7 @@ void main() {
         'seller-1',
         saleBranchId,
       );
+      expect(completed, isA<CompletedReturn>());
       expect(completed?.draft, same(draft));
       expect(completed?.receipt, same(receipt));
       expect(store.completedFor('seller-2', saleBranchId), isNull);
@@ -488,7 +493,10 @@ void main() {
         ),
         throwsA(isA<CorrectionUnresolvedException>()),
       );
-      expect(store.acknowledge('seller-1', saleBranchId, Object()), isFalse);
+      expect(
+        store.acknowledge('seller-1', saleBranchId, _returnReceipt(draft)),
+        isFalse,
+      );
       expect(store.acknowledge('seller-2', saleBranchId, receipt), isFalse);
       expect(store.completedFor('seller-1', saleBranchId), isNotNull);
       expect(store.acknowledge('seller-1', saleBranchId, receipt), isTrue);
@@ -506,7 +514,7 @@ void main() {
         ownerUserId: 'seller-1',
         draft: draft,
       );
-      final Object receipt = Object();
+      final SaleReturnReceipt receipt = _returnReceipt(draft);
       expect(store.complete(first, receipt), isTrue);
       final CorrectionAttempt replay = store.begin(
         ownerUserId: 'seller-1',
@@ -518,6 +526,89 @@ void main() {
       expect(store.acknowledge('seller-1', saleBranchId, receipt), isFalse);
       expect(store.resolve(first), isFalse);
       expect(store.isCurrent(replay), isTrue);
+    });
+    test('every correction kind completes and acknowledges typed', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReplacementDraft replacement = replacementDraft();
+      final SaleReplacementReceipt replaced =
+          SaleReplacementReceipt.fromCallable(
+            replacementResponse(),
+            draft: replacement,
+          );
+      final CorrectionAttempt first = store.begin(
+        ownerUserId: 'seller-1',
+        draft: replacement,
+      );
+      expect(store.complete(first, replaced), isTrue);
+      final CompletedCorrection? done = store.completedFor(
+        'seller-1',
+        saleBranchId,
+      );
+      expect(done, isA<CompletedReplacement>());
+      expect((done! as CompletedReplacement).receipt, same(replaced));
+      expect(store.acknowledge('seller-1', saleBranchId, replaced), isTrue);
+
+      final SaleExchangeDraft exchange = exchangeDraft();
+      final SaleExchangeReceipt exchanged = SaleExchangeReceipt.fromCallable(
+        exchangeResponse(),
+        draft: exchange,
+      );
+      final CorrectionAttempt second = store.begin(
+        ownerUserId: 'seller-1',
+        draft: exchange,
+      );
+      expect(store.complete(second, exchanged), isTrue);
+      expect(
+        store.completedFor('seller-1', saleBranchId),
+        isA<CompletedExchange>().having(
+          (CompletedExchange value) => value.draft,
+          'draft',
+          same(exchange),
+        ),
+      );
+      expect(store.acknowledge('seller-1', saleBranchId, exchanged), isTrue);
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+    });
+
+    test('a receipt of another kind or correction is never stored', () {
+      final CorrectionDraftStore store = CorrectionDraftStore();
+      final SaleReturnDraft draft = returnDraft();
+      final CorrectionAttempt attempt = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      final SaleReplacementDraft replacement = replacementDraft();
+      final SaleReplacementReceipt otherKind =
+          SaleReplacementReceipt.fromCallable(
+            replacementResponse(),
+            draft: replacement,
+          );
+      expect(() => store.complete(attempt, otherKind), throwsArgumentError);
+      // Same kind, but another correction's receipt.
+      final SaleReturnDraft other = _return(createKey: () => replacementKey);
+      expect(
+        () => store.complete(attempt, _returnReceipt(other)),
+        throwsArgumentError,
+      );
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      expect(store.unresolvedFor('seller-1', saleBranchId), same(draft));
+      // Same key, sale and branch, but another kind.
+      final SaleReplacementDraft sameKey = SaleReplacementDraft.create(
+        sale: lookupSale(),
+        branchId: saleBranchId,
+        lines: const <ReplacementLineInput>[
+          ReplacementLineInput(lineIndex: 1, quantity: '1'),
+        ],
+        createKey: () => returnKey,
+      );
+      expect(
+        () => CompletedCorrection.of(sameKey, _returnReceipt(draft)),
+        throwsArgumentError,
+      );
+      expect(
+        CompletedCorrection.of(draft, _returnReceipt(draft)),
+        isA<CompletedReturn>(),
+      );
     });
   });
 }

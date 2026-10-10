@@ -36,9 +36,12 @@ final SaleCorrections _corrections = SaleCorrections(
   }, query: RecentSalesQuery()),
   previewReturn: (_) async => throw UnimplementedError(),
   submitReturn: (_) async => throw UnimplementedError(),
+  previewExchange: (_) async => throw UnimplementedError(),
+  submitReplacement: (_) async => throw UnimplementedError(),
+  submitExchange: (_) async => throw UnimplementedError(),
   unresolvedDraft: () => null,
-  unacknowledgedReturn: () => null,
-  acknowledgeReturn: (_) {},
+  unacknowledged: () => null,
+  acknowledge: (_) {},
 );
 
 Widget _page(

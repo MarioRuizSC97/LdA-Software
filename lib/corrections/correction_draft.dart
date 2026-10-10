@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../catalog/catalog_product.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_draft.dart' show createSaleIdempotencyKey;
+import 'correction_receipt.dart';
 import 'correction_sale.dart';
 
 final RegExp _uuidV4Pattern = RegExp(
@@ -327,23 +328,7 @@ class SaleExchangeDraft extends SaleCorrectionDraft {
     String Function() createKey = createSaleIdempotencyKey,
   }) {
     final List<CorrectionLine> validated = _returnLines(sale, returnLines);
-    if (newItems.isEmpty) {
-      throw const CorrectionValidationException(
-        'An exchange needs at least one new item.',
-        reason: CorrectionValidationReason.noNewItems,
-      );
-    }
-    final Set<String> returned = <String>{
-      for (final CorrectionLine line in validated) line.productId,
-    };
-    if (newItems.lines.any(
-      (SaleCartLine line) => returned.contains(line.productId),
-    )) {
-      throw const CorrectionValidationException(
-        'A new item cannot be a returned product.',
-        reason: CorrectionValidationReason.newItemIsReturned,
-      );
-    }
+    final SaleCart cart = _exchangeNewItems(sale, validated, newItems);
     final SaleExchangePayment? payment = differencePayment;
     if (payment != null &&
         (payment.amountCentavos <= 0 ||
@@ -362,7 +347,7 @@ class SaleExchangeDraft extends SaleCorrectionDraft {
       reason: reason,
       note: normalizedNote,
       returnLines: validated,
-      newItems: newItems.withInvoiceRequested(sale.invoiced),
+      newItems: cart,
       differencePayment: payment,
     );
   }
@@ -372,6 +357,16 @@ class SaleExchangeDraft extends SaleCorrectionDraft {
   final List<CorrectionLine> returnLines;
   final SaleCart newItems;
   final SaleExchangePayment? differencePayment;
+
+  /// The preview of exactly this exchange: same sale, reason, returned lines
+  /// and new items. A draft may be confirmed only against a preview equal to
+  /// this one, and must pay exactly that preview's `customerPaysCentavos`.
+  SaleExchangePreviewRequest get previewRequest => SaleExchangePreviewRequest._(
+    sale: sale,
+    reason: reason,
+    returnLines: returnLines,
+    newItems: newItems,
+  );
 
   @override
   Map<String, Object?> toRequest() => <String, Object?>{
@@ -388,6 +383,91 @@ class SaleExchangeDraft extends SaleCorrectionDraft {
       'differencePayment': differencePayment!.toRequest(),
     if (note != null) 'note': note,
   };
+}
+
+/// `previewSaleExchange`: exactly `{saleId, reason, returnLines, newLines}`,
+/// the exchange request without its write-only key, note and difference
+/// payment. Validated exactly like [SaleExchangeDraft.create]; the server
+/// recomputes against its ledger, current prices and stock.
+class SaleExchangePreviewRequest {
+  const SaleExchangePreviewRequest._({
+    required this.sale,
+    required this.reason,
+    required this.returnLines,
+    required this.newItems,
+  });
+
+  factory SaleExchangePreviewRequest.create({
+    required CorrectableSale sale,
+    required CorrectionReason reason,
+    required List<ReturnLineInput> returnLines,
+    required SaleCart newItems,
+  }) {
+    final List<CorrectionLine> validated = _returnLines(sale, returnLines);
+    return SaleExchangePreviewRequest._(
+      sale: sale,
+      reason: reason,
+      returnLines: validated,
+      newItems: _exchangeNewItems(sale, validated, newItems),
+    );
+  }
+
+  /// The looked-up sale the lines were validated against.
+  final CorrectableSale sale;
+  final CorrectionReason reason;
+  final List<CorrectionLine> returnLines;
+
+  /// New items, with the original sale's invoice intent.
+  final SaleCart newItems;
+
+  String get saleId => sale.saleId;
+
+  Map<String, Object?> toRequest() => <String, Object?>{
+    'saleId': saleId,
+    'reason': reason.wireValue,
+    'returnLines': <Object?>[
+      for (final CorrectionLine line in returnLines) line.toRequestLine(),
+    ],
+    'newLines': <Object?>[
+      for (final SaleCartLine line in newItems.lines) line.toRequestLine(),
+    ],
+  };
+
+  /// Equal when they would send the same preview request.
+  @override
+  bool operator ==(Object other) =>
+      other is SaleExchangePreviewRequest &&
+      jsonEncode(other.toRequest()) == jsonEncode(toRequest());
+
+  @override
+  int get hashCode => jsonEncode(toRequest()).hashCode;
+}
+
+/// At least one new item, none of them a returned product (a same-product
+/// swap is a replacement), always with the sale's invoice intent.
+SaleCart _exchangeNewItems(
+  CorrectableSale sale,
+  List<CorrectionLine> returnLines,
+  SaleCart newItems,
+) {
+  if (newItems.isEmpty) {
+    throw const CorrectionValidationException(
+      'An exchange needs at least one new item.',
+      reason: CorrectionValidationReason.noNewItems,
+    );
+  }
+  final Set<String> returned = <String>{
+    for (final CorrectionLine line in returnLines) line.productId,
+  };
+  if (newItems.lines.any(
+    (SaleCartLine line) => returned.contains(line.productId),
+  )) {
+    throw const CorrectionValidationException(
+      'A new item cannot be a returned product.',
+      reason: CorrectionValidationReason.newItemIsReturned,
+    );
+  }
+  return newItems.withInvoiceRequested(sale.invoiced);
 }
 
 /// Trims the optional note; blank becomes absent. The server refuses padded,
@@ -543,16 +623,72 @@ class _StoredCorrectionDraft {
   final SaleCorrectionDraft draft;
   final int revision;
 
-  /// The committed receipt, once the current attempt succeeded; until it is
-  /// acknowledged the entry still blocks any other correction.
-  Object? receipt;
+  /// The committed correction, once the current attempt succeeded; until it
+  /// is acknowledged the entry still blocks any other correction.
+  CompletedCorrection? completed;
 }
 
-/// A committed correction whose receipt the seller has not yet left.
-class CompletedCorrection {
-  const CompletedCorrection._(this.draft, this.receipt);
-  final SaleCorrectionDraft draft;
-  final Object receipt;
+/// A committed correction whose receipt the seller has not yet left: its
+/// draft paired with the receipt of the same kind. Sealed, so the lookup
+/// must show every kind explicitly; none can be silently invisible.
+sealed class CompletedCorrection {
+  const CompletedCorrection._();
+
+  /// Pairs [draft] with its [receipt]. Throws [ArgumentError] unless both are
+  /// of the same kind and the receipt is the draft's own (same key, sale and
+  /// branch): a receipt can never be stored under another correction.
+  factory CompletedCorrection.of(
+    SaleCorrectionDraft draft,
+    SaleCorrectionReceipt receipt,
+  ) {
+    if (receipt.correctionId != draft.idempotencyKey ||
+        receipt.saleId != draft.saleId ||
+        receipt.branchId != draft.branchId) {
+      throw ArgumentError.value(receipt, 'receipt', 'is not the draft receipt');
+    }
+    return switch ((draft, receipt)) {
+      (final SaleReturnDraft d, final SaleReturnReceipt r) => CompletedReturn._(
+        d,
+        r,
+      ),
+      (final SaleReplacementDraft d, final SaleReplacementReceipt r) =>
+        CompletedReplacement._(d, r),
+      (final SaleExchangeDraft d, final SaleExchangeReceipt r) =>
+        CompletedExchange._(d, r),
+      _ => throw ArgumentError.value(
+        receipt,
+        'receipt',
+        'is not of the draft kind',
+      ),
+    };
+  }
+
+  SaleCorrectionDraft get draft;
+  SaleCorrectionReceipt get receipt;
+}
+
+final class CompletedReturn extends CompletedCorrection {
+  const CompletedReturn._(this.draft, this.receipt) : super._();
+  @override
+  final SaleReturnDraft draft;
+  @override
+  final SaleReturnReceipt receipt;
+}
+
+final class CompletedReplacement extends CompletedCorrection {
+  const CompletedReplacement._(this.draft, this.receipt) : super._();
+  @override
+  final SaleReplacementDraft draft;
+  @override
+  final SaleReplacementReceipt receipt;
+}
+
+final class CompletedExchange extends CompletedCorrection {
+  const CompletedExchange._(this.draft, this.receipt) : super._();
+  @override
+  final SaleExchangeDraft draft;
+  @override
+  final SaleExchangeReceipt receipt;
 }
 
 /// Volatile, live-shell-only retry storage mirroring `SaleDraftStore`: at
@@ -576,17 +712,12 @@ class CorrectionDraftStore {
   /// The stored draft still awaiting an outcome; null once completed.
   SaleCorrectionDraft? unresolvedFor(String ownerUserId, String branchId) {
     final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
-    return stored == null || stored.receipt != null ? null : stored.draft;
+    return stored == null || stored.completed != null ? null : stored.draft;
   }
 
   /// The committed correction awaiting acknowledgement, if any.
-  CompletedCorrection? completedFor(String ownerUserId, String branchId) {
-    final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
-    final Object? receipt = stored?.receipt;
-    return receipt == null
-        ? null
-        : CompletedCorrection._(stored!.draft, receipt);
-  }
+  CompletedCorrection? completedFor(String ownerUserId, String branchId) =>
+      _drafts[ownerUserId]?[branchId]?.completed;
 
   /// Begins an attempt. An equal draft, even an already completed one, may
   /// be sent again (the server replays it); any other draft is refused
@@ -628,18 +759,26 @@ class CorrectionDraftStore {
   }
 
   /// Records the current attempt's committed [receipt] and keeps the entry
-  /// until [acknowledge].
-  bool complete(CorrectionAttempt attempt, Object receipt) {
+  /// until [acknowledge]. The receipt must be the attempt draft's own (see
+  /// [CompletedCorrection.of]), or this throws [ArgumentError].
+  bool complete(CorrectionAttempt attempt, SaleCorrectionReceipt receipt) {
     if (!isCurrent(attempt)) return false;
-    _drafts[attempt.ownerUserId]![attempt.draft.branchId]!.receipt = receipt;
+    _drafts[attempt.ownerUserId]![attempt.draft.branchId]!.completed =
+        CompletedCorrection.of(attempt.draft, receipt);
     return true;
   }
 
   /// Drops the completed entry whose receipt is exactly [receipt]; anything
   /// else (an unresolved draft, another receipt) is kept.
-  bool acknowledge(String ownerUserId, String branchId, Object receipt) {
+  bool acknowledge(
+    String ownerUserId,
+    String branchId,
+    SaleCorrectionReceipt receipt,
+  ) {
     final _StoredCorrectionDraft? stored = _drafts[ownerUserId]?[branchId];
-    if (stored == null || !identical(stored.receipt, receipt)) return false;
+    if (stored == null || !identical(stored.completed?.receipt, receipt)) {
+      return false;
+    }
     _remove(ownerUserId, branchId);
     return true;
   }

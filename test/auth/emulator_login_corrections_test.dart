@@ -80,6 +80,10 @@ class _CorrectionBackend {
   final List<Map<String, Object?>> returns = <Map<String, Object?>>[];
   final List<Map<String, Object?>> previews = <Map<String, Object?>>[];
   final List<Object> returnFailures = <Object>[];
+  final List<Map<String, Object?>> replacements = <Map<String, Object?>>[];
+  final List<Object?> replacementAnswers = <Object?>[];
+  final List<Map<String, Object?>> exchanges = <Map<String, Object?>>[];
+  final List<Object?> exchangeAnswers = <Object?>[];
 
   Future<EmulatorCorrectionGateway> load(EmulatorSession session) async {
     loads.add(session);
@@ -114,13 +118,36 @@ class _CorrectionBackend {
         if (pending != null) return pending.future;
         return returnResponse();
       },
-      replacementInvoke: (_) async => throw UnimplementedError(),
-      exchangeInvoke: (_) async => throw UnimplementedError(),
+      replacementInvoke: (Map<String, Object?> request) async {
+        replacements.add(request);
+        return _answer(replacementAnswers, replacementResponse);
+      },
+      exchangeInvoke: (Map<String, Object?> request) async {
+        exchanges.add(request);
+        return _answer(exchangeAnswers, exchangeResponse);
+      },
       previewReturnInvoke: (Map<String, Object?> request) async {
         previews.add(request);
         return returnPreviewJson();
       },
+      previewExchangeInvoke: (Map<String, Object?> request) async {
+        previews.add(request);
+        return exchangePreviewJson();
+      },
     );
+  }
+
+  /// The next queued answer (a [Completer], an error to throw, or a
+  /// response), else the default response.
+  Future<Object?> _answer(
+    List<Object?> answers,
+    Object? Function() fallback,
+  ) async {
+    if (answers.isEmpty) return fallback();
+    final Object? answer = answers.removeAt(0);
+    if (answer is Completer<Object?>) return answer.future;
+    if (answer is Exception || answer is Error) throw answer!;
+    return answer;
   }
 }
 
@@ -424,7 +451,7 @@ void main() {
 
     final SaleReturnReceipt receipt = await seller.submitReturn(draft);
     expect(seller.unresolvedDraft(), isNull);
-    final UnacknowledgedReturn? committed = seller.unacknowledgedReturn();
+    final CompletedCorrection? committed = seller.unacknowledged();
     expect(committed?.receipt, same(receipt));
     expect(committed?.draft, same(draft));
     // Until the seller has seen it, no other correction may begin.
@@ -437,21 +464,21 @@ void main() {
     // Another seller can neither see nor acknowledge it.
     sessions.sessions.add(_otherSeller);
     await tester.pumpAndSettle();
-    expect(corrections(tester).unacknowledgedReturn(), isNull);
-    seller.acknowledgeReturn(receipt);
-    corrections(tester).acknowledgeReturn(receipt);
+    expect(corrections(tester).unacknowledged(), isNull);
+    seller.acknowledge(receipt);
+    corrections(tester).acknowledge(receipt);
     sessions.sessions.add(_seller);
     await tester.pumpAndSettle();
     final SaleCorrections again = corrections(tester);
-    expect(again.unacknowledgedReturn()?.receipt, same(receipt));
+    expect(again.unacknowledged()?.receipt, same(receipt));
 
     // Only the exact receipt acknowledges it.
-    again.acknowledgeReturn(
+    again.acknowledge(
       SaleReturnReceipt.fromCallable(returnResponse(), draft: draft),
     );
-    expect(again.unacknowledgedReturn()?.receipt, same(receipt));
-    again.acknowledgeReturn(receipt);
-    expect(again.unacknowledgedReturn(), isNull);
+    expect(again.unacknowledged()?.receipt, same(receipt));
+    again.acknowledge(receipt);
+    expect(again.unacknowledged(), isNull);
 
     final SaleReturnDraft next = _newKeyDraft();
     backend.returnAnswers.add(returnResponseFor(next));
@@ -488,7 +515,7 @@ void main() {
       ),
     );
     expect(seller.unresolvedDraft(), isNull);
-    expect(seller.unacknowledgedReturn(), isNull);
+    expect(seller.unacknowledged(), isNull);
 
     final SaleReturnDraft next = _newKeyDraft();
     backend.returnAnswers.add(returnResponseFor(next));
@@ -558,7 +585,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(outcomes.single, isA<SaleStaleException>());
     expect(seller.unresolvedDraft(), same(draft));
-    expect(seller.unacknowledgedReturn(), isNull);
+    expect(seller.unacknowledged(), isNull);
 
     track(seller.submitReturn(draft));
     await tester.pump();
@@ -571,6 +598,146 @@ void main() {
     await tester.pumpAndSettle();
     expect(outcomes.last, isA<SaleReturnReceipt>());
     expect(seller.unresolvedDraft(), isNull);
-    expect(seller.unacknowledgedReturn()?.receipt, same(outcomes.last));
+    expect(seller.unacknowledged()?.receipt, same(outcomes.last));
+  });
+
+  testWidgets('replacements and exchanges keep receipts until acknowledged', (
+    WidgetTester tester,
+  ) async {
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..replacementAnswers.add(StateError('offline'));
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), correctionLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    final SaleCorrections seller = corrections(tester);
+
+    final SaleReplacementDraft replacement = replacementDraft();
+    await expectLater(
+      seller.submitReplacement(replacement),
+      throwsA(isA<SaleUncertainException>()),
+    );
+    expect(seller.unresolvedDraft(), same(replacement));
+    // Another kind of correction waits for the stored one.
+    await expectLater(
+      seller.submitExchange(exchangeDraft()),
+      throwsA(isA<CorrectionUnresolvedException>()),
+    );
+    expect(backend.exchanges, isEmpty);
+
+    final SaleReplacementReceipt replaced = await seller.submitReplacement(
+      replacement,
+    );
+    expect(backend.replacements, <Object?>[
+      replacement.toRequest(),
+      replacement.toRequest(),
+    ]);
+    expect(seller.unresolvedDraft(), isNull);
+    final CompletedCorrection? committed = seller.unacknowledged();
+    expect(committed, isA<CompletedReplacement>());
+    expect(committed?.receipt, same(replaced));
+    await expectLater(
+      seller.submitExchange(exchangeDraft()),
+      throwsA(isA<CorrectionUnresolvedException>()),
+    );
+    seller.acknowledge(replaced);
+    expect(seller.unacknowledged(), isNull);
+
+    final SaleExchangePreview preview = await seller.previewExchange(
+      exchangePreviewRequest(),
+    );
+    expect(preview.customerPaysCentavos, 2070);
+    expect(backend.previews.last, exchangePreviewRequest().toRequest());
+
+    final SaleExchangeDraft exchange = exchangeDraft();
+    final SaleExchangeReceipt exchanged = await seller.submitExchange(exchange);
+    expect(backend.exchanges.single, exchange.toRequest());
+    expect(
+      seller.unacknowledged(),
+      isA<CompletedExchange>().having(
+        (CompletedExchange value) => value.receipt,
+        'receipt',
+        same(exchanged),
+      ),
+    );
+    seller.acknowledge(exchanged);
+    expect(seller.unacknowledged(), isNull);
+  });
+
+  testWidgets('a rejected exchange or replacement drops the stored draft', (
+    WidgetTester tester,
+  ) async {
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..exchangeAnswers.add(
+        const SaleCallableException(
+          code: 'invalid-argument',
+          message: 'difference payment must equal the amount the customer owes',
+          reason: 'payment-mismatch',
+        ),
+      )
+      ..replacementAnswers.add(
+        const SaleCallableException(
+          code: 'failed-precondition',
+          message: 'insufficient stock',
+        ),
+      );
+    await tester.pumpWidget(
+      _app(_SessionGateway(restored: _seller), correctionLoader: backend.load),
+    );
+    await tester.pumpAndSettle();
+    final SaleCorrections seller = corrections(tester);
+
+    await expectLater(
+      seller.submitExchange(exchangeDraft()),
+      throwsA(
+        isA<SaleRejectedException>().having(
+          (SaleRejectedException e) => e.isPaymentMismatch,
+          'isPaymentMismatch',
+          isTrue,
+        ),
+      ),
+    );
+    expect(seller.unresolvedDraft(), isNull);
+    await expectLater(
+      seller.submitReplacement(replacementDraft()),
+      throwsA(
+        isA<SaleRejectedException>().having(
+          (SaleRejectedException e) => e.isOutOfStock,
+          'isOutOfStock',
+          isTrue,
+        ),
+      ),
+    );
+    expect(seller.unresolvedDraft(), isNull);
+    expect(seller.unacknowledged(), isNull);
+  });
+
+  testWidgets('a seller change during an exchange keeps it uncertain', (
+    WidgetTester tester,
+  ) async {
+    final Completer<Object?> pending = Completer<Object?>();
+    final _CorrectionBackend backend = _CorrectionBackend()
+      ..exchangeAnswers.add(pending);
+    final _SessionGateway sessions = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(sessions, correctionLoader: backend.load));
+    await tester.pumpAndSettle();
+    final SaleExchangeDraft draft = exchangeDraft();
+    Object? error;
+    unawaited(
+      corrections(tester)
+          .submitExchange(draft)
+          .then<void>((_) {}, onError: (Object e) => error = e),
+    );
+    await tester.pump();
+    sessions.sessions.add(_otherSeller);
+    await tester.pumpAndSettle();
+    pending.complete(exchangeResponse());
+    await tester.pumpAndSettle();
+    expect(error, isA<SaleUncertainException>());
+    expect(corrections(tester).unresolvedDraft(), isNull);
+    sessions.sessions.add(_seller);
+    await tester.pumpAndSettle();
+    expect(corrections(tester).unresolvedDraft(), same(draft));
+    expect(corrections(tester).unacknowledged(), isNull);
   });
 }

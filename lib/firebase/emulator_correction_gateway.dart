@@ -33,6 +33,10 @@ const String correctionFolioAmbiguousReason = 'folio-ambiguous';
 const String correctionWindowClosedMessage =
     'sale is outside the correction window';
 
+/// Exact server message for a replacement or new exchange item the branch
+/// stock cannot cover. Like the window, it carries no `details.reason`.
+const String correctionInsufficientStockMessage = 'insufficient stock';
+
 /// Correction meanings of a deterministic refusal.
 extension CorrectionRejection on SaleRejectedException {
   /// The folio matches several sales; only the structured reason counts.
@@ -46,6 +50,14 @@ extension CorrectionRejection on SaleRejectedException {
   /// The sale's correction window has closed.
   bool get isOutsideCorrectionWindow =>
       code == 'failed-precondition' && message == correctionWindowClosedMessage;
+
+  /// The branch's sellable stock cannot cover a replacement or a new exchange
+  /// item. The correction services give it no `details.reason`, so the exact
+  /// server message is matched too; the sale reason is accepted for parity.
+  bool get isOutOfStock =>
+      code == 'failed-precondition' &&
+      (reason == saleInsufficientStockReason ||
+          message == correctionInsufficientStockMessage);
 }
 
 /// An uncertain submission whose response arrived but could not be parsed.
@@ -58,7 +70,7 @@ class CorrectionUncertainException extends SaleUncertainException {
 }
 
 /// Seller-only adapter for the sale-correction callables: five operations
-/// plus the read-only return preview.
+/// plus the read-only return and exchange previews.
 ///
 /// Mirrors [EmulatorSaleGateway] and shares its callable, session and outcome
 /// types: the exact assigned seller is re-checked before and after each call;
@@ -80,6 +92,7 @@ class EmulatorCorrectionGateway {
     required this.replacementInvoke,
     required this.exchangeInvoke,
     required this.previewReturnInvoke,
+    required this.previewExchangeInvoke,
   });
 
   final EmulatorSession expectedSession;
@@ -90,8 +103,10 @@ class EmulatorCorrectionGateway {
   final SaleCallable replacementInvoke;
   final SaleCallable exchangeInvoke;
   final SaleCallable previewReturnInvoke;
+  final SaleCallable previewExchangeInvoke;
   int _findGeneration = 0;
   int _previewReturnGeneration = 0;
+  int _previewExchangeGeneration = 0;
   int _listGeneration = 0;
   int _returnGeneration = 0;
   int _replacementGeneration = 0;
@@ -128,12 +143,35 @@ class EmulatorCorrectionGateway {
       _call(previewReturnInvoke, wire),
       () => generation != _previewReturnGeneration,
     );
+    return _protocolIfMalformed(
+      () => SaleReturnPreview.fromCallable(response, request: request),
+    );
+  }
+
+  /// Read-only exchange settlement preview, bound to [request]; a newer
+  /// exchange preview makes older ones stale.
+  Future<SaleExchangePreview> previewExchange(
+    SaleExchangePreviewRequest request,
+  ) async {
+    final Map<String, Object?> wire = request.toRequest();
+    final int generation = ++_previewExchangeGeneration;
+    final Object? response = await _staleAware(
+      _call(previewExchangeInvoke, wire),
+      () => generation != _previewExchangeGeneration,
+    );
+    return _protocolIfMalformed(
+      () => SaleExchangePreview.fromCallable(response, request: request),
+    );
+  }
+
+  /// A preview wrote nothing, so any failure to parse it (a protocol, cast
+  /// or range error alike) is a protocol error, logged with its cause.
+  T _protocolIfMalformed<T>(T Function() parse) {
     try {
-      return SaleReturnPreview.fromCallable(response, request: request);
+      return parse();
     } on CorrectionProtocolException {
       rethrow;
     } catch (error, stackTrace) {
-      // A cast or range error is a malformed preview too; nothing was written.
       _logParseFailure('preview', error, stackTrace);
       throw const CorrectionProtocolException();
     }

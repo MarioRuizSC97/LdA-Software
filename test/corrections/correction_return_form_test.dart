@@ -487,21 +487,20 @@ void main() {
   ) async {
     final SaleReturnDraft committed = returnDraft();
     final FakeCorrections backend = FakeCorrections()
-      ..completed = (
-        draft: committed,
-        receipt: SaleReturnReceipt.fromCallable(
-          returnResponse(),
-          draft: committed,
-        ),
+      ..completed = CompletedCorrection.of(
+        committed,
+        SaleReturnReceipt.fromCallable(returnResponse(), draft: committed),
       );
     await _pump(tester, backend: backend, sale: uninvoicedSale());
+    // Not the retry message: the committed one only needs its receipt seen.
     expect(
       find.text(
-        'Hay otra corrección sin confirmar. Reinténtala antes de registrar '
-        'una nueva.',
+        'Hay una corrección registrada pendiente de revisar. Abre su '
+        'comprobante para continuar.',
       ),
       findsOneWidget,
     );
+    expect(find.textContaining('Reinténtala'), findsNothing);
     await _tap(tester, _key('return-line-select-0'));
     await _enter(tester, 'return-line-quantity-0', '1');
     await _tap(tester, _key('return-reason-other'));

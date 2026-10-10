@@ -14,28 +14,33 @@ typedef SaleReturnPreviewer = Future<SaleReturnPreview> Function(
 typedef SaleReturnSubmitter = Future<SaleReturnReceipt> Function(
   SaleReturnDraft draft,
 );
+typedef SaleExchangePreviewer = Future<SaleExchangePreview> Function(
+  SaleExchangePreviewRequest request,
+);
+typedef SaleReplacementSubmitter = Future<SaleReplacementReceipt> Function(
+  SaleReplacementDraft draft,
+);
+typedef SaleExchangeSubmitter = Future<SaleExchangeReceipt> Function(
+  SaleExchangeDraft draft,
+);
 typedef CorrectionDraftLookup = SaleCorrectionDraft? Function();
 typedef CorrectionKeyFactory = String Function();
 
-/// A committed return whose receipt the seller has not yet left.
-typedef UnacknowledgedReturn = ({
-  SaleReturnDraft draft,
-  SaleReturnReceipt receipt,
-});
-typedef UnacknowledgedReturnLookup = UnacknowledgedReturn? Function();
-typedef ReturnAcknowledger = void Function(SaleReturnReceipt receipt);
+/// The committed correction, of any kind, whose receipt the seller has not
+/// yet left.
+typedef UnacknowledgedCorrectionLookup = CompletedCorrection? Function();
+typedef CorrectionAcknowledger = void Function(SaleCorrectionReceipt receipt);
 
 /// Seller-only correction operations the shell hands to the catalog page,
 /// like `SaleCheckout`. The shell re-checks the exact seller around every
 /// call; the page never sees the gateway or the session.
 ///
-/// [submitReturn] owns the shell-level draft store: it begins the attempt
-/// and submits. A deterministic rejection drops the draft; a success keeps
-/// it with its receipt until [acknowledgeReturn], so a receipt is never lost
-/// when the form is disposed mid-submit. [unresolvedDraft] returns the
-/// stored correction that must be retried before any other, and
-/// [unacknowledgedReturn] the committed return whose receipt must be shown
-/// before any other.
+/// The submits own the shell-level draft store: each begins the attempt and
+/// submits. A deterministic rejection drops the draft; a success keeps it
+/// with its receipt until [acknowledge], so a receipt is never lost when the
+/// form is disposed mid-submit. [unresolvedDraft] returns the stored
+/// correction that must be retried before any other, and [unacknowledged]
+/// the committed correction whose receipt must be shown before any other.
 class SaleCorrections {
   const SaleCorrections({
     required this.branchId,
@@ -43,9 +48,12 @@ class SaleCorrections {
     required this.listRecent,
     required this.previewReturn,
     required this.submitReturn,
+    required this.previewExchange,
+    required this.submitReplacement,
+    required this.submitExchange,
     required this.unresolvedDraft,
-    required this.unacknowledgedReturn,
-    required this.acknowledgeReturn,
+    required this.unacknowledged,
+    required this.acknowledge,
     this.createKey = createSaleIdempotencyKey,
   });
 
@@ -58,11 +66,14 @@ class SaleCorrections {
   final RecentCorrectableSalesLoader listRecent;
   final SaleReturnPreviewer previewReturn;
   final SaleReturnSubmitter submitReturn;
+  final SaleExchangePreviewer previewExchange;
+  final SaleReplacementSubmitter submitReplacement;
+  final SaleExchangeSubmitter submitExchange;
   final CorrectionDraftLookup unresolvedDraft;
-  final UnacknowledgedReturnLookup unacknowledgedReturn;
+  final UnacknowledgedCorrectionLookup unacknowledged;
 
   /// Called once the seller leaves the receipt; only then may another
   /// correction begin.
-  final ReturnAcknowledger acknowledgeReturn;
+  final CorrectionAcknowledger acknowledge;
   final CorrectionKeyFactory createKey;
 }

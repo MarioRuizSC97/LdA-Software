@@ -76,6 +76,36 @@ const Set<String> _settlementKeys = <String>{
   'differencePayment',
 };
 const Set<String> _paymentKeys = <String>{'method', 'amountCentavos'};
+const Set<String> _exchangePreviewKeys = <String>{
+  'saleId',
+  'returned',
+  'newItems',
+  'settlement',
+  'newLines',
+  'invoiced',
+};
+const Set<String> _previewSettlementKeys = <String>{
+  'returnedCentavos',
+  'newItemCentavos',
+  'customerPaysCentavos',
+  'refundCentavos',
+  'refundMethod',
+};
+const Set<String> _previewNewLineKeys = <String>{'productId', 'available'};
+
+/// Any committed correction receipt. Sealed, so every consumer that shows or
+/// recovers a receipt must handle each kind explicitly.
+sealed class SaleCorrectionReceipt {
+  const SaleCorrectionReceipt();
+
+  /// The correction document ID: always the draft's idempotency key.
+  String get correctionId;
+  String get saleId;
+  String get branchId;
+
+  /// The server answered with an already registered correction.
+  bool get replayed;
+}
 
 /// One refunded line at the sale's frozen snapshot price.
 class CorrectionRefundLine {
@@ -106,7 +136,7 @@ class CorrectionRefundLine {
 ///
 /// The server returns no correction time, so none is shown: the device
 /// clock is not the server's.
-class SaleReturnReceipt {
+class SaleReturnReceipt extends SaleCorrectionReceipt {
   const SaleReturnReceipt._({
     required this.returnId,
     required this.saleId,
@@ -175,7 +205,9 @@ class SaleReturnReceipt {
   }
 
   final String returnId;
+  @override
   final String saleId;
+  @override
   final String branchId;
   final CorrectionReason reason;
   final List<CorrectionRefundLine> lines;
@@ -188,7 +220,11 @@ class SaleReturnReceipt {
 
   /// The sale was invoiced: the administrator handles the credit note.
   final bool invoiced;
+  @override
   final bool replayed;
+
+  @override
+  String get correctionId => returnId;
 }
 
 /// Parsed `previewSaleReturn` result: what [SaleReturnReceipt] would hold if
@@ -272,7 +308,7 @@ class CorrectionReplacementLine {
 }
 
 /// Parsed v1 `submitSaleReplacement` result, bound to its draft.
-class SaleReplacementReceipt {
+class SaleReplacementReceipt extends SaleCorrectionReceipt {
   const SaleReplacementReceipt._({
     required this.replacementId,
     required this.saleId,
@@ -334,10 +370,16 @@ class SaleReplacementReceipt {
   }
 
   final String replacementId;
+  @override
   final String saleId;
+  @override
   final String branchId;
   final List<CorrectionReplacementLine> lines;
+  @override
   final bool replayed;
+
+  @override
+  String get correctionId => replacementId;
 
   /// Replacements are always free and always `factory-defect`.
   int get chargeCentavos => 0;
@@ -367,7 +409,7 @@ class SaleExchangeSettlement {
 }
 
 /// Parsed v1 `submitSaleExchange` result, bound to its draft.
-class SaleExchangeReceipt {
+class SaleExchangeReceipt extends SaleCorrectionReceipt {
   const SaleExchangeReceipt._({
     required this.exchangeId,
     required this.saleId,
@@ -420,28 +462,10 @@ class SaleExchangeReceipt {
     if (!returnedAmounts.sameAs(refund.sums)) {
       throw const CorrectionProtocolException();
     }
-    final Map<Object?, Object?> newItems = correctionExact(
+    final SaleCalculation calculation = _newItems(
       receipt['newItems'],
-      _newItemsKeys,
+      draft.newItems,
     );
-    final Object? productIds = newItems['productIds'];
-    if (productIds is! List || productIds.length != draft.newItems.lineCount) {
-      throw const CorrectionProtocolException();
-    }
-    for (int index = 0; index < productIds.length; index++) {
-      if (productIds[index] != draft.newItems.lines[index].productId) {
-        throw const CorrectionProtocolException();
-      }
-    }
-    final SaleCalculation calculation;
-    try {
-      calculation = SaleCalculation.fromCallable(
-        newItems['calculation'],
-        cart: draft.newItems,
-      );
-    } on SaleProtocolException {
-      throw const CorrectionProtocolException();
-    }
     final SaleExchangeSettlement settlement = _settlement(
       receipt['settlement'],
       draft,
@@ -465,7 +489,9 @@ class SaleExchangeReceipt {
   }
 
   final String exchangeId;
+  @override
   final String saleId;
+  @override
   final String branchId;
   final CorrectionReason reason;
   final List<CorrectionRefundLine> returnedLines;
@@ -477,7 +503,132 @@ class SaleExchangeReceipt {
   final SaleCalculation newItems;
   final SaleExchangeSettlement settlement;
   final bool invoiced;
+  @override
   final bool replayed;
+
+  @override
+  String get correctionId => exchangeId;
+}
+
+/// Parsed `previewSaleExchange` result: what [SaleExchangeReceipt] would hold
+/// if the previewed exchange were submitted right now, plus per new line
+/// whether the branch stock covers it. Read-only; nothing was written, so a
+/// malformed preview is a protocol error, never uncertain.
+///
+/// [customerPaysCentavos] is the only amount a submit may send as its
+/// difference payment; the seller never types it.
+class SaleExchangePreview {
+  const SaleExchangePreview._({
+    required this.request,
+    required this.returnedLines,
+    required this.returnedBaseCentavos,
+    required this.returnedAdditionalIvaCentavos,
+    required this.returnedTotalCentavos,
+    required this.newItems,
+    required this.customerPaysCentavos,
+    required this.refundCentavos,
+    required this.refundMethod,
+    required this.unavailableProductIds,
+    required this.invoiced,
+  });
+
+  /// Requires exactly `{saleId, returned, newItems, settlement, newLines,
+  /// invoiced}` for the requested sale: returned lines bound to the request
+  /// like [SaleReturnPreview]; new-item product IDs and calculation bound to
+  /// the request cart (strictly, via [SaleCalculation.fromCallable]); exactly
+  /// the five settlement amounts re-derived from both totals, refunded
+  /// through the sale's method; and one `{productId, available}` per new
+  /// line, in cart order.
+  factory SaleExchangePreview.fromCallable(
+    Object? value, {
+    required SaleExchangePreviewRequest request,
+  }) {
+    final Map<Object?, Object?> preview = correctionExact(
+      value,
+      _exchangePreviewKeys,
+    );
+    final Object? invoiced = preview['invoiced'];
+    if (preview['saleId'] != request.saleId ||
+        invoiced is! bool ||
+        invoiced != request.sale.invoiced) {
+      throw const CorrectionProtocolException();
+    }
+    final Map<Object?, Object?> returned = correctionExact(
+      preview['returned'],
+      _returnedKeys,
+    );
+    final _Refund refund = _refund(
+      returned['lines'],
+      request.returnLines,
+      request.sale,
+      invoiced,
+    );
+    final _Amounts returnedAmounts = _amounts(returned, invoiced);
+    if (!returnedAmounts.sameAs(refund.sums)) {
+      throw const CorrectionProtocolException();
+    }
+    final SaleCalculation calculation = _newItems(
+      preview['newItems'],
+      request.newItems,
+    );
+    final (pays: int pays, refund: int refundCentavos) = _settledAmounts(
+      correctionExact(preview['settlement'], _previewSettlementKeys),
+      request.sale,
+      returnedAmounts.total,
+      calculation.totalCentavos,
+    );
+    final Object? newLines = preview['newLines'];
+    if (newLines is! List || newLines.length != request.newItems.lineCount) {
+      throw const CorrectionProtocolException();
+    }
+    final Set<String> unavailable = <String>{};
+    for (int index = 0; index < newLines.length; index++) {
+      final Map<Object?, Object?> line = correctionExact(
+        newLines[index],
+        _previewNewLineKeys,
+      );
+      final String productId = request.newItems.lines[index].productId;
+      final Object? available = line['available'];
+      if (line['productId'] != productId || available is! bool) {
+        throw const CorrectionProtocolException();
+      }
+      if (!available) unavailable.add(productId);
+    }
+    return SaleExchangePreview._(
+      request: request,
+      returnedLines: refund.lines,
+      returnedBaseCentavos: returnedAmounts.base,
+      returnedAdditionalIvaCentavos: returnedAmounts.additionalIva,
+      returnedTotalCentavos: returnedAmounts.total,
+      newItems: calculation,
+      customerPaysCentavos: pays,
+      refundCentavos: refundCentavos,
+      refundMethod: request.sale.paymentMethod,
+      unavailableProductIds: Set<String>.unmodifiable(unavailable),
+      invoiced: invoiced,
+    );
+  }
+
+  /// The exact request this preview answers.
+  final SaleExchangePreviewRequest request;
+  final List<CorrectionRefundLine> returnedLines;
+  final int returnedBaseCentavos;
+  final int returnedAdditionalIvaCentavos;
+  final int returnedTotalCentavos;
+
+  /// New items at current prices with the original invoice intent.
+  final SaleCalculation newItems;
+  final int customerPaysCentavos;
+  final int refundCentavos;
+
+  /// Always the original sale's payment method (decision 7).
+  final SalePaymentMethod refundMethod;
+
+  /// New products the branch stock cannot cover; a submit would refuse them.
+  final Set<String> unavailableProductIds;
+  final bool invoiced;
+
+  bool get allAvailable => unavailableProductIds.isEmpty;
 }
 
 (Map<Object?, Object?>, bool) _response(Object? value, Set<String> keys) {
@@ -579,6 +730,47 @@ String _sameQuantity(Object? value, CorrectionLine draft) {
   return value;
 }
 
+/// The new items' product IDs, in cart order, and their strict calculation
+/// against [cart].
+SaleCalculation _newItems(Object? value, SaleCart cart) {
+  final Map<Object?, Object?> newItems = correctionExact(value, _newItemsKeys);
+  final Object? productIds = newItems['productIds'];
+  if (productIds is! List || productIds.length != cart.lineCount) {
+    throw const CorrectionProtocolException();
+  }
+  for (int index = 0; index < productIds.length; index++) {
+    if (productIds[index] != cart.lines[index].productId) {
+      throw const CorrectionProtocolException();
+    }
+  }
+  try {
+    return SaleCalculation.fromCallable(newItems['calculation'], cart: cart);
+  } on SaleProtocolException {
+    throw const CorrectionProtocolException();
+  }
+}
+
+/// The settlement amounts, re-derived from both totals: exactly one side is
+/// positive, or both are zero, and a refund always uses the sale's method.
+({int pays, int refund}) _settledAmounts(
+  Map<Object?, Object?> settlement,
+  CorrectableSale sale,
+  int returnedCentavos,
+  int newItemCentavos,
+) {
+  final int difference = newItemCentavos - returnedCentavos;
+  final int pays = difference > 0 ? difference : 0;
+  final int refund = difference < 0 ? -difference : 0;
+  if (settlement['returnedCentavos'] != returnedCentavos ||
+      settlement['newItemCentavos'] != newItemCentavos ||
+      settlement['customerPaysCentavos'] != pays ||
+      settlement['refundCentavos'] != refund ||
+      settlement['refundMethod'] != sale.paymentMethod.wireValue) {
+    throw const CorrectionProtocolException();
+  }
+  return (pays: pays, refund: refund);
+}
+
 SaleExchangeSettlement _settlement(
   Object? value,
   SaleExchangeDraft draft,
@@ -589,18 +781,14 @@ SaleExchangeSettlement _settlement(
     value,
     _settlementKeys,
   );
-  final int difference = newItemCentavos - returnedCentavos;
-  final int pays = difference > 0 ? difference : 0;
-  final int refund = difference < 0 ? -difference : 0;
+  final (:int pays, :int refund) = _settledAmounts(
+    settlement,
+    draft.sale,
+    returnedCentavos,
+    newItemCentavos,
+  );
   final Object? rawPayment = settlement['differencePayment'];
   final SaleExchangePayment? expected = draft.differencePayment;
-  if (settlement['returnedCentavos'] != returnedCentavos ||
-      settlement['newItemCentavos'] != newItemCentavos ||
-      settlement['customerPaysCentavos'] != pays ||
-      settlement['refundCentavos'] != refund ||
-      settlement['refundMethod'] != draft.sale.paymentMethod.wireValue) {
-    throw const CorrectionProtocolException();
-  }
   if (pays == 0) {
     if (rawPayment != null || expected != null) {
       throw const CorrectionProtocolException();

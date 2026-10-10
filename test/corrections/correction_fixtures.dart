@@ -375,3 +375,36 @@ Map<String, Object?> returnResponseFor(
   },
   'replayed': replayed,
 };
+
+/// The preview of [exchangeDraft]: return 1 pin (good), receive 2 tapes.
+SaleExchangePreviewRequest exchangePreviewRequest() =>
+    SaleExchangePreviewRequest.create(
+      sale: lookupSale(),
+      reason: CorrectionReason.wrongProduct,
+      returnLines: const <ReturnLineInput>[
+        ReturnLineInput(
+          lineIndex: 1,
+          quantity: '1',
+          condition: ReturnCondition.good,
+        ),
+      ],
+      newItems: SaleCart.empty().add(tapeLine),
+    );
+
+/// Server preview for [exchangePreviewRequest]: exactly the receipt amounts
+/// (the customer pays 2070), without the write-only difference payment.
+Map<String, Object?> exchangePreviewJson({bool tapeAvailable = true}) {
+  final Map<String, Object?> receipt = exchangeReceiptJson();
+  return <String, Object?>{
+    'saleId': saleKey,
+    'returned': receipt['returned'],
+    'newItems': receipt['newItems'],
+    'settlement': Map<String, Object?>.of(
+      receipt['settlement']! as Map<String, Object?>,
+    )..remove('differencePayment'),
+    'newLines': <Object?>[
+      <String, Object?>{'productId': 'DEMO-TAPE', 'available': tapeAvailable},
+    ],
+    'invoiced': true,
+  };
+}

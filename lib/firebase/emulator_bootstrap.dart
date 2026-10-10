@@ -523,9 +523,10 @@ class DemoEmulatorBootstrap {
   }
 
   /// Binds `findCorrectableSale`, `listRecentCorrectableSales`,
-  /// `submitSaleReturn`, `submitSaleReplacement`, `submitSaleExchange` and
-  /// `previewSaleReturn` by name. Separate from [initializeCorrectionGateway]
-  /// so the binding is testable without Firebase.
+  /// `submitSaleReturn`, `submitSaleReplacement`, `submitSaleExchange`,
+  /// `previewSaleReturn` and `previewSaleExchange` by name. Separate from
+  /// [initializeCorrectionGateway] so the binding is testable without
+  /// Firebase.
   @visibleForTesting
   static EmulatorCorrectionGateway createCorrectionGateway({
     required EmulatorSession session,
@@ -540,6 +541,7 @@ class DemoEmulatorBootstrap {
     replacementInvoke: callable('submitSaleReplacement'),
     exchangeInvoke: callable('submitSaleExchange'),
     previewReturnInvoke: callable('previewSaleReturn'),
+    previewExchangeInvoke: callable('previewSaleExchange'),
   );
 
   static Future<T> _initializeLiveFunctionsGateway<T>(
