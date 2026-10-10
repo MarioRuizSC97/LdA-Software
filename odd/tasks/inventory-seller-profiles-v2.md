@@ -52,7 +52,7 @@ New decision (user, 2026-10-10):
 - [x] SP-02 — The `setSellerProfile` administrator callable in `functions/src/index.js`, with callable unit tests and an emulator test. Route: delegated writer.
 - [x] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
 - [x] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
-- [ ] SP-04b — Fix the SP-04 review warnings: a stale profile read overwriting a saved name, unobservable load failures, administrator-predicate drift, and the duplicated branch pattern; plus the review suggestions. Route: delegated writer.
+- [x] SP-04b — Fix the SP-04 review warnings: a stale profile read overwriting a saved name, unobservable load failures, administrator-predicate drift, and the duplicated branch pattern; plus the review suggestions. Route: delegated writer.
 - [ ] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
 - [ ] SP-06 — Reconcile and report. Route: parent.
 
@@ -100,7 +100,23 @@ New decision (user, 2026-10-10):
   - **Evidence (author-reported):** compile-level RED, then GREEN; 13 mutation probes, with 11 killed and 2 equivalent.
 - SP-04 parent spot check: `flutter test` 669/669.
 - SP-04 closure: high-risk four-lens native review `review-f6c634e50600c04d` approved and acknowledged; commit tree exactly the approved candidate `724c68ca`; commit `f6c4a6b`. Its warnings and suggestions go into SP-04b.
+- SP-04b writer (delegated):
+  - **Fixes:**
+    - a per-uid save counter stops a late profile read from overwriting a saved name, and a background failure never downgrades a confirmed name (real RED observed);
+    - `MovementsUnavailable` keeps its cause, which is logged as `lda.movements`. Firestore `failed-precondition` (missing index) and `permission-denied` get specific Spanish messages;
+    - a shared `isSameExactAdministrator` in `lib/movements/administrator_session.dart` replaces the old check. The repository had accepted an expected session with a branch (real RED);
+    - a shared `isBranchId`;
+    - `isSellerUid` is renamed `isPathSafeUid`;
+    - shell tests for loader retry and a fresh backend per administrator;
+    - catalog tests for closing the view on a session change or removal.
+  - **Evidence (author-reported):** 12 mutation probes, all killed.
+- SP-04b parent spot check: `flutter test` 685/685.
+- SP-04b closure: high-risk four-lens native review `review-4833e384e4afc5ae` approved and acknowledged; commit tree exactly the approved candidate `98e6c412`; commit `87f1c8e`.
+  - Suggestions:
+    - comment the magic `loaderFailures = 2`;
+    - add a widget test for losing the session while a load is pending.
+  - Out-of-scope copies remain: the branch regex in `emulator_session.dart` and `firestore_catalog_repository.dart`, and the per-gateway administrator checks in stock intake and product creation.
 
 ## Next step
 
-SP-04b: the review fixes (delegated writer, running). Then SP-05.
+SP-05: HTTP transport acceptance for setSellerProfile, the sellerProfiles rules and the administrator movements query, then one live run with user approval.
