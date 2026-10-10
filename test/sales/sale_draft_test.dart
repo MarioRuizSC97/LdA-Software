@@ -394,6 +394,57 @@ void main() {
       expect(store.completedFor('seller-1', saleBranchId), isNull);
     });
 
+    test('a receipt parsed for a draft always completes its attempt', () {
+      Map<String, Object?> response(SalePaymentMethod method) =>
+          <String, Object?>{
+            ...submitResponse(),
+            'receipt': receiptV2(method: method.wireValue),
+          };
+      for (final SalePaymentMethod method in SalePaymentMethod.values) {
+        final SaleDraftStore store = SaleDraftStore();
+        final SaleDraft draft = _draft(method: method);
+        final SaleAttempt attempt = store.begin(
+          ownerUserId: 'seller-1',
+          draft: draft,
+        );
+        final SaleReceipt receipt = SaleReceipt.fromCallable(
+          response(method),
+          draft: draft,
+        );
+        expect(store.complete(attempt, receipt), isTrue);
+
+        // Parsing already refuses a response for any other draft, so the
+        // check in complete can never fire for a parsed receipt.
+        for (final SalePaymentMethod other in SalePaymentMethod.values) {
+          if (other == method) continue;
+          expect(
+            () => SaleReceipt.fromCallable(response(other), draft: draft),
+            throwsA(isA<SaleProtocolException>()),
+          );
+        }
+      }
+      final SaleDraft elsewhere = SaleDraft.fromQuote(
+        quote: _quote(),
+        branchId: 'branch-other',
+        paymentMethod: SalePaymentMethod.card,
+        createKey: () => saleKey,
+      );
+      expect(
+        () => SaleReceipt.fromCallable(submitResponse(), draft: elsewhere),
+        throwsA(isA<SaleProtocolException>()),
+      );
+      final SaleDraft otherKey = SaleDraft.fromQuote(
+        quote: _quote(),
+        branchId: saleBranchId,
+        paymentMethod: SalePaymentMethod.card,
+        createKey: () => '00000000-0000-4000-8000-000000000001',
+      );
+      expect(
+        () => SaleReceipt.fromCallable(submitResponse(), draft: otherKey),
+        throwsA(isA<SaleProtocolException>()),
+      );
+    });
+
     test('an equal completed draft may be sent again for a replay', () {
       final SaleDraftStore store = SaleDraftStore();
       final SaleDraft draft = _draft();

@@ -96,6 +96,7 @@ class SaleCartController extends ChangeNotifier {
   SaleDraft? _lockedDraft;
   String? _message;
   SaleReceipt? _lastReceipt;
+  bool _receiptPending = false;
   String? _editingProductId;
   String? _entryError;
   bool _disposed = false;
@@ -110,6 +111,11 @@ class SaleCartController extends ChangeNotifier {
   bool get isLocked => _lockedDraft != null;
   String? get message => _message;
   SaleReceipt? get lastReceipt => _lastReceipt;
+
+  /// Whether [lastReceipt] is a committed sale taken over from the shell
+  /// (one the seller has not acknowledged yet), rather than the receipt of
+  /// a sale charged from this cart. Shown with [salePendingReceiptMessage].
+  bool get receiptPending => _lastReceipt != null && _receiptPending;
   String? get editingProductId => _editingProductId;
   String? get entryError => _entryError;
 
@@ -234,7 +240,10 @@ class SaleCartController extends ChangeNotifier {
   /// "Nueva venta": acknowledges the shown receipt, so the shell drops it.
   void dismissReceipt() {
     final SaleReceipt? receipt = _lastReceipt;
-    if (receipt != null) _checkout.acknowledge(receipt);
+    if (receipt != null) {
+      _checkout.acknowledge(receipt);
+      _resetCart();
+    }
     _lastReceipt = null;
     _message = null;
     _notify();
@@ -244,7 +253,7 @@ class SaleCartController extends ChangeNotifier {
   /// the seller has not acknowledged yet, and unlocks a draft the shell no
   /// longer holds (a rejection that landed after an earlier cart closed).
   /// Returns whether a receipt is to be shown.
-  bool showPendingReceipt() {
+  bool reconcileOnOpen() {
     if (_submitting) return _lastReceipt != null;
     if (_blockOnPendingReceipt()) return true;
     if (_lockedDraft != null && _checkout.unresolvedDraft() == null) {
@@ -297,16 +306,9 @@ class SaleCartController extends ChangeNotifier {
       // cart loses nothing: the next cart shows it first.
       if (_disposed) return;
       _submitting = false;
-      _lockedDraft = null;
-      _quoteGeneration += 1;
-      _cart = SaleCart.empty();
-      _quote = null;
-      _quoteStatus = SaleQuoteStatus.empty;
-      _quoteMessage = null;
-      _paymentMethod = SalePaymentMethod.cash;
-      _editingProductId = null;
-      _entryError = null;
+      _resetCart();
       _lastReceipt = receipt;
+      _receiptPending = false;
       _notify();
       onCompleted?.call(receipt);
     } on SaleRejectedException catch (error) {
@@ -363,6 +365,15 @@ class SaleCartController extends ChangeNotifier {
     final SaleReceipt? receipt = _checkout.unacknowledgedReceipt();
     if (receipt == null) return false;
     if (identical(receipt, _lastReceipt)) return true;
+    _resetCart();
+    _lastReceipt = receipt;
+    _receiptPending = true;
+    return true;
+  }
+
+  /// An empty, unlocked cart with no quote, entry or message, paying cash:
+  /// after a committed sale, a taken-over receipt, or "Nueva venta".
+  void _resetCart() {
     _lockedDraft = null;
     _quoteGeneration += 1;
     _cart = SaleCart.empty();
@@ -372,13 +383,11 @@ class SaleCartController extends ChangeNotifier {
     _paymentMethod = SalePaymentMethod.cash;
     _editingProductId = null;
     _entryError = null;
-    _lastReceipt = receipt;
-    _message = salePendingReceiptMessage;
-    return true;
+    _message = null;
   }
 
   /// Refuses a cart action while a committed sale awaits acknowledgement,
-  /// showing its receipt with [salePendingReceiptMessage] instead.
+  /// showing its receipt as [receiptPending] instead.
   bool _blockOnPendingReceipt() {
     if (!_adoptPendingReceipt()) return false;
     _notify();

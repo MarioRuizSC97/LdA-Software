@@ -115,6 +115,10 @@ class CorrectionExchangeController extends ChangeNotifier {
   @visibleForTesting
   final ExchangeDraftBuilder buildDraft;
   final List<ExchangeNewLineEntry> _newLines = <ExchangeNewLineEntry>[];
+
+  /// Controllers of removed or replaced new items, disposed after the next
+  /// frame so a mounted or focused field never touches a disposed one.
+  final List<TextEditingController> _retired = <TextEditingController>[];
   SaleCorrections _corrections;
 
   CorrectionReason? _reason;
@@ -132,7 +136,14 @@ class CorrectionExchangeController extends ChangeNotifier {
   String? _blockedMessage;
   bool _disposed = false;
 
-  set corrections(SaleCorrections value) => _corrections = value;
+  /// The shell rebuilds the form with a fresh instance whenever its stored
+  /// corrections change, so an editable form re-reads what blocks it: the
+  /// block clears once the blocking correction resolves.
+  set corrections(SaleCorrections value) {
+    if (identical(value, _corrections)) return;
+    _corrections = value;
+    if (canEdit) _blockedMessage = correctionBlockedMessage(value);
+  }
 
   List<ExchangeNewLineEntry> get newLines =>
       List<ExchangeNewLineEntry>.unmodifiable(_newLines);
@@ -228,7 +239,7 @@ class CorrectionExchangeController extends ChangeNotifier {
       (ExchangeNewLineEntry entry) => entry.productId == productId,
     );
     if (index < 0) return;
-    _newLines.removeAt(index).quantity.dispose();
+    _retire(_newLines.removeAt(index).quantity);
     _formChanged();
   }
 
@@ -377,7 +388,7 @@ class CorrectionExchangeController extends ChangeNotifier {
       entry.condition = line.condition ?? ReturnCondition.good;
     }
     for (final ExchangeNewLineEntry entry in _newLines) {
-      entry.quantity.dispose();
+      _retire(entry.quantity);
     }
     _newLines
       ..clear()
@@ -472,6 +483,24 @@ class CorrectionExchangeController extends ChangeNotifier {
     _notify();
   }
 
+  void _retire(TextEditingController controller) {
+    _retired.add(controller);
+    if (_retired.length > 1) return;
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) => _disposeRetired())
+      ..ensureVisualUpdate();
+  }
+
+  void _disposeRetired() {
+    final List<TextEditingController> retired = List<TextEditingController>.of(
+      _retired,
+    );
+    _retired.clear();
+    for (final TextEditingController controller in retired) {
+      controller.dispose();
+    }
+  }
+
   bool _isCurrentPreview(int generation) =>
       !_disposed && generation == _previewGeneration;
 
@@ -561,6 +590,7 @@ class CorrectionExchangeController extends ChangeNotifier {
     for (final ExchangeNewLineEntry entry in _newLines) {
       entry.quantity.dispose();
     }
+    _disposeRetired();
     note.dispose();
     super.dispose();
   }

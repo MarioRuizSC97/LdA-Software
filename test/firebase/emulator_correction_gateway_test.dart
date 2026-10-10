@@ -693,86 +693,95 @@ void main() {
     const String window = 'sale is outside the correction window';
     const String over = 'return exceeds the remaining sold quantity';
 
-    final List<(SaleRejectedException, bool, bool, bool)> cases = [
+    final List<
+      ({SaleRejectedException error, bool stock, bool closed, bool overReturn})
+    >
+    cases = [
       (
-        rejected(
+        error: rejected(
           'failed-precondition',
           'insufficient stock',
           'insufficient-stock',
         ),
-        true,
-        false,
-        false,
+        stock: true,
+        closed: false,
+        overReturn: false,
       ),
       (
-        rejected('failed-precondition', window, 'correction-window-closed'),
-        false,
-        true,
-        false,
+        error: rejected(
+          'failed-precondition',
+          window,
+          'correction-window-closed',
+        ),
+        stock: false,
+        closed: true,
+        overReturn: false,
       ),
-      (rejected('out-of-range', over, 'over-return'), false, false, true),
+      (
+        error: rejected('out-of-range', over, 'over-return'),
+        stock: false,
+        closed: false,
+        overReturn: true,
+      ),
       // The English message alone no longer identifies the rule.
       (
-        rejected('failed-precondition', 'insufficient stock'),
-        false,
-        false,
-        false,
+        error: rejected('failed-precondition', 'insufficient stock'),
+        stock: false,
+        closed: false,
+        overReturn: false,
       ),
-      (rejected('failed-precondition', window), false, false, false),
-      (rejected('out-of-range', over), false, false, false),
       (
-        rejected('out-of-range', 'exchange calculation exceeds safe bounds'),
-        false,
-        false,
-        false,
+        error: rejected('failed-precondition', window),
+        stock: false,
+        closed: false,
+        overReturn: false,
+      ),
+      (
+        error: rejected('out-of-range', over),
+        stock: false,
+        closed: false,
+        overReturn: false,
+      ),
+      (
+        error: rejected(
+          'out-of-range',
+          'exchange calculation exceeds safe bounds',
+        ),
+        stock: false,
+        closed: false,
+        overReturn: false,
       ),
       // A reason under another code is not that rule either.
       (
-        rejected(
+        error: rejected(
           'invalid-argument',
           'insufficient stock',
           'insufficient-stock',
         ),
-        false,
-        false,
-        false,
+        stock: false,
+        closed: false,
+        overReturn: false,
       ),
       (
-        rejected('not-found', window, 'correction-window-closed'),
-        false,
-        false,
-        false,
+        error: rejected('not-found', window, 'correction-window-closed'),
+        stock: false,
+        closed: false,
+        overReturn: false,
       ),
       (
-        rejected('failed-precondition', over, 'over-return'),
-        false,
-        false,
-        false,
+        error: rejected('failed-precondition', over, 'over-return'),
+        stock: false,
+        closed: false,
+        overReturn: false,
       ),
     ];
-    for (final (
-          SaleRejectedException error,
-          bool stock,
-          bool closed,
-          bool overReturn,
-        )
-        in cases) {
-      expect(
-        error.isOutOfStock,
-        stock,
-        reason: '${error.code} ${error.reason}',
-      );
-      expect(
-        error.isOutsideCorrectionWindow,
-        closed,
-        reason: '${error.code} ${error.reason}',
-      );
-      expect(
-        error.isOverReturn,
-        overReturn,
-        reason: '${error.code} ${error.reason}',
-      );
-      expect(error.isFolioAmbiguous, isFalse);
+    for (final row in cases) {
+      final SaleRejectedException error = row.error;
+      final String label = '${error.code} ${error.reason}';
+      expect(error.isOutOfStock, row.stock, reason: label);
+      expect(error.isOutsideCorrectionWindow, row.closed, reason: label);
+      expect(error.isOverReturn, row.overReturn, reason: label);
+      expect(error.isFolioAmbiguous, isFalse, reason: label);
     }
   });
 

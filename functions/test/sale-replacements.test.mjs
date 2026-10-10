@@ -137,8 +137,9 @@ function returnRequest(key, lineIndex, quantity, condition = 'good') {
   };
 }
 
-// Every refusal states its machine reason; none is the default.
-async function rejectsUnchanged(firestore, promise, code, message, reason) {
+// Asserts the code, the message when given, and the machine reason exactly:
+// a refusal asserted without a reason must carry none.
+async function rejectsUnchanged(firestore, promise, code, { message, reason } = {}) {
   const before = clone([...firestore.records]);
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SaleError, `unexpected ${error}`);
@@ -266,15 +267,15 @@ test('a replacement swaps defective units for sellable stock at no charge', asyn
 test('insufficient sellable stock is refused, aggregating lines of one product', async () => {
   const low = fixture({}, withRecords([['branches/north/stock/p1', { ...piece, quantityScaled: 1 }]]));
   await rejectsUnchanged(low.firestore, low.service(request({ lines: [{ lineIndex: 0, quantity: '2' }] })),
-    'failed-precondition', 'insufficient stock', 'insufficient-stock');
+    'failed-precondition', { message: 'insufficient stock', reason: 'insufficient-stock' });
   const none = fixture({}, withRecords([], ['branches/north/stock/p1']));
   await rejectsUnchanged(none.firestore, none.service(request()), 'failed-precondition',
-    'insufficient stock', 'insufficient-stock');
+    { message: 'insufficient stock', reason: 'insufficient-stock' });
   // Each line alone fits four units of stock, together they need five.
   const lines = [{ lineIndex: 0, quantity: '3' }, { lineIndex: 1, quantity: '2' }];
   const four = fixture({}, withRecords([['branches/north/stock/p1', { ...piece, quantityScaled: 4 }]]));
   await rejectsUnchanged(four.firestore, four.service(request({ saleId: 'dup', lines })),
-    'failed-precondition', 'insufficient stock', 'insufficient-stock');
+    'failed-precondition', { message: 'insufficient stock', reason: 'insufficient-stock' });
   const five = fixture();
   await five.service(request({ saleId: 'dup', lines }));
   assert.deepEqual(stock(five.firestore, 'p1'),
@@ -289,7 +290,7 @@ test('lines of one product with different specifications fail closed', async () 
   const { firestore, service } = fixture({}, withRecords([['sales/mixed', mixed]]));
   await rejectsUnchanged(firestore, service(request({ saleId: 'mixed', lines: [
     { lineIndex: 0, quantity: '1' }, { lineIndex: 1, quantity: '1' },
-  ] })), 'failed-precondition', 'sale lines disagree on a product specification');
+  ] })), 'failed-precondition', { message: 'sale lines disagree on a product specification' });
   // A product whose current specification differs from the sale also fails closed.
   const changed = fixture({}, withRecords([['products/p1', { quantitySpec: kg, pricing: pricing(1) }]]));
   await rejectsUnchanged(changed.firestore, changed.service(request()), 'failed-precondition');
@@ -299,14 +300,14 @@ test('a replacement is capped at the remaining returnable quantity after a retur
   const { firestore, service, submitReturn } = fixture();
   await submitReturn(returnRequest('r1', 0, '2'));
   await rejectsUnchanged(firestore, service(request({ lines: [{ lineIndex: 0, quantity: '2' }] })),
-    'out-of-range', 'replacement exceeds the remaining returnable quantity', 'over-return');
+    'out-of-range', { message: 'replacement exceeds the remaining returnable quantity', reason: 'over-return' });
   const { receipt } = await service(request({ lines: [{ lineIndex: 0, quantity: '1' }] }));
   assert.deepEqual(receipt.lines, [{ lineIndex: 0, productId: 'p1', quantity: '1' }]);
   // Never more than sold, even without any return.
   const fresh = fixture();
   await rejectsUnchanged(fresh.firestore, fresh.service(request({
     lines: [{ lineIndex: 1, quantity: '1.251' }],
-  })), 'out-of-range', undefined, 'over-return');
+  })), 'out-of-range', { reason: 'over-return' });
 });
 
 test('a replaced unit stays returnable and replaceable again (decision 11)', async () => {
@@ -318,7 +319,7 @@ test('a replaced unit stays returnable and replaceable again (decision 11)', asy
   assert.equal(receipt.refund.totalCentavos, 3480);
   assert.deepEqual(firestore.records.get('saleReturnLedgers/s1').returned, { 0: 3 });
   await rejectsUnchanged(firestore, service(request({ idempotencyKey: 'x3' })), 'out-of-range',
-    undefined, 'over-return');
+    { reason: 'over-return' });
 });
 
 test('replay is exact and duplicates no write, even after an abandoned attempt', async () => {
@@ -347,7 +348,7 @@ test('a reused key with a different payload, actor or branch is already-exists',
     request({}, other), request({ saleId: 'foreign' }, south),
   ]) {
     await rejectsUnchanged(firestore, service(input), 'already-exists',
-      'idempotency key is already owned by a different submission');
+      { message: 'idempotency key is already owned by a different submission' });
   }
 });
 
@@ -358,19 +359,19 @@ test('replacement keys share no namespace with returns; orphans are a stable col
     'inventoryMovements/replacement-x1-0-in', 'inventoryMovements/replacement-x1-0-out']) {
     const orphan = fixture({}, withRecords([[path, { orphan: true }]]));
     await rejectsUnchanged(orphan.firestore, orphan.service(request()), 'already-exists',
-      'idempotency key collides with existing correction records');
+      { message: 'idempotency key collides with existing correction records' });
   }
 });
 
 test('foreign and missing sales are the same not-found; expired and future sales are refused', async () => {
   const { firestore, service } = fixture();
   const message = 'sale was not found in this branch';
-  await rejectsUnchanged(firestore, service(request({ saleId: 'foreign' })), 'not-found', message);
-  await rejectsUnchanged(firestore, service(request({ saleId: 'missing' })), 'not-found', message);
+  await rejectsUnchanged(firestore, service(request({ saleId: 'foreign' })), 'not-found', { message });
+  await rejectsUnchanged(firestore, service(request({ saleId: 'missing' })), 'not-found', { message });
   await rejectsUnchanged(firestore, service(request({ saleId: 'expired' })), 'failed-precondition',
-    'sale is outside the correction window', 'correction-window-closed');
+    { message: 'sale is outside the correction window', reason: 'correction-window-closed' });
   await rejectsUnchanged(firestore, service(request({ saleId: 'future' })), 'failed-precondition',
-    'sale is outside the correction window', 'correction-window-closed');
+    { message: 'sale is outside the correction window', reason: 'correction-window-closed' });
 });
 
 test('an unknown line or a precision mismatch is invalid-argument', async () => {
@@ -410,7 +411,7 @@ test('malformed persisted sale, ledger, product, stock or replay fails closed', 
     await probe.service(request());
     tamper(probe.firestore.records.get('saleReplacementSubmissionReceipts/x1').result);
     await rejectsUnchanged(probe.firestore, probe.service(request()), 'failed-precondition',
-      'persisted replacement replay is invalid');
+      { message: 'persisted replacement replay is invalid' });
   }
 });
 
@@ -421,7 +422,7 @@ test('an invalid clock fails new replacements but never historical replay', asyn
     const broken = replacements.createSaleReplacementService({ firestore, environment, now: clock });
     assert.equal((await broken(request())).replayed, true);
     await rejectsUnchanged(firestore, broken(request({ idempotencyKey: 'x2' })), 'failed-precondition',
-      'replacement clock is invalid');
+      { message: 'replacement clock is invalid' });
   }
 });
 

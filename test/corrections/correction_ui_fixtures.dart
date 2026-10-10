@@ -92,7 +92,7 @@ Map<String, Object?> catalogCalculationFor(
     final int lineAdditional =
         cart.invoiceRequested &&
             pricing.priceMode == 'iva-additional-on-invoice'
-        ? (lineBase * 16 * 2 + 100) ~/ 200
+        ? (lineBase * pricing.ivaRateBasisPoints! * 2 + 10000) ~/ 20000
         : 0;
     base += lineBase;
     additional += lineAdditional;

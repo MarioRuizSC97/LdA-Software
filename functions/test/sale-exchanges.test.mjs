@@ -154,8 +154,9 @@ function returnRequest(key, lineIndex, quantity, saleId = 's1') {
   };
 }
 
-// Every refusal states its machine reason; none is the default.
-async function rejectsUnchanged(firestore, promise, code, message, reason) {
+// Asserts the code, the message when given, and the machine reason exactly:
+// a refusal asserted without a reason must carry none.
+async function rejectsUnchanged(firestore, promise, code, { message, reason } = {}) {
   const before = clone([...firestore.records]);
   await assert.rejects(promise, (error) => {
     assert.ok(error instanceof SaleError, `unexpected ${error}`);
@@ -254,7 +255,7 @@ test('the customer pays the difference, which must be exactly paid', async () =>
     const input = request();
     if (differencePayment) input.data.differencePayment = differencePayment;
     else delete input.data.differencePayment;
-    await rejectsUnchanged(firestore, service(input), 'invalid-argument', message, 'payment-mismatch');
+    await rejectsUnchanged(firestore, service(input), 'invalid-argument', { message, reason: 'payment-mismatch' });
   }
 
   const { firestore, service } = fixture();
@@ -320,7 +321,7 @@ test('the customer is refunded the difference through the original payment metho
   // A payment is never accepted when the customer owes nothing.
   await rejectsUnchanged(firestore, service({ ...input, data: { ...input.data,
     differencePayment: { method: 'cash', amountCentavos: 1000 } } }), 'invalid-argument',
-  'difference payment is only accepted when the customer owes money', 'payment-mismatch');
+  { message: 'difference payment is only accepted when the customer owes money', reason: 'payment-mismatch' });
   const { receipt } = await service(input);
   assert.deepEqual(receipt.settlement, {
     returnedCentavos: 2000, newItemCentavos: 1000, customerPaysCentavos: 0, refundCentavos: 1000,
@@ -334,7 +335,9 @@ test('an even exchange takes no payment and refunds nothing', async () => {
   const { firestore, service } = fixture();
   await rejectsUnchanged(firestore, service(evenRequest({
     differencePayment: { method: 'card', amountCentavos: 0 },
-  })), 'invalid-argument', 'difference payment is only accepted when the customer owes money', 'payment-mismatch');
+  })), 'invalid-argument', {
+    message: 'difference payment is only accepted when the customer owes money', reason: 'payment-mismatch',
+  });
   const { receipt } = await service(evenRequest());
   assert.deepEqual(receipt.settlement, {
     returnedCentavos: 1000, newItemCentavos: 1000, customerPaysCentavos: 0, refundCentavos: 0,
@@ -386,7 +389,7 @@ test('a partial exchange leaves the rest returnable with cumulative refunds', as
   assert.equal(exchanged.receipt.returned.totalCentavos, 333);
   assert.deepEqual(ledger(firestore), { returned: { 1: 333 }, lastReturnId: 'x1', updatedAt: AT });
   await rejectsUnchanged(firestore, submitReturn(returnRequest('r1', 1, '0.918')), 'out-of-range',
-    undefined, 'over-return');
+    { reason: 'over-return' });
   const { receipt } = await submitReturn(returnRequest('r1', 1, '0.917'));
   assert.equal(receipt.refund.totalCentavos, 917);
   assert.equal(exchanged.receipt.returned.totalCentavos + receipt.refund.totalCentavos, 1250);
@@ -394,20 +397,18 @@ test('a partial exchange leaves the rest returnable with cumulative refunds', as
   await rejectsUnchanged(firestore, service(evenRequest({ idempotencyKey: 'x2',
     returnLines: [{ lineIndex: 1, quantity: '0.001', condition: 'good' }],
     differencePayment: { method: 'cash', amountCentavos: 999 } })), 'out-of-range',
-    undefined, 'over-return');
+    { reason: 'over-return' });
 });
 
 test('an exchange beyond the remaining returnable quantity is out-of-range', async () => {
   const { firestore, service, submitReturn } = fixture();
   await rejectsUnchanged(firestore, service(request({
     returnLines: [{ lineIndex: 0, quantity: '4', condition: 'good' }],
-  })), 'out-of-range', 'exchange exceeds the remaining sold quantity',
-  'over-return');
+  })), 'out-of-range', { message: 'exchange exceeds the remaining sold quantity', reason: 'over-return' });
   await submitReturn(returnRequest('r1', 0, '2'));
   await rejectsUnchanged(firestore, service(evenRequest({
     returnLines: [{ lineIndex: 0, quantity: '2', condition: 'good' }],
-  })), 'out-of-range', 'exchange exceeds the remaining sold quantity',
-  'over-return');
+  })), 'out-of-range', { message: 'exchange exceeds the remaining sold quantity', reason: 'over-return' });
   for (const line of [{ lineIndex: 2, quantity: '1' }, { lineIndex: 0, quantity: '0.5' }]) {
     await rejectsUnchanged(firestore, service(evenRequest({
       returnLines: [{ ...line, condition: 'good' }] })), 'invalid-argument');
@@ -421,33 +422,33 @@ test('buying a product that is being returned is a replacement, not an exchange'
     [{ productId: 'p3', quantity: '1' }, { productId: 'p1', quantity: '1' }],
   ]) {
     await rejectsUnchanged(firestore, service(request({ newLines })), 'invalid-argument',
-      'exchange new items must differ from the returned products');
+      { message: 'exchange new items must differ from the returned products' });
   }
   // A factory-defect line is still a returned product.
   await rejectsUnchanged(firestore, service(request({
     returnLines: [{ lineIndex: 0, quantity: '1', condition: 'factory-defect' }],
     newLines: [{ productId: 'p1', quantity: '1' }],
-  })), 'invalid-argument', 'exchange new items must differ from the returned products');
+  })), 'invalid-argument', { message: 'exchange new items must differ from the returned products' });
 });
 
 test('new items need sellable stock', async () => {
   const low = fixture({}, withRecords([['branches/north/stock/p3', { ...piece, quantityScaled: 0 }]]));
   await rejectsUnchanged(low.firestore, low.service(request()), 'failed-precondition',
-    'insufficient stock', 'insufficient-stock');
+    { message: 'insufficient stock', reason: 'insufficient-stock' });
   const none = fixture({}, withRecords([], ['branches/north/stock/p3']));
   await rejectsUnchanged(none.firestore, none.service(request()), 'failed-precondition',
-    'insufficient stock', 'insufficient-stock');
+    { message: 'insufficient stock', reason: 'insufficient-stock' });
   const many = fixture();
   await rejectsUnchanged(many.firestore, many.service(request({
     newLines: [{ productId: 'p3', quantity: '5' }],
     differencePayment: { method: 'card', amountCentavos: 6500 },
-  })), 'failed-precondition', 'insufficient stock', 'insufficient-stock');
+  })), 'failed-precondition', { message: 'insufficient stock', reason: 'insufficient-stock' });
 });
 
 test('a missing new product or one with invalid pricing or specification fails closed', async () => {
   const missing = fixture({}, withRecords([], ['products/p3']));
   await rejectsUnchanged(missing.firestore, missing.service(request()), 'not-found',
-    'product does not exist');
+    { message: 'product does not exist' });
   for (const [product, message] of [
     [{ quantitySpec: piece }, 'product pricing is invalid'],
     [{ quantitySpec: piece, pricing: { ...pricing(1500), currency: 'USD' } }, 'product pricing is invalid'],
@@ -463,12 +464,12 @@ test('a missing new product or one with invalid pricing or specification fails c
     [{ pricing: pricing(1500) }, 'product quantity specification is invalid'],
   ]) {
     const { firestore, service } = fixture({}, withRecords([['products/p3', product]]));
-    await rejectsUnchanged(firestore, service(request()), 'failed-precondition', message);
+    await rejectsUnchanged(firestore, service(request()), 'failed-precondition', { message });
   }
   // A quantity finer than the new product's precision is a request error.
   const { firestore, service } = fixture();
   await rejectsUnchanged(firestore, service(request({ newLines: [{ productId: 'p3', quantity: '0.5' }] })),
-    'invalid-argument', 'quantity is not representable by the product specification');
+    'invalid-argument', { message: 'quantity is not representable by the product specification' });
 });
 
 test('a factory-defect returned line is recorded but never restocked', async () => {
@@ -534,7 +535,7 @@ test('a tampered replay receipt fails closed, including quantity binding', async
     await probe.service(request());
     tamper(probe.firestore.records.get('saleExchangeSubmissionReceipts/x1').result);
     await rejectsUnchanged(probe.firestore, probe.service(request()), 'failed-precondition',
-      'persisted exchange replay is invalid');
+      { message: 'persisted exchange replay is invalid' });
   }
 });
 
@@ -551,7 +552,7 @@ test('a reused key with a different payload, actor or branch is already-exists',
     request({}, other), request({ saleId: 'foreign' }, south),
   ]) {
     await rejectsUnchanged(firestore, service(input), 'already-exists',
-      'idempotency key is already owned by a different submission');
+      { message: 'idempotency key is already owned by a different submission' });
   }
 });
 
@@ -562,17 +563,17 @@ test('exchange keys share no namespace with returns; orphans are a stable collis
     'inventoryMovements/exchange-x1-in-0', 'inventoryMovements/exchange-x1-out-0']) {
     const orphan = fixture({}, withRecords([[path, { orphan: true }]]));
     await rejectsUnchanged(orphan.firestore, orphan.service(request()), 'already-exists',
-      'idempotency key collides with existing correction records');
+      { message: 'idempotency key collides with existing correction records' });
   }
 });
 
 test('foreign and missing sales are the same not-found; expired sales are refused', async () => {
   const { firestore, service } = fixture();
   const message = 'sale was not found in this branch';
-  await rejectsUnchanged(firestore, service(request({ saleId: 'foreign' })), 'not-found', message);
-  await rejectsUnchanged(firestore, service(request({ saleId: 'missing' })), 'not-found', message);
+  await rejectsUnchanged(firestore, service(request({ saleId: 'foreign' })), 'not-found', { message });
+  await rejectsUnchanged(firestore, service(request({ saleId: 'missing' })), 'not-found', { message });
   await rejectsUnchanged(firestore, service(request({ saleId: 'expired' })), 'failed-precondition',
-    'sale is outside the correction window', 'correction-window-closed');
+    { message: 'sale is outside the correction window', reason: 'correction-window-closed' });
 });
 
 test('malformed persisted ledger or stock fails closed', async () => {
@@ -594,7 +595,7 @@ test('an invalid clock fails new exchanges but never historical replay', async (
     const broken = exchanges.createSaleExchangeService({ firestore, environment, now: clock });
     assert.equal((await broken(request())).replayed, true);
     await rejectsUnchanged(firestore, broken(request({ idempotencyKey: 'x2' })), 'failed-precondition',
-      'exchange clock is invalid');
+      { message: 'exchange clock is invalid' });
   }
 });
 
@@ -661,7 +662,7 @@ test('returned lines of one product with different specifications fail closed', 
   await rejectsUnchanged(firestore, service(evenRequest({ saleId: 'split', returnLines: [
     { lineIndex: 0, quantity: '1', condition: 'good' },
     { lineIndex: 1, quantity: '0.5', condition: 'good' },
-  ] })), 'failed-precondition', 'sale lines disagree on a product specification');
+  ] })), 'failed-precondition', { message: 'sale lines disagree on a product specification' });
 });
 
 test('descending line indexes with mixed conditions keep request order and restock only good units', async () => {

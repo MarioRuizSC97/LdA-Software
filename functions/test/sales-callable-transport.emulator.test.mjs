@@ -966,6 +966,15 @@ test('offline: quote projections follow private pricing and stock and equal the 
 test('offline: forged v2 receipt identity, folio and sale time are retained, never adopted', async () => {
   const key = `http-${RUN}-sale`;
   // The genuine folio is the seeded code plus the first eight alphanumerics of the key: HTS-HTTP-1234.
+  // Pin that baseline first, so every forgery below is a near miss of exactly this folio.
+  const genuine = specimen();
+  await stockedProduct(genuine);
+  const accepted = await fakeSale(genuine, 'sale', FIRST_SALE);
+  assert.equal(accepted.receipt.saleId, key);
+  assert.equal(accepted.receipt.branchCode, 'HTS');
+  assert.equal(accepted.receipt.folio, 'HTS-HTTP-1234');
+  await genuine.manifest.cleanup();
+  assert.equal(genuine.store.documents.size, 0);
   for (const forge of [
     (_docs, response) => { response.receipt.folio = 'HTS-HTTP-1235'; },
     (_docs, response) => { response.receipt.folio = 'hts-http-1234'; },

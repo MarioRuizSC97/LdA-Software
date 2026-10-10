@@ -37,6 +37,10 @@ const String correctionOverReturnReason = 'over-return';
 
 /// Correction meanings of a deterministic refusal. Each one is identified by
 /// its code and structured server reason only, never by the English message.
+///
+/// There is no message fallback, so the client and the functions must ship
+/// together: against functions without these reasons, every such refusal
+/// falls back to the generic rejected copy.
 extension CorrectionRejection on SaleRejectedException {
   /// The folio matches several sales.
   bool get isFolioAmbiguous =>

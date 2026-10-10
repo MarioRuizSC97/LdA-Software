@@ -329,6 +329,10 @@ class SaleDraftStore {
   /// or this throws [ArgumentError].
   bool complete(SaleAttempt attempt, SaleReceipt receipt) {
     final SaleDraft draft = attempt.draft;
+    // Defensive only: [SaleReceipt.fromCallable] already binds the sale ID
+    // (the draft's key), branch, payment method and amount to the draft it
+    // parses for, so a receipt parsed for this attempt's draft never fails
+    // here. It guards a receipt parsed for another draft.
     if (receipt.saleId != draft.idempotencyKey ||
         receipt.branchId != draft.branchId ||
         receipt.paymentMethod != draft.paymentMethod ||

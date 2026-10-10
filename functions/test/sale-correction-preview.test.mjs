@@ -263,22 +263,29 @@ test('after partial returns the preview applies cumulative rounding exactly like
 });
 
 // Every rejection the submit gives for these states, the preview gives too.
+// Each failure row: label, the machine reason both the submit and the preview
+// carry (none for most refusals), record overrides, removals and request data.
+const NO_REASON = undefined;
+const WINDOW_CLOSED = 'correction-window-closed';
+const OVER_RETURN = 'over-return';
 const returnFailures = [
-  ['foreign', [], [], returnData({ saleId: 'foreign' })],
-  ['missing', [], [], returnData({ saleId: 'nope' })],
-  ['expired', [], [], returnData({ saleId: 'expired' })],
-  ['future', [], [], returnData({ saleId: 'future' })],
-  ['over-return', [], [], returnData({ lines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] })],
-  ['unknown line', [], [], returnData({ lines: [{ lineIndex: 2, quantity: '1', condition: 'good' }] })],
-  ['precision', [], [], returnData({ lines: [{ lineIndex: 0, quantity: '0.5', condition: 'good' }] })],
-  ['ledger', [['saleReturnLedgers/s1', { returned: { 0: 4 }, lastReturnId: 'x', updatedAt: new Date(NOW) }]], [],
+  ['foreign', NO_REASON, [], [], returnData({ saleId: 'foreign' })],
+  ['missing', NO_REASON, [], [], returnData({ saleId: 'nope' })],
+  ['expired', WINDOW_CLOSED, [], [], returnData({ saleId: 'expired' })],
+  ['future', WINDOW_CLOSED, [], [], returnData({ saleId: 'future' })],
+  ['over-return', OVER_RETURN, [], [], returnData({ lines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] })],
+  ['unknown line', NO_REASON, [], [], returnData({ lines: [{ lineIndex: 2, quantity: '1', condition: 'good' }] })],
+  ['precision', NO_REASON, [], [], returnData({ lines: [{ lineIndex: 0, quantity: '0.5', condition: 'good' }] })],
+  ['ledger', NO_REASON,
+    [['saleReturnLedgers/s1', { returned: { 0: 4 }, lastReturnId: 'x', updatedAt: new Date(NOW) }]], [],
     returnData()],
-  ['product spec', [['products/p1', { quantitySpec: kg, pricing: pricing(1000) }]], [], returnData()],
-  ['missing product', [], ['products/p1'], returnData()],
-  ['stock shape', [['branches/north/stock/p1', { ...piece, quantityScaled: 5, extra: true }]], [], returnData()],
-  ['stock bound', [['branches/north/stock/p1', { ...piece, quantityScaled: Number.MAX_SAFE_INTEGER }]], [],
+  ['product spec', NO_REASON, [['products/p1', { quantitySpec: kg, pricing: pricing(1000) }]], [], returnData()],
+  ['missing product', NO_REASON, [], ['products/p1'], returnData()],
+  ['stock shape', NO_REASON,
+    [['branches/north/stock/p1', { ...piece, quantityScaled: 5, extra: true }]], [], returnData()],
+  ['stock bound', NO_REASON, [['branches/north/stock/p1', { ...piece, quantityScaled: Number.MAX_SAFE_INTEGER }]], [],
     returnData()],
-  ['tampered sale', [['sales/s1', (() => {
+  ['tampered sale', NO_REASON, [['sales/s1', (() => {
     const record = saleRecord('s1', 'north', NOW - DAY);
     record.receipt.calculation.lines[0].totalCentavos += 1;
     return record;
@@ -286,10 +293,11 @@ const returnFailures = [
 ];
 
 test('a return preview rejects exactly as the submit does', async () => {
-  for (const [label, overrides, removals, data] of returnFailures) {
+  for (const [label, reason, overrides, removals, data] of returnFailures) {
     const submitted = fixture(withRecords(overrides, removals));
     const expected = await outcome(submitted.submitReturn(asRequest({ idempotencyKey: 'r1', ...data })));
     assert.ok(expected.error, `${label}: the submit must reject`);
+    assert.equal(expected.error.reason, reason, label);
     const previewed = fixture(withRecords(overrides, removals));
     const actual = await previewUnchanged(previewed.firestore, () => previewed.previewReturn(asRequest(data)));
     assert.deepEqual(actual, expected, label);
@@ -421,35 +429,41 @@ test('short stock is reported per new line without throwing; the submit still re
 });
 
 const exchangeFailures = [
-  ['foreign', [], [], exchangeData({ saleId: 'foreign' })],
-  ['expired', [], [], exchangeData({ saleId: 'expired' })],
-  ['over-return', [], [], exchangeData({ returnLines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] })],
-  ['same product', [], [], exchangeData({ newLines: [{ productId: 'p1', quantity: '1' }] })],
-  ['same defect product', [], [], exchangeData({ returnLines: [{ lineIndex: 0, quantity: '1', condition: 'factory-defect' }],
+  ['foreign', NO_REASON, [], [], exchangeData({ saleId: 'foreign' })],
+  ['expired', WINDOW_CLOSED, [], [], exchangeData({ saleId: 'expired' })],
+  ['over-return', OVER_RETURN,
+    [], [], exchangeData({ returnLines: [{ lineIndex: 0, quantity: '4', condition: 'good' }] })],
+  ['same product', NO_REASON, [], [], exchangeData({ newLines: [{ productId: 'p1', quantity: '1' }] })],
+  ['same defect product', NO_REASON,
+    [], [], exchangeData({ returnLines: [{ lineIndex: 0, quantity: '1', condition: 'factory-defect' }],
     newLines: [{ productId: 'p1', quantity: '1' }] })],
-  ['unknown line', [], [], exchangeData({ returnLines: [{ lineIndex: 5, quantity: '1', condition: 'good' }] })],
-  ['missing new product', [], [], exchangeData({ newLines: [{ productId: 'p9', quantity: '1' }] })],
-  ['new precision', [], [], exchangeData({ newLines: [{ productId: 'p3', quantity: '1.5' }] })],
-  ['new pricing', [['products/p3', { quantitySpec: piece, pricing: { ...pricing(1500), ivaRateBasisPoints: 0 } }]], [],
+  ['unknown line', NO_REASON,
+    [], [], exchangeData({ returnLines: [{ lineIndex: 5, quantity: '1', condition: 'good' }] })],
+  ['missing new product', NO_REASON, [], [], exchangeData({ newLines: [{ productId: 'p9', quantity: '1' }] })],
+  ['new precision', NO_REASON, [], [], exchangeData({ newLines: [{ productId: 'p3', quantity: '1.5' }] })],
+  ['new pricing', NO_REASON,
+    [['products/p3', { quantitySpec: piece, pricing: { ...pricing(1500), ivaRateBasisPoints: 0 } }]], [],
     exchangeData()],
-  ['new pricing currency', [['products/p3', { quantitySpec: piece, pricing: { ...pricing(1500), currency: 'USD' } }]], [],
+  ['new pricing currency', NO_REASON,
+    [['products/p3', { quantitySpec: piece, pricing: { ...pricing(1500), currency: 'USD' } }]], [],
     exchangeData()],
-  ['new stock shape', [['branches/north/stock/p3', { ...piece, quantityScaled: 4, cost: 1 }]], [], exchangeData()],
-  ['restock shape', [['branches/north/stock/p1', { ...kg, quantityScaled: 4 }]], [], exchangeData()],
-  ['ledger', [['saleReturnLedgers/s1', { returned: [], lastReturnId: 'x', updatedAt: new Date(NOW) }]], [],
+  ['new stock shape', NO_REASON,
+    [['branches/north/stock/p3', { ...piece, quantityScaled: 4, cost: 1 }]], [], exchangeData()],
+  ['restock shape', NO_REASON, [['branches/north/stock/p1', { ...kg, quantityScaled: 4 }]], [], exchangeData()],
+  ['ledger', NO_REASON, [['saleReturnLedgers/s1', { returned: [], lastReturnId: 'x', updatedAt: new Date(NOW) }]], [],
     exchangeData()],
-  ['overflow', [['products/p3', { quantitySpec: piece, pricing: pricing(Number.MAX_SAFE_INTEGER) }],
+  ['overflow', NO_REASON, [['products/p3', { quantitySpec: piece, pricing: pricing(Number.MAX_SAFE_INTEGER) }],
     ['branches/north/stock/p3', { ...piece, quantityScaled: 9 }]], [],
   exchangeData({ newLines: [{ productId: 'p3', quantity: '9' }] })],
 ];
 
 test('an exchange preview rejects exactly as the submit does', async () => {
-  for (const [label, overrides, removals, data] of exchangeFailures) {
+  for (const [label, reason, overrides, removals, data] of exchangeFailures) {
     const submitted = fixture(withRecords(overrides, removals));
     const expected = await outcome(submitted.submitExchange(asRequest({ idempotencyKey: 'x1', ...data,
       differencePayment: { method: 'card', amountCentavos: 500 } })));
     assert.ok(expected.error, `${label}: the submit must reject`);
-    assert.notEqual(expected.error.reason, 'payment-mismatch', label);
+    assert.equal(expected.error.reason, reason, label);
     const previewed = fixture(withRecords(overrides, removals));
     const actual = await previewUnchanged(previewed.firestore, () => previewed.previewExchange(asRequest(data)));
     assert.deepEqual(actual, expected, label);
@@ -457,15 +471,14 @@ test('an exchange preview rejects exactly as the submit does', async () => {
 });
 
 test('preview rejections carry the window and over-return reasons, and no others', async () => {
-  const reasons = { expired: 'correction-window-closed', future: 'correction-window-closed', 'over-return': 'over-return' };
   const cases = [
-    ...returnFailures.map(([label, overrides, removals, data]) => [label, overrides, removals, 'previewReturn', data]),
-    ...exchangeFailures.map(([label, overrides, removals, data]) => [label, overrides, removals, 'previewExchange', data]),
+    ...returnFailures.map((row) => ['previewReturn', ...row]),
+    ...exchangeFailures.map((row) => ['previewExchange', ...row]),
   ];
-  for (const [label, overrides, removals, name, data] of cases) {
+  for (const [name, label, reason, overrides, removals, data] of cases) {
     const service = fixture(withRecords(overrides, removals));
     const { error } = await previewUnchanged(service.firestore, () => service[name](asRequest(data)));
-    assert.equal(error.reason, reasons[label], `${name} ${label}`);
+    assert.equal(error.reason, reason, `${name} ${label}`);
   }
 });
 

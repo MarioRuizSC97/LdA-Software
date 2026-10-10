@@ -559,6 +559,60 @@ void main() {
     expect(_confirmEnabled(tester), isFalse);
   });
 
+  testWidgets('the block clears once the blocking correction resolves', (
+    WidgetTester tester,
+  ) async {
+    final FakeCorrections backend = FakeCorrections(unresolved: returnDraft());
+    await _pump(tester, backend: backend);
+    await _fillDefault(tester);
+    expect(_confirmEnabled(tester), isFalse);
+
+    // The other correction resolved; the shell rebuilds the open form with a
+    // fresh corrections instance.
+    backend.unresolved = null;
+    await _pump(tester, backend: backend);
+    expect(
+      find.text(
+        'Hay otra corrección sin confirmar. Reinténtala antes de registrar '
+        'una nueva.',
+      ),
+      findsNothing,
+    );
+    expect(_confirmEnabled(tester), isTrue);
+  });
+
+  testWidgets('removing a focused new item never touches a disposed field', (
+    WidgetTester tester,
+  ) async {
+    await _pump(tester);
+    await _fillDefault(tester);
+    await tester.showKeyboard(_key('exchange-new-quantity-DEMO-TAPE'));
+    await tester.pump();
+    expect(
+      tester
+          .widget<EditableText>(
+            find.descendant(
+              of: _key('exchange-new-quantity-DEMO-TAPE'),
+              matching: find.byType(EditableText),
+            ),
+          )
+          .focusNode
+          .hasFocus,
+      isTrue,
+    );
+
+    // The keyboard still edits the focused field after the tap and before
+    // the next frame rebuilds the form without it.
+    await tester.ensureVisible(_key('exchange-new-remove-DEMO-TAPE'));
+    await tester.tap(_key('exchange-new-remove-DEMO-TAPE'));
+    tester.testTextInput.enterText('3');
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(_key('exchange-new-quantity-DEMO-TAPE'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a failed preview offers a retry', (WidgetTester tester) async {
     final FakeCorrections backend = FakeCorrections()
       ..exchangePreviewResults.add(

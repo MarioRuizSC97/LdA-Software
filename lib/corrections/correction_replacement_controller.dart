@@ -184,9 +184,11 @@ class CorrectionReplacementController extends ChangeNotifier {
       _submitting = false;
       _reflectStore(fallback: null, message: correctionSessionMessage);
     } on SaleStaleException {
+      // A newer attempt owns the outcome; reflect whatever the store holds,
+      // and explain an unlocked form instead of leaving it silent.
       if (_disposed) return;
       _submitting = false;
-      _reflectStore(fallback: null, message: null);
+      _reflectStore(fallback: null, message: correctionStaleMessage);
     } catch (_) {
       if (_disposed) return;
       _submitting = false;

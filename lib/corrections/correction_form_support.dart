@@ -10,6 +10,10 @@ import 'sale_corrections.dart';
 const String correctionSessionMessage =
     'Tu sesión cambió. Inicia sesión de nuevo para continuar.';
 
+/// A newer attempt settled this submission first and nothing is stored.
+const String correctionStaleMessage =
+    'La solicitud quedó desactualizada. Intenta de nuevo.';
+
 /// Another correction may have committed and must be retried first.
 const String correctionUnresolvedMessage =
     'Hay otra corrección sin confirmar. Reinténtala antes de registrar una '

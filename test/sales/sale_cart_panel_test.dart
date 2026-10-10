@@ -680,6 +680,39 @@ void main() {
       );
     }
 
+    testWidgets('a held receipt is flagged pending apart from the message', (
+      WidgetTester tester,
+    ) async {
+      final FakeSaleCheckout sales = FakeSaleCheckout();
+      final SaleReceipt held = await commitElsewhere(sales);
+      final SaleCartController controller = SaleCartController(
+        checkout: sales.checkout,
+      );
+      addTearDown(controller.dispose);
+      expect(controller.lastReceipt, same(held));
+      expect(controller.receiptPending, isTrue);
+      expect(controller.message, isNull);
+      expect(controller.reconcileOnOpen(), isTrue);
+
+      controller.dismissReceipt();
+      expect(controller.lastReceipt, isNull);
+      expect(controller.receiptPending, isFalse);
+      expect(controller.reconcileOnOpen(), isFalse);
+
+      // A sale charged from this cart shows its own receipt, not as pending.
+      controller.saveEntry(
+        productId: pinProduct.internalCode,
+        name: pinProduct.name,
+        quantitySpec: pinProduct.quantitySpec,
+        quantity: '1',
+      );
+      await tester.pump();
+      await controller.charge();
+      expect(controller.lastReceipt, isNotNull);
+      expect(controller.receiptPending, isFalse);
+      expect(controller.cart.isEmpty, isTrue);
+    });
+
     testWidgets('the page shows a held receipt first until "Nueva venta"', (
       WidgetTester tester,
     ) async {

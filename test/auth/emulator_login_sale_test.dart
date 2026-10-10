@@ -128,7 +128,7 @@ Future<Completer<void>> _chargeAndCloseCart(
 ) async {
   final Completer<void> hold = Completer<void>();
   backend.hold = hold;
-  await _addRibbonAndChargeHeld(tester);
+  await _addRibbonAndCharge(tester, held: true);
   expect(backend.submits, hasLength(1));
   expect(_key('sale-receipt-folio'), findsNothing);
   await _switchTo(tester, gateway, _otherSeller);
@@ -143,20 +143,20 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _addRibbonAndCharge(WidgetTester tester) async {
+/// Adds two meters of ribbon and charges. A [held] submit's spinner never
+/// settles, so the charge tap only pumps its first frames.
+Future<void> _addRibbonAndCharge(
+  WidgetTester tester, {
+  bool held = false,
+}) async {
   await _tap(tester, _key('sale-add-DEMO-RIBBON'));
   await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
   await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
   await _tap(tester, _key('sale-cart-button'));
-  await _tap(tester, _key('sale-charge'));
-}
-
-/// Like [_addRibbonAndCharge], for a held submit whose spinner never settles.
-Future<void> _addRibbonAndChargeHeld(WidgetTester tester) async {
-  await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-  await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
-  await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
-  await _tap(tester, _key('sale-cart-button'));
+  if (!held) {
+    await _tap(tester, _key('sale-charge'));
+    return;
+  }
   await tester.ensureVisible(_key('sale-charge'));
   await tester.pumpAndSettle();
   await tester.tap(_key('sale-charge'));
@@ -490,7 +490,7 @@ void main() {
     await tester.pumpAndSettle();
     final Completer<void> hold = Completer<void>();
     backend.hold = hold;
-    await _addRibbonAndChargeHeld(tester);
+    await _addRibbonAndCharge(tester, held: true);
     await _switchTo(tester, gateway, _otherSeller);
     backend.hold = null;
     hold.complete();

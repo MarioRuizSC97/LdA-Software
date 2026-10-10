@@ -349,7 +349,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// Opens the cart, unless a committed sale awaits acknowledgement: then
   /// its receipt is shown instead.
   void _openCart(SaleCartController sale) {
-    final bool receiptPending = sale.showPendingReceipt();
+    final bool receiptPending = sale.reconcileOnOpen();
     setState(() => _cartVisible = !receiptPending);
   }
 
@@ -628,7 +628,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   : receipt != null
                   ? SaleReceiptView(
                       receipt: receipt,
-                      notice: sale?.message,
+                      notice: sale?.receiptPending ?? false
+                          ? salePendingReceiptMessage
+                          : null,
                       onNewSale: _startNewSale,
                     )
                   : sale != null && _cartVisible
