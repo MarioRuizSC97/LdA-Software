@@ -15,11 +15,16 @@ class SaleReceiptView extends StatelessWidget {
   const SaleReceiptView({
     required this.receipt,
     required this.onNewSale,
+    this.notice,
     super.key,
   });
 
   final SaleReceipt receipt;
   final VoidCallback onNewSale;
+
+  /// Why this receipt is shown now, for a sale recovered after its cart
+  /// closed or one that blocked a new sale.
+  final String? notice;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +57,10 @@ class SaleReceiptView extends StatelessWidget {
                   ],
                 ),
               ),
+              if (notice case final String text) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(text, key: const ValueKey<String>('sale-receipt-notice')),
+              ],
               if (receipt.replayed) ...<Widget>[
                 const SizedBox(height: 8),
                 Text(

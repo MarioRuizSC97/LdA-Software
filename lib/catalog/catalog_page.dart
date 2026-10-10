@@ -331,8 +331,26 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   void _configureSale() {
     final SaleCheckout? checkout = widget.saleCheckout;
     _sale = widget.session.role == InventoryRole.seller && checkout != null
-        ? SaleCartController(checkout: checkout, onCompleted: _saleCompleted)
+        ? SaleCartController(
+            checkout: checkout,
+            onCompleted: _saleCompleted,
+            onReceiptPending: _saleReceiptPending,
+          )
         : null;
+  }
+
+  /// A cart action found a committed sale the seller has not acknowledged:
+  /// leave the cart so its receipt is shown first.
+  void _saleReceiptPending() {
+    if (!mounted) return;
+    setState(() => _cartVisible = false);
+  }
+
+  /// Opens the cart, unless a committed sale awaits acknowledgement: then
+  /// its receipt is shown instead.
+  void _openCart(SaleCartController sale) {
+    final bool receiptPending = sale.showPendingReceipt();
+    setState(() => _cartVisible = !receiptPending);
   }
 
   void _saleCompleted(SaleReceipt receipt) {
@@ -561,10 +579,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     return Scaffold(
       bottomNavigationBar:
           sale != null && receipt == null && !_cartVisible && !showCorrections
-          ? SaleCartButton(
-              controller: sale,
-              onPressed: () => setState(() => _cartVisible = true),
-            )
+          ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
         title: const Text('LDA Inventory'),
@@ -611,7 +626,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       onClose: _closeCorrections,
                     )
                   : receipt != null
-                  ? SaleReceiptView(receipt: receipt, onNewSale: _startNewSale)
+                  ? SaleReceiptView(
+                      receipt: receipt,
+                      notice: sale?.message,
+                      onNewSale: _startNewSale,
+                    )
                   : sale != null && _cartVisible
                   ? SaleCartPanel(
                       controller: sale,

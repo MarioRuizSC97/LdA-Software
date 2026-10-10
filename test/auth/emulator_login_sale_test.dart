@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
+import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
+import 'package:lda_inventory/sales/sale_cart_controller.dart';
+import 'package:lda_inventory/sales/sale_draft.dart';
 
 import '../sales/sale_ui_fixtures.dart';
 
@@ -69,6 +72,9 @@ class _SaleBackend {
   EmulatorSession? current;
   void Function()? duringSubmit;
 
+  /// When set, each submit waits for it before its outcome.
+  Completer<void>? hold;
+
   Future<EmulatorSaleGateway> load(EmulatorSession session) async {
     loads += 1;
     if (loadFailures.isNotEmpty) throw loadFailures.removeAt(0);
@@ -80,6 +86,8 @@ class _SaleBackend {
       submitInvoke: (Map<String, Object?> request) async {
         submits.add(request);
         duringSubmit?.call();
+        final Completer<void>? held = hold;
+        if (held != null) await held.future;
         if (submitFailures.isNotEmpty) throw submitFailures.removeAt(0);
         return submitResponseForRequest(request);
       },
@@ -98,6 +106,36 @@ Widget _app(_SessionGateway gateway, {SaleGatewayLoader? saleLoader}) =>
 
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
 
+SaleCheckout _checkout(WidgetTester tester) => tester
+    .widget<AuthenticatedCatalogPage>(find.byType(AuthenticatedCatalogPage))
+    .saleCheckout!;
+
+Future<void> _switchTo(
+  WidgetTester tester,
+  _SessionGateway gateway,
+  EmulatorSession session,
+) async {
+  gateway.sessions.add(session);
+  await tester.pumpAndSettle();
+}
+
+/// Charges, then closes the cart while the submit is held: a switch to
+/// another seller and back disposes the cart controller and builds a new one.
+Future<Completer<void>> _chargeAndCloseCart(
+  WidgetTester tester,
+  _SaleBackend backend,
+  _SessionGateway gateway,
+) async {
+  final Completer<void> hold = Completer<void>();
+  backend.hold = hold;
+  await _addRibbonAndChargeHeld(tester);
+  expect(backend.submits, hasLength(1));
+  expect(_key('sale-receipt-folio'), findsNothing);
+  await _switchTo(tester, gateway, _otherSeller);
+  await _switchTo(tester, gateway, _seller);
+  return hold;
+}
+
 Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
@@ -111,6 +149,19 @@ Future<void> _addRibbonAndCharge(WidgetTester tester) async {
   await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
   await _tap(tester, _key('sale-cart-button'));
   await _tap(tester, _key('sale-charge'));
+}
+
+/// Like [_addRibbonAndCharge], for a held submit whose spinner never settles.
+Future<void> _addRibbonAndChargeHeld(WidgetTester tester) async {
+  await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+  await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
+  await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+  await _tap(tester, _key('sale-cart-button'));
+  await tester.ensureVisible(_key('sale-charge'));
+  await tester.pumpAndSettle();
+  await tester.tap(_key('sale-charge'));
+  await tester.pump();
+  await tester.pump();
 }
 
 void main() {
@@ -312,5 +363,194 @@ void main() {
 
     expect(find.textContaining('Carrito vacío'), findsOneWidget);
     expect(_key('sale-retry-submit'), findsNothing);
+  });
+
+  testWidgets('a sale committed after its cart closed shows its receipt until '
+      '"Nueva venta"', (WidgetTester tester) async {
+    final _SaleBackend backend = _SaleBackend();
+    final _SessionGateway gateway = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+    await tester.pumpAndSettle();
+    final Completer<void> hold = await _chargeAndCloseCart(
+      tester,
+      backend,
+      gateway,
+    );
+    backend.hold = null;
+    hold.complete();
+    await tester.pumpAndSettle();
+
+    await _tap(tester, _key('sale-cart-button'));
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(_key('sale-receipt-notice'), findsOneWidget);
+    expect(_key('sale-retry-submit'), findsNothing);
+
+    // It survives another view change and is shown first on the page.
+    await _switchTo(tester, gateway, _otherSeller);
+    expect(_key('sale-receipt-folio'), findsNothing);
+    await _switchTo(tester, gateway, _seller);
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(_key('sale-cart-button'), findsNothing);
+
+    await _tap(tester, _key('sale-receipt-new'));
+    expect(_checkout(tester).unacknowledgedReceipt(), isNull);
+    await _switchTo(tester, gateway, _otherSeller);
+    await _switchTo(tester, gateway, _seller);
+    expect(_key('sale-receipt-folio'), findsNothing);
+    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(backend.submits, hasLength(1));
+
+    // A new sale can begin with a new key.
+    await _addRibbonAndCharge(tester);
+    expect(backend.submits, hasLength(2));
+    expect(
+      backend.submits[1]['idempotencyKey'],
+      isNot(backend.submits[0]['idempotencyKey']),
+    );
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(_key('sale-receipt-notice'), findsNothing);
+  });
+
+  testWidgets('an uncertain sale after its cart closed retries the same key '
+      'to its receipt', (WidgetTester tester) async {
+    final _SaleBackend backend = _SaleBackend()
+      ..submitFailures.add(
+        const SaleCallableException(code: 'internal', message: ''),
+      );
+    final _SessionGateway gateway = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+    await tester.pumpAndSettle();
+    final Completer<void> hold = await _chargeAndCloseCart(
+      tester,
+      backend,
+      gateway,
+    );
+    backend.hold = null;
+    hold.complete();
+    await tester.pumpAndSettle();
+
+    await _tap(tester, _key('sale-cart-button'));
+    expect(_key('sale-receipt-folio'), findsNothing);
+    expect(_key('sale-retry-submit'), findsOneWidget);
+    await _tap(tester, _key('sale-retry-submit'));
+    expect(backend.submits, hasLength(2));
+    expect(backend.submits[1], backend.submits[0]);
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(
+      _checkout(tester).unacknowledgedReceipt()?.saleId,
+      backend.submits[0]['idempotencyKey'],
+    );
+    await _tap(tester, _key('sale-receipt-new'));
+    expect(_checkout(tester).unacknowledgedReceipt(), isNull);
+  });
+
+  testWidgets('a rejection after its cart closed leaves nothing behind', (
+    WidgetTester tester,
+  ) async {
+    final _SaleBackend backend = _SaleBackend()
+      ..submitFailures.add(
+        const SaleCallableException(
+          code: 'invalid-argument',
+          message: 'full payment must equal the authoritative total',
+          reason: 'payment-mismatch',
+        ),
+      );
+    final _SessionGateway gateway = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+    await tester.pumpAndSettle();
+    final Completer<void> hold = await _chargeAndCloseCart(
+      tester,
+      backend,
+      gateway,
+    );
+    backend.hold = null;
+    hold.complete();
+    await tester.pumpAndSettle();
+
+    final SaleCheckout checkout = _checkout(tester);
+    expect(checkout.unresolvedDraft(), isNull);
+    expect(checkout.unacknowledgedReceipt(), isNull);
+    await _tap(tester, _key('sale-cart-button'));
+    expect(_key('sale-receipt-folio'), findsNothing);
+    expect(_key('sale-retry-submit'), findsNothing);
+    await _tap(tester, _key('sale-charge'));
+    expect(backend.submits, hasLength(2));
+    expect(
+      backend.submits[1]['idempotencyKey'],
+      isNot(backend.submits[0]['idempotencyKey']),
+    );
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+  });
+
+  testWidgets('a seller switch during a successful submit keeps the receipt '
+      'for the original seller only', (WidgetTester tester) async {
+    final _SaleBackend backend = _SaleBackend();
+    final _SessionGateway gateway = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+    await tester.pumpAndSettle();
+    final Completer<void> hold = Completer<void>();
+    backend.hold = hold;
+    await _addRibbonAndChargeHeld(tester);
+    await _switchTo(tester, gateway, _otherSeller);
+    backend.hold = null;
+    hold.complete();
+    await tester.pumpAndSettle();
+
+    // Seen while another seller is current: uncertain, never committed here.
+    expect(_checkout(tester).unacknowledgedReceipt(), isNull);
+    expect(_checkout(tester).unresolvedDraft(), isNull);
+    await _switchTo(tester, gateway, _seller);
+    await _tap(tester, _key('sale-cart-button'));
+    await _tap(tester, _key('sale-retry-submit'));
+    expect(backend.submits, hasLength(2));
+    expect(backend.submits[1], backend.submits[0]);
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    final SaleCheckout seller = _checkout(tester);
+    final SaleReceipt receipt = seller.unacknowledgedReceipt()!;
+
+    // Another seller can neither see nor acknowledge it.
+    await _switchTo(tester, gateway, _otherSeller);
+    expect(_key('sale-receipt-folio'), findsNothing);
+    final SaleCheckout other = _checkout(tester);
+    expect(other.unacknowledgedReceipt(), isNull);
+    other.acknowledge(receipt);
+    // The original seller's checkout is inert while another seller is current.
+    expect(seller.unacknowledgedReceipt(), isNull);
+    seller.acknowledge(receipt);
+    await _switchTo(tester, gateway, _seller);
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(_checkout(tester).unacknowledgedReceipt(), same(receipt));
+  });
+
+  testWidgets('a new sale is refused while a committed one is unacknowledged', (
+    WidgetTester tester,
+  ) async {
+    final _SaleBackend backend = _SaleBackend();
+    final _SessionGateway gateway = _SessionGateway(restored: _seller);
+    await tester.pumpWidget(_app(gateway, saleLoader: backend.load));
+    await tester.pumpAndSettle();
+    final Completer<void> hold = await _chargeAndCloseCart(
+      tester,
+      backend,
+      gateway,
+    );
+    // The new cart retried the same draft before the first outcome landed.
+    await _tap(tester, _key('sale-cart-button'));
+    expect(_key('sale-retry-submit'), findsOneWidget);
+    backend.hold = null;
+    hold.complete();
+    await tester.pumpAndSettle();
+    final SaleReceipt? first = _checkout(tester).unacknowledgedReceipt();
+    expect(first, isNotNull);
+
+    // The open cart still shows the lock; retrying shows the receipt with
+    // the pending message instead of sending again.
+    await _tap(tester, _key('sale-retry-submit'));
+    expect(backend.submits, hasLength(1));
+    expect(_key('sale-receipt-folio'), findsOneWidget);
+    expect(
+      tester.widget<Text>(_key('sale-receipt-notice')).data,
+      salePendingReceiptMessage,
+    );
   });
 }

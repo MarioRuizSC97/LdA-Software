@@ -7,6 +7,7 @@ import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
+import 'package:lda_inventory/sales/sale_cart_controller.dart';
 import 'package:lda_inventory/sales/sale_draft.dart';
 import 'package:lda_inventory/sales/sale_quote.dart';
 
@@ -655,5 +656,88 @@ void main() {
       sales.submittedDrafts.single.paymentMethod,
       SalePaymentMethod.transfer,
     );
+  });
+
+  group('unacknowledged receipts', () {
+    // Commits a sale through the checkout, outside this page's cart, as a
+    // sale whose cart was disposed before its outcome landed.
+    Future<SaleReceipt> commitElsewhere(FakeSaleCheckout sales) {
+      final SaleCart cart = SaleCart.empty().add(
+        SaleCartLine(
+          productId: ribbonProduct.internalCode,
+          name: ribbonProduct.name,
+          quantitySpec: ribbonProduct.quantitySpec,
+          quantity: '1',
+        ),
+      );
+      return sales.checkout.submit(
+        SaleDraft.fromQuote(
+          quote: sales.quoteNow(cart),
+          branchId: sales.branchId,
+          paymentMethod: SalePaymentMethod.cash,
+          createKey: () => secondSaleKey,
+        ),
+      );
+    }
+
+    testWidgets('the page shows a held receipt first until "Nueva venta"', (
+      WidgetTester tester,
+    ) async {
+      final FakeSaleCheckout sales = FakeSaleCheckout();
+      final SaleReceipt receipt = await commitElsewhere(sales);
+      await tester.pumpWidget(_page(sales));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(_key('sale-receipt-folio')).data,
+        receipt.folio,
+      );
+      expect(
+        tester.widget<Text>(_key('sale-receipt-notice')).data,
+        salePendingReceiptMessage,
+      );
+      expect(_key('sale-cart-button'), findsNothing);
+      expect(
+        sales.store.completedFor('seller-north', 'branch-north'),
+        same(receipt),
+      );
+
+      await _tap(tester, _key('sale-receipt-new'));
+      expect(_key('sale-receipt-folio'), findsNothing);
+      expect(sales.store.completedFor('seller-north', 'branch-north'), isNull);
+      expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    });
+
+    testWidgets('opening the cart or charging shows a receipt that landed '
+        'meanwhile instead of selling again', (WidgetTester tester) async {
+      final FakeSaleCheckout sales = FakeSaleCheckout(
+        keys: const <String>[firstSaleKey],
+      );
+      await tester.pumpWidget(_page(sales));
+      await tester.pumpAndSettle();
+      await _enterQuantity(tester, 'DEMO-PIN', '1');
+      await _openCart(tester);
+
+      // Charging is refused: the receipt shows with the pending message.
+      final SaleReceipt receipt = await commitElsewhere(sales);
+      await _tap(tester, _key('sale-charge'));
+      expect(sales.submittedDrafts, hasLength(1));
+      expect(
+        tester.widget<Text>(_key('sale-receipt-folio')).data,
+        receipt.folio,
+      );
+      expect(
+        tester.widget<Text>(_key('sale-receipt-notice')).data,
+        salePendingReceiptMessage,
+      );
+      await _tap(tester, _key('sale-receipt-new'));
+      expect(sales.store.completedFor('seller-north', 'branch-north'), isNull);
+
+      // Opening the cart also shows one first.
+      final SaleReceipt again = await commitElsewhere(sales);
+      await _openCart(tester);
+      expect(tester.widget<Text>(_key('sale-receipt-folio')).data, again.folio);
+      expect(_key('sale-charge'), findsNothing);
+    });
   });
 }

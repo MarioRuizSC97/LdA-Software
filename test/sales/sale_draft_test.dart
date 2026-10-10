@@ -308,5 +308,115 @@ void main() {
         expect(store.isCurrent(next), isTrue);
       },
     );
+
+    test('a stale attempt never settles an equal draft begun again', () {
+      final SaleDraftStore store = SaleDraftStore();
+      final SaleDraft draft = _draft();
+      final SaleAttempt old = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      expect(store.resolve(old), isTrue);
+
+      final SaleAttempt again = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      expect(store.isCurrent(old), isFalse);
+      expect(store.resolve(old), isFalse);
+      expect(store.complete(old, _receipt()), isFalse);
+      expect(store.unresolvedFor('seller-1', saleBranchId), same(draft));
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      expect(store.isCurrent(again), isTrue);
+
+      // Revisions are store-wide: another seller's attempt never collides.
+      final SaleAttempt other = store.begin(
+        ownerUserId: 'seller-2',
+        draft: draft,
+      );
+      expect(store.isCurrent(other), isTrue);
+      expect(store.isCurrent(again), isTrue);
+    });
+
+    test('a committed sale keeps its receipt until it is acknowledged', () {
+      final SaleDraftStore store = SaleDraftStore();
+      final SaleDraft draft = _draft();
+      final SaleReceipt receipt = _receipt();
+      final SaleAttempt attempt = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+
+      expect(store.complete(attempt, receipt), isTrue);
+      expect(store.unresolvedFor('seller-1', saleBranchId), isNull);
+      expect(store.completedFor('seller-1', saleBranchId), same(receipt));
+      expect(store.completedFor('seller-2', saleBranchId), isNull);
+      expect(store.completedFor('seller-1', 'branch-other'), isNull);
+      expect(store.isCurrent(attempt), isTrue);
+      expect(store.complete(attempt, receipt), isTrue);
+
+      // No other sale may begin unaware of the committed one.
+      expect(
+        () => store.begin(
+          ownerUserId: 'seller-1',
+          draft: _draft(method: SalePaymentMethod.cash),
+        ),
+        throwsA(isA<SaleUnresolvedException>()),
+      );
+
+      // Only that exact receipt, for that exact seller and branch, clears it.
+      expect(store.acknowledge('seller-2', saleBranchId, receipt), isFalse);
+      expect(store.acknowledge('seller-1', saleBranchId, _receipt()), isFalse);
+      expect(store.completedFor('seller-1', saleBranchId), same(receipt));
+      expect(store.acknowledge('seller-1', saleBranchId, receipt), isTrue);
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+      expect(store.isCurrent(attempt), isFalse);
+      expect(store.acknowledge('seller-1', saleBranchId, receipt), isFalse);
+
+      final SaleAttempt next = store.begin(
+        ownerUserId: 'seller-1',
+        draft: _draft(method: SalePaymentMethod.cash),
+      );
+      expect(store.isCurrent(next), isTrue);
+    });
+
+    test('an unresolved draft is never acknowledged and a foreign receipt '
+        'never completes an attempt', () {
+      final SaleDraftStore store = SaleDraftStore();
+      final SaleReceipt receipt = _receipt();
+      final SaleAttempt cash = store.begin(
+        ownerUserId: 'seller-1',
+        draft: _draft(method: SalePaymentMethod.cash),
+      );
+      expect(store.acknowledge('seller-1', saleBranchId, receipt), isFalse);
+      expect(store.unresolvedFor('seller-1', saleBranchId), isNotNull);
+      expect(() => store.complete(cash, receipt), throwsArgumentError);
+      expect(store.completedFor('seller-1', saleBranchId), isNull);
+    });
+
+    test('an equal completed draft may be sent again for a replay', () {
+      final SaleDraftStore store = SaleDraftStore();
+      final SaleDraft draft = _draft();
+      final SaleAttempt first = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      expect(store.complete(first, _receipt()), isTrue);
+
+      final SaleAttempt replay = store.begin(
+        ownerUserId: 'seller-1',
+        draft: draft,
+      );
+      expect(store.isCurrent(first), isFalse);
+      final SaleReceipt replayed = _receipt(replayed: true);
+      expect(store.complete(first, replayed), isFalse);
+      expect(store.complete(replay, replayed), isTrue);
+      expect(store.completedFor('seller-1', saleBranchId), same(replayed));
+    });
   });
 }
+
+SaleReceipt _receipt({bool replayed = false}) => SaleReceipt.fromCallable(
+  submitResponse(replayed: replayed),
+  draft: _draft(),
+);

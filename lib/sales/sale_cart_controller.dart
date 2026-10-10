@@ -10,18 +10,28 @@ typedef SaleQuoteRequest = Future<SaleQuote> Function(SaleCart cart);
 typedef SaleSubmitRequest = Future<SaleReceipt> Function(SaleDraft draft);
 typedef SaleDraftLookup = SaleDraft? Function();
 typedef SaleKeyFactory = String Function();
+typedef SaleReceiptLookup = SaleReceipt? Function();
+typedef SaleReceiptAcknowledge = void Function(SaleReceipt receipt);
+
+SaleReceipt? _noUnacknowledgedReceipt() => null;
+void _ignoreAcknowledge(SaleReceipt receipt) {}
 
 /// Seller-only sale operations the shell hands to the catalog page.
 ///
 /// [submit] owns the shell-level draft store: it begins the attempt, submits,
-/// and resolves it only on success or a deterministic rejection. [unresolvedDraft]
-/// returns the stored draft that must be retried before any other sale.
+/// drops it on a deterministic rejection and, on success, keeps its receipt
+/// until [acknowledge]. [unresolvedDraft] returns the stored draft that must
+/// be retried before any other sale; [unacknowledgedReceipt] returns a
+/// committed sale the seller has not dismissed yet, which must be shown
+/// before any other sale.
 class SaleCheckout {
   const SaleCheckout({
     required this.branchId,
     required this.quote,
     required this.submit,
     required this.unresolvedDraft,
+    this.unacknowledgedReceipt = _noUnacknowledgedReceipt,
+    this.acknowledge = _ignoreAcknowledge,
     this.createKey = createSaleIdempotencyKey,
   });
 
@@ -29,6 +39,8 @@ class SaleCheckout {
   final SaleQuoteRequest quote;
   final SaleSubmitRequest submit;
   final SaleDraftLookup unresolvedDraft;
+  final SaleReceiptLookup unacknowledgedReceipt;
+  final SaleReceiptAcknowledge acknowledge;
   final SaleKeyFactory createKey;
 }
 
@@ -43,6 +55,9 @@ const String saleInsufficientStockMessage =
     'No hay existencias suficientes para completar la venta.';
 const String saleSessionMessage =
     'Tu sesión ya no permite registrar ventas. Vuelve a iniciar sesión.';
+const String salePendingReceiptMessage =
+    'Hay una venta registrada que aún no revisas. Revisa el comprobante y '
+    'toca "Nueva venta" para continuar.';
 
 /// Presentation state for the seller cart: lines, the server quote for the
 /// exact current cart, payment, and the submit lifecycle.
@@ -51,14 +66,25 @@ const String saleSessionMessage =
 /// While a submission is pending, or after an uncertain one, the cart is
 /// locked to the frozen draft until that same draft is retried and resolves.
 class SaleCartController extends ChangeNotifier {
-  SaleCartController({required SaleCheckout checkout, this.onCompleted})
-    : _checkout = checkout {
+  SaleCartController({
+    required SaleCheckout checkout,
+    this.onCompleted,
+    this.onReceiptPending,
+  }) : _checkout = checkout {
     final SaleDraft? unresolved = checkout.unresolvedDraft();
-    if (unresolved != null) _lock(unresolved);
+    if (unresolved != null) {
+      _lock(unresolved);
+    } else {
+      _adoptPendingReceipt();
+    }
   }
 
   SaleCheckout _checkout;
   final ValueChanged<SaleReceipt>? onCompleted;
+
+  /// Called when a cart action finds a committed sale the seller has not
+  /// acknowledged; [lastReceipt] then holds it and must be shown.
+  final VoidCallback? onReceiptPending;
 
   SaleCart _cart = SaleCart.empty();
   SalePaymentMethod _paymentMethod = SalePaymentMethod.cash;
@@ -205,15 +231,35 @@ class SaleCartController extends ChangeNotifier {
     _requote();
   }
 
+  /// "Nueva venta": acknowledges the shown receipt, so the shell drops it.
   void dismissReceipt() {
+    final SaleReceipt? receipt = _lastReceipt;
+    if (receipt != null) _checkout.acknowledge(receipt);
     _lastReceipt = null;
+    _message = null;
     _notify();
+  }
+
+  /// Reconciles with the shell when the cart opens: shows a committed sale
+  /// the seller has not acknowledged yet, and unlocks a draft the shell no
+  /// longer holds (a rejection that landed after an earlier cart closed).
+  /// Returns whether a receipt is to be shown.
+  bool showPendingReceipt() {
+    if (_submitting) return _lastReceipt != null;
+    if (_blockOnPendingReceipt()) return true;
+    if (_lockedDraft != null && _checkout.unresolvedDraft() == null) {
+      _lockedDraft = null;
+      _message = null;
+      _requote();
+    }
+    return _lastReceipt != null;
   }
 
   /// Freezes a draft from the current quote and submits it.
   Future<void> charge() async {
     final SaleQuote? current = quote;
     if (!canCharge || current == null) return;
+    if (_blockOnPendingReceipt()) return;
     final SaleDraft draft;
     try {
       draft = SaleDraft.fromQuote(
@@ -233,6 +279,7 @@ class SaleCartController extends ChangeNotifier {
   /// Retries the unresolved draft, unchanged, with its original key.
   Future<void> retrySubmit() async {
     if (_submitting) return;
+    if (_blockOnPendingReceipt()) return;
     final SaleDraft? draft = _checkout.unresolvedDraft() ?? _lockedDraft;
     if (draft == null) return;
     _lock(draft);
@@ -246,6 +293,8 @@ class SaleCartController extends ChangeNotifier {
     _notify();
     try {
       final SaleReceipt receipt = await _checkout.submit(draft);
+      // The shell keeps the receipt until it is acknowledged, so a disposed
+      // cart loses nothing: the next cart shows it first.
       if (_disposed) return;
       _submitting = false;
       _lockedDraft = null;
@@ -277,6 +326,7 @@ class SaleCartController extends ChangeNotifier {
     } on SaleSessionException {
       if (_disposed) return;
       _submitting = false;
+      if (_blockOnPendingReceipt()) return;
       final SaleDraft? stored = _checkout.unresolvedDraft();
       if (stored != null) {
         _lock(stored);
@@ -289,6 +339,7 @@ class SaleCartController extends ChangeNotifier {
       // A newer attempt owns the outcome; reflect whatever the store holds.
       if (_disposed) return;
       _submitting = false;
+      if (_blockOnPendingReceipt()) return;
       final SaleDraft? stored = _checkout.unresolvedDraft();
       if (stored != null) {
         _lock(stored);
@@ -297,11 +348,42 @@ class SaleCartController extends ChangeNotifier {
       }
       _notify();
     } catch (_) {
+      // Includes the shell refusing a new sale while another is stored.
       if (_disposed) return;
       _submitting = false;
+      if (_blockOnPendingReceipt()) return;
       _lock(_checkout.unresolvedDraft() ?? draft);
       _notify();
     }
+  }
+
+  /// Takes over a committed, unacknowledged sale from the shell: the cart
+  /// resets and [lastReceipt] holds it. A lock on that same sale is moot.
+  bool _adoptPendingReceipt() {
+    final SaleReceipt? receipt = _checkout.unacknowledgedReceipt();
+    if (receipt == null) return false;
+    if (identical(receipt, _lastReceipt)) return true;
+    _lockedDraft = null;
+    _quoteGeneration += 1;
+    _cart = SaleCart.empty();
+    _quote = null;
+    _quoteStatus = SaleQuoteStatus.empty;
+    _quoteMessage = null;
+    _paymentMethod = SalePaymentMethod.cash;
+    _editingProductId = null;
+    _entryError = null;
+    _lastReceipt = receipt;
+    _message = salePendingReceiptMessage;
+    return true;
+  }
+
+  /// Refuses a cart action while a committed sale awaits acknowledgement,
+  /// showing its receipt with [salePendingReceiptMessage] instead.
+  bool _blockOnPendingReceipt() {
+    if (!_adoptPendingReceipt()) return false;
+    _notify();
+    onReceiptPending?.call();
+    return true;
   }
 
   void _lock(SaleDraft draft) {

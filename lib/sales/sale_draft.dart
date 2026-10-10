@@ -235,7 +235,8 @@ bool _sameProductIds(Object? value, SaleCart cart) {
   return true;
 }
 
-/// A different sale is blocked until the unresolved one is resolved.
+/// A different sale is blocked until the stored one is resolved or, once
+/// committed, its receipt is acknowledged.
 class SaleUnresolvedException implements Exception {
   const SaleUnresolvedException();
 }
@@ -252,23 +253,42 @@ class SaleAttempt {
 }
 
 class _StoredSaleDraft {
-  const _StoredSaleDraft(this.draft, this.revision);
+  _StoredSaleDraft(this.draft, this.revision);
   final SaleDraft draft;
   final int revision;
+
+  /// The committed sale's receipt, kept until the seller acknowledges it.
+  SaleReceipt? completed;
 }
 
-/// Volatile, live-shell-only retry storage: at most one unresolved sale per
+/// Volatile, live-shell-only retry storage: at most one stored sale per
 /// exact seller and branch, held in nested exact maps (never a concatenated
 /// key). A draft is frozen at `begin`; an uncertain submission retries the
 /// same draft (same key, same payload) until it resolves, and only the current
-/// attempt's revision may resolve it.
+/// attempt's revision may resolve or complete it. A committed sale keeps its
+/// receipt until [acknowledge], so a receipt that lands after the cart is
+/// gone is still shown, and no other sale can begin unaware of it.
 class SaleDraftStore {
   final Map<String, Map<String, _StoredSaleDraft>> _drafts =
       <String, Map<String, _StoredSaleDraft>>{};
 
-  SaleDraft? unresolvedFor(String ownerUserId, String branchId) =>
-      _drafts[ownerUserId]?[branchId]?.draft;
+  // Store-wide and never reset, so an attempt from before a resolution can
+  // never match an equal draft begun again afterwards.
+  int _lastRevision = 0;
 
+  /// The stored draft still awaiting an outcome; null once completed.
+  SaleDraft? unresolvedFor(String ownerUserId, String branchId) {
+    final _StoredSaleDraft? stored = _drafts[ownerUserId]?[branchId];
+    return stored == null || stored.completed != null ? null : stored.draft;
+  }
+
+  /// The committed sale's receipt awaiting acknowledgement, if any.
+  SaleReceipt? completedFor(String ownerUserId, String branchId) =>
+      _drafts[ownerUserId]?[branchId]?.completed;
+
+  /// Begins an attempt. An equal draft, even an already completed one, may
+  /// be sent again (the server replays it); any other draft is refused
+  /// while one is stored.
   SaleAttempt begin({required String ownerUserId, required SaleDraft draft}) {
     if (ownerUserId.isEmpty) throw const SaleSessionException();
     final Map<String, _StoredSaleDraft> branchDrafts = _drafts.putIfAbsent(
@@ -279,7 +299,7 @@ class SaleDraftStore {
     if (current != null && current.draft != draft) {
       throw const SaleUnresolvedException();
     }
-    final int revision = (current?.revision ?? 0) + 1;
+    final int revision = ++_lastRevision;
     branchDrafts[draft.branchId] = _StoredSaleDraft(draft, revision);
     return SaleAttempt._(
       ownerUserId: ownerUserId,
@@ -296,12 +316,42 @@ class SaleDraftStore {
         current.draft == attempt.draft;
   }
 
+  /// Drops the current attempt's draft: a deterministic rejection committed
+  /// nothing.
   bool resolve(SaleAttempt attempt) {
     if (!isCurrent(attempt)) return false;
-    final Map<String, _StoredSaleDraft> branchDrafts =
-        _drafts[attempt.ownerUserId]!;
-    branchDrafts.remove(attempt.draft.branchId);
-    if (branchDrafts.isEmpty) _drafts.remove(attempt.ownerUserId);
+    _remove(attempt.ownerUserId, attempt.draft.branchId);
     return true;
+  }
+
+  /// Records the current attempt's committed [receipt] and keeps the entry
+  /// until [acknowledge]. The receipt must answer the attempt's own draft,
+  /// or this throws [ArgumentError].
+  bool complete(SaleAttempt attempt, SaleReceipt receipt) {
+    final SaleDraft draft = attempt.draft;
+    if (receipt.saleId != draft.idempotencyKey ||
+        receipt.branchId != draft.branchId ||
+        receipt.paymentMethod != draft.paymentMethod ||
+        receipt.amountCentavos != draft.amountCentavos) {
+      throw ArgumentError.value(receipt, 'receipt', 'is not the draft sale');
+    }
+    if (!isCurrent(attempt)) return false;
+    _drafts[attempt.ownerUserId]![draft.branchId]!.completed = receipt;
+    return true;
+  }
+
+  /// Drops the completed entry whose receipt is exactly [receipt]; anything
+  /// else (an unresolved draft, another receipt) is kept.
+  bool acknowledge(String ownerUserId, String branchId, SaleReceipt receipt) {
+    final _StoredSaleDraft? stored = _drafts[ownerUserId]?[branchId];
+    if (stored == null || !identical(stored.completed, receipt)) return false;
+    _remove(ownerUserId, branchId);
+    return true;
+  }
+
+  void _remove(String ownerUserId, String branchId) {
+    final Map<String, _StoredSaleDraft> branchDrafts = _drafts[ownerUserId]!;
+    branchDrafts.remove(branchId);
+    if (branchDrafts.isEmpty) _drafts.remove(ownerUserId);
   }
 }

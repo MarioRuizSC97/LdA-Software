@@ -494,8 +494,10 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   }
 
   /// Seller submit, mirroring intake: freezes ownership and the draft before
-  /// gateway initialization or transport, and resolves only the current
-  /// attempt's proven success or deterministic rejection. Anything else
+  /// gateway initialization or transport. Only the current attempt's
+  /// deterministic rejection drops the draft, and only its proven success
+  /// completes it, keeping the receipt until the seller acknowledges it, so
+  /// a sale that commits after its cart closed is never lost. Anything else
   /// keeps the draft stored for a same-key retry.
   Future<SaleReceipt> _submitSale(SaleDraft draft) async {
     final EmulatorSession? session = _session;
@@ -514,7 +516,9 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       if (!_isSameCurrentSeller(session)) {
         throw const SaleUncertainException();
       }
-      if (!_saleDrafts.resolve(attempt)) throw const SaleStaleException();
+      if (!_saleDrafts.complete(attempt, receipt)) {
+        throw const SaleStaleException();
+      }
       return receipt;
     } on SaleRejectedException {
       if (!_isSameCurrentSeller(session)) {
@@ -672,6 +676,13 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       unresolvedDraft: () => _isSameCurrentSeller(session)
           ? _saleDrafts.unresolvedFor(session.userId, session.branchId!)
           : null,
+      unacknowledgedReceipt: () => _isSameCurrentSeller(session)
+          ? _saleDrafts.completedFor(session.userId, session.branchId!)
+          : null,
+      acknowledge: (SaleReceipt receipt) {
+        if (!_isSameCurrentSeller(session)) return;
+        _saleDrafts.acknowledge(session.userId, session.branchId!, receipt);
+      },
     );
   }
 

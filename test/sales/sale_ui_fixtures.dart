@@ -212,7 +212,8 @@ Map<String, Object?> submitResponseForRequest(
 }
 
 /// In-memory seller checkout backed by a real [SaleDraftStore], mirroring the
-/// shell contract: begin before submit, resolve on success or rejection.
+/// shell contract: begin before submit, drop on a rejection, and complete on
+/// success, keeping the receipt until it is acknowledged.
 class FakeSaleCheckout {
   FakeSaleCheckout({
     this.ownerUserId = 'seller-north',
@@ -240,6 +241,9 @@ class FakeSaleCheckout {
     quote: quote,
     submit: submit,
     unresolvedDraft: () => store.unresolvedFor(ownerUserId, branchId),
+    unacknowledgedReceipt: () => store.completedFor(ownerUserId, branchId),
+    acknowledge: (SaleReceipt receipt) =>
+        store.acknowledge(ownerUserId, branchId, receipt),
     createKey: () => _keys.removeAt(0),
   );
 
@@ -272,8 +276,7 @@ class FakeSaleCheckout {
       if (failure is! SaleUncertainException) store.resolve(attempt);
       throw failure;
     }
-    store.resolve(attempt);
-    return SaleReceipt.fromCallable(
+    final SaleReceipt receipt = SaleReceipt.fromCallable(
       submitResponseForRequest(
         draft.toRequest(),
         branchId: branchId,
@@ -282,5 +285,7 @@ class FakeSaleCheckout {
       ),
       draft: draft,
     );
+    store.complete(attempt, receipt);
+    return receipt;
   }
 }
