@@ -53,8 +53,8 @@ New decision (user, 2026-10-10):
 - [x] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
 - [x] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
 - [x] SP-04b — Fix the SP-04 review warnings: a stale profile read overwriting a saved name, unobservable load failures, administrator-predicate drift, and the duplicated branch pattern; plus the review suggestions. Route: delegated writer.
-- [ ] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
-- [ ] SP-06 — Reconcile and report. Route: parent.
+- [x] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
+- [x] SP-06 — Reconcile and report. Route: parent.
 
 ## Acceptance criteria
 
@@ -128,8 +128,50 @@ New decision (user, 2026-10-10):
 - SP-05 parent spot check: transport file offline 9 pass, 1 live skipped.
 - SP-05 test closure: native review `review-349d11e9711bd24c` (medium, one lens) approved and acknowledged; commit tree exactly `f1e3a4eb`; commit `e1ff2aa`.
   - Warning `R3-live-step-failure-does-not-abort`: a failed live step does not stop the scenario. It stays safe, because the manifest marks the run uncertain and refuses later requests, but secondary failures cascade.
-- SP-05 pending: one live run, which needs user approval. Before it, confirm that the functions emulator serves `setSellerProfile` (OPTIONS 204) and that the Firestore emulator loaded the new `sellerProfiles` rule; a stale rule would make the administrator GET return 403.
+- SP-05 live run (user-approved, exactly once, HEAD `ff200c6`, verifier):
+  - OPTIONS 204 for `setSellerProfile` and `stockIntake`.
+  - 26/26 pass, with all 16 live steps green.
+  - The administrator GET returned the exact profile, so the emulator had loaded the new `sellerProfiles` rule.
+  - Fixtures unchanged: combined hash `5ddfb8b8…`, 104 documents with an identical listing, and 2 Auth users. No residue.
+
+## Final report (SP-06, 2026-10-10, parent, HEAD at closure)
+
+- **Outcome:** seller profiles v2 is complete.
+  - Administrators set a seller's name through `setSellerProfile`; the branch always comes from the seller's claims.
+  - Profiles are readable only by administrators: no LIST and no client writes.
+  - The administrator "Movimientos" screen shows recent movements, optionally per branch, with each seller shown only by name, and an assign or edit action.
+  - Movements and sales still store only `actorId`.
+- **Commits:**
+  - `46e2170` (SP-01/02)
+  - `40c2970` (SP-03)
+  - `f6c4a6b` (SP-04)
+  - `87f1c8e` (SP-04b)
+  - `e1ff2aa` (SP-05)
+  - Each one went through native review, was approved, and has a tree equal to its approved candidate. Every commit is an ancestor of HEAD. Nothing is pushed.
+- **Final checks (parent, observed):**
+  - backend non-emulator tests 388/388;
+  - `flutter analyze` clean;
+  - `flutter test` 685/685;
+  - SP-05 live 26/26 (log re-checked by the parent).
+- **Not covered:**
+  - The rules unit harness was never run; it would clear the shared demo project. Rules are accepted over HTTP instead.
+  - The composite index (`branchId` + `occurredAt`) is not enforced by the emulator, so it is proven only on deploy.
+  - There was no device or integration run of the Flutter screen.
+- **Open suggestions (optional):**
+  - live step failures cascade (`R3-live-step-failure-does-not-abort`);
+  - the magic `loaderFailures = 2` comment;
+  - a widget test for a session lost while a load is pending;
+  - add the new emulator tests to `package.json` `test:emulator`;
+  - unify the remaining branch-regex and administrator-check copies in `emulator_session.dart`, `firestore_catalog_repository.dart` and the stock intake and product creation gateways;
+  - `formatScaledQuantity` misformats negative values (no current negative callers).
+- **Old attempt:** the branch `feat/inventory-mvp-seller-profiles` (worktree `LdA-Software-seller-profiles`) is superseded and kept untouched, with its uncommitted work, as a reference. Deleting or archiving it is the user's decision.
+- **Branch chain:**
+  1. `feat/inventory-mvp-sales-corrections`
+  2. `feat/inventory-mvp-seller-sale-ui`
+  3. `feat/inventory-mvp-sale-corrections-ui`
+  4. `feat/inventory-mvp-correction-followups`
+  5. `feat/inventory-mvp-seller-profiles-v2`
 
 ## Next step
 
-The SP-05 live run (needs user approval), then SP-06.
+Feature complete. Waiting for the user's next priority (push and PR strategy for the branch chain, the optional suggestions, the old seller-profiles branch, or ticket printing when the user asks).
