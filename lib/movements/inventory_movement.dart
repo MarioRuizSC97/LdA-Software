@@ -129,11 +129,11 @@ InventoryMovement _parseMovement(String id, Map<String, Object?> data) {
   final Object? occurredAt = data['occurredAt'];
   if (type == null ||
       branchId is! String ||
-      !_branchIdPattern.hasMatch(branchId) ||
+      !isBranchId(branchId) ||
       productId is! String ||
       !_productIdPattern.hasMatch(productId) ||
       quantity is! int ||
-      !isSellerUid(actorId) ||
+      !isPathSafeUid(actorId) ||
       occurredAt is! Timestamp) {
     throw const FormatException('movement values are invalid');
   }
@@ -154,8 +154,12 @@ InventoryMovement _parseMovement(String id, Map<String, Object?> data) {
   );
 }
 
+/// The server's branch id contract, shared by every movements reader.
+bool isBranchId(Object? value) =>
+    value is String && _branchIdPattern.hasMatch(value);
+
 /// The server's path-safe uid contract (1 to 128 characters, no slash).
-bool isSellerUid(Object? value) =>
+bool isPathSafeUid(Object? value) =>
     value is String &&
     value.isNotEmpty &&
     value.length <= 128 &&

@@ -16,15 +16,30 @@ final AdministratorMovements _movements = AdministratorMovements(
       SellerProfileResult(uid: uid, replayed: false),
 );
 
-Widget _page(EmulatorSession session) => MaterialApp(
-  home: AuthenticatedCatalogPage(
-    session: session,
-    catalogLoader: (EmulatorSession session) async =>
-        CatalogSnapshot(const <CatalogItem>[]),
-    onLogout: () async {},
-    administratorMovements: _movements,
-  ),
+Widget _page(EmulatorSession session, {bool withMovements = true}) =>
+    MaterialApp(
+      home: AuthenticatedCatalogPage(
+        session: session,
+        catalogLoader: (EmulatorSession session) async =>
+            CatalogSnapshot(const <CatalogItem>[]),
+        onLogout: () async {},
+        administratorMovements: withMovements ? _movements : null,
+      ),
+    );
+
+const EmulatorSession _otherAdministrator = EmulatorSession(
+  userId: 'administrator-2',
+  email: 'other@demo.invalid',
+  role: InventoryRole.administrator,
 );
+
+Future<void> _open(WidgetTester tester) async {
+  await tester.pumpWidget(_page(movementsAdministrator));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Movimientos'));
+  await tester.pumpAndSettle();
+  expect(find.text('No hay movimientos'), findsOne);
+}
 
 void main() {
   testWidgets('sellers never get the entry, even if handed one', (
@@ -46,6 +61,34 @@ void main() {
     expect(find.text('Todas'), findsOne);
 
     await tester.tap(find.text('Volver'));
+    await tester.pumpAndSettle();
+    expect(find.text('No hay movimientos'), findsNothing);
+    expect(find.text('Movimientos'), findsOne);
+  });
+
+  testWidgets('a session change closes the movements view', (
+    WidgetTester tester,
+  ) async {
+    await _open(tester);
+    await tester.pumpWidget(_page(_otherAdministrator));
+    await tester.pumpAndSettle();
+    expect(find.text('No hay movimientos'), findsNothing);
+    expect(find.text('Movimientos'), findsOne);
+  });
+
+  testWidgets('removing the movements operations closes the view', (
+    WidgetTester tester,
+  ) async {
+    await _open(tester);
+    await tester.pumpWidget(
+      _page(movementsAdministrator, withMovements: false),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No hay movimientos'), findsNothing);
+    expect(find.text('Movimientos'), findsNothing);
+
+    // Handing them back does not reopen the view.
+    await tester.pumpWidget(_page(movementsAdministrator));
     await tester.pumpAndSettle();
     expect(find.text('No hay movimientos'), findsNothing);
     expect(find.text('Movimientos'), findsOne);

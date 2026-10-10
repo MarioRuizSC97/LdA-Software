@@ -1,4 +1,5 @@
 import '../auth/emulator_session.dart';
+import '../movements/administrator_session.dart';
 import '../movements/inventory_movement.dart';
 import '../movements/seller_profiles.dart';
 import 'emulator_sale_gateway.dart';
@@ -37,7 +38,7 @@ class EmulatorSellerProfileGateway implements SellerProfileGateway {
     required String displayName,
   }) async {
     final String? name = normalizeSellerDisplayName(displayName);
-    if (name == null || !isSellerUid(uid)) {
+    if (name == null || !isPathSafeUid(uid)) {
       throw const SellerProfileRejectedException(code: 'invalid-argument');
     }
     final int generation = ++_generation;
@@ -70,12 +71,10 @@ class EmulatorSellerProfileGateway implements SellerProfileGateway {
 
   Future<void> _requireCurrentAdministrator() async {
     final EmulatorSession? current = await sessionChecker();
-    if (current == null ||
-        current.userId != expectedSession.userId ||
-        current.role != InventoryRole.administrator ||
-        current.branchId != null ||
-        expectedSession.role != InventoryRole.administrator ||
-        expectedSession.branchId != null) {
+    if (!isSameExactAdministrator(
+      expected: expectedSession,
+      current: current,
+    )) {
       throw const SellerProfileSessionException();
     }
   }

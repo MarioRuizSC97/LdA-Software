@@ -642,15 +642,21 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
 
   /// Runs one movements operation for the exact current administrator,
   /// checked before the backend is loaded and again after the call returns.
+  /// A lost session throws a [StateError].
   Future<T> _movementsCall<T>(
     EmulatorSession session,
     Future<T> Function(AdministratorMovementsBackend backend) call,
-    Exception Function() lost,
   ) async {
-    if (!_isSameCurrentAdministrator(session)) throw lost();
+    _requireSameAdministrator(session);
     final T result = await call(await _movementsBackendFor(session));
-    if (!_isSameCurrentAdministrator(session)) throw lost();
+    _requireSameAdministrator(session);
     return result;
+  }
+
+  void _requireSameAdministrator(EmulatorSession session) {
+    if (!_isSameCurrentAdministrator(session)) {
+      throw StateError('administrator session changed');
+    }
   }
 
   AdministratorMovements? _administratorMovementsFor(EmulatorSession session) {
@@ -665,10 +671,13 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             session,
             (AdministratorMovementsBackend backend) =>
                 backend.reader.recentMovements(branchId: branchId),
-            () => const MovementsUnavailable(),
           );
-        } catch (_) {
-          throw const MovementsUnavailable();
+        } on MovementsUnavailable {
+          // The reader already logged it and kept its cause.
+          rethrow;
+        } catch (error, stackTrace) {
+          logMovementsFailure('Movements load failed', error, stackTrace);
+          throw MovementsUnavailable(cause: error, stackTrace: stackTrace);
         }
       },
       readProfile: (String uid) async {
@@ -677,7 +686,6 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             session,
             (AdministratorMovementsBackend backend) =>
                 backend.reader.sellerProfile(uid),
-            () => const MovementsUnavailable(),
           );
         } catch (_) {
           return const SellerProfileUnavailable();

@@ -59,6 +59,27 @@ void main() {
     },
   );
 
+  test('a branch-scoped expected administrator never calls', () async {
+    final EmulatorSellerProfileGateway scoped = EmulatorSellerProfileGateway(
+      expectedSession: const EmulatorSession(
+        userId: 'administrator-1',
+        email: 'admin@demo.invalid',
+        role: InventoryRole.administrator,
+        branchId: 'branch-north',
+      ),
+      sessionChecker: () async => current,
+      invoke: (_) async {
+        events.add('call');
+        return null;
+      },
+    );
+    await expectLater(
+      scoped.setSellerProfile(uid: 'u-1', displayName: 'Ana'),
+      throwsA(isA<SellerProfileSessionException>()),
+    );
+    expect(events, isEmpty);
+  });
+
   test('a session lost during the call is uncertain', () async {
     await expectLater(
       gateway((_) async {

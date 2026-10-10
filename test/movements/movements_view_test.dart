@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
+import 'package:cloud_firestore/cloud_firestore.dart'
+    show FirebaseException, Timestamp;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_stock.dart';
@@ -24,6 +25,7 @@ class _Backend {
   Future<List<MovementEntry>> Function(String? branchId) onLoad = (_) async =>
       <MovementEntry>[];
   Map<String, SellerProfileLookup> profiles = <String, SellerProfileLookup>{};
+  Future<SellerProfileLookup> Function(String uid)? onRead;
   Future<SellerProfileResult> Function(String uid, String name) onWrite = (
     String uid,
     String name,
@@ -36,6 +38,8 @@ class _Backend {
     },
     readProfile: (String uid) async {
       profileReads.add(uid);
+      final Future<SellerProfileLookup> Function(String uid)? read = onRead;
+      if (read != null) return read(uid);
       return profiles[uid] ?? const SellerUnnamed();
     },
     setSellerName: (String uid, String name) {
@@ -341,6 +345,65 @@ void main() {
     ]);
     expect(tester.widget<Text>(_key('movement-actor-m-3')).data, 'Bea');
   });
+
+  testWidgets('a late cancel re-read never overwrites a newer save', (
+    WidgetTester tester,
+  ) async {
+    await openForm(tester, 'Asignar nombre');
+    final Completer<SellerProfileLookup> lateRead =
+        Completer<SellerProfileLookup>();
+    backend.onRead = (_) => lateRead.future;
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Asignar nombre'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_key('seller-name-field'), 'Bea');
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(_key('movement-actor-m-3')).data, 'Bea');
+
+    lateRead.complete(const SellerUnnamed());
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(_key('movement-actor-m-3')).data, 'Bea');
+    expect(find.text('Editar nombre'), findsNWidgets(2));
+  });
+
+  testWidgets('a failed cancel re-read keeps the confirmed name', (
+    WidgetTester tester,
+  ) async {
+    await openForm(tester, 'Editar nombre');
+    backend.onRead = (_) async => const SellerProfileUnavailable();
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(backend.profileReads.last, namedSellerId);
+    expect(tester.widget<Text>(_key('movement-actor-m-1')).data, 'Ana López');
+    expect(find.text('Editar nombre'), findsOne);
+  });
+
+  for (final (String? code, String message) in <(String?, String)>[
+    (
+      'failed-precondition',
+      'Falta un índice en la base de datos; contacta a soporte.',
+    ),
+    ('permission-denied', 'No tienes permiso para ver los movimientos.'),
+    ('unavailable', 'No se pudieron cargar los movimientos'),
+    (null, 'No se pudieron cargar los movimientos'),
+  ]) {
+    testWidgets('a load failure ${code ?? 'without cause'} shows its message', (
+      WidgetTester tester,
+    ) async {
+      backend.onLoad = (_) async => throw MovementsUnavailable(
+        cause: code == null
+            ? null
+            : FirebaseException(plugin: 'cloud_firestore', code: code),
+      );
+      await tester.pumpWidget(_view(backend));
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsOne);
+      expect(find.text('Reintentar'), findsOne);
+    });
+  }
 
   testWidgets('unknown types render unreadable, not a crash', (
     WidgetTester tester,

@@ -35,10 +35,14 @@ class _MovementsViewState extends State<MovementsView> {
   final Map<String, SellerProfileLookup> _names =
       <String, SellerProfileLookup>{};
   final Set<String> _resolving = <String>{};
+
+  /// Per-uid count of confirmed saves; a read started before a newer save
+  /// never overwrites it.
+  final Map<String, int> _nameWrites = <String, int>{};
   List<MovementEntry> _entries = const <MovementEntry>[];
   String? _branchId;
   bool _loading = true;
-  bool _failed = false;
+  String? _failure;
   int _generation = 0;
 
   @override
@@ -51,7 +55,7 @@ class _MovementsViewState extends State<MovementsView> {
     final int generation = ++_generation;
     setState(() {
       _loading = true;
-      _failed = false;
+      _failure = null;
     });
     try {
       final List<MovementEntry> entries = await widget.movements.load(
@@ -63,12 +67,12 @@ class _MovementsViewState extends State<MovementsView> {
         _loading = false;
       });
       _resolveNames(entries);
-    } catch (_) {
+    } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
         _entries = const <MovementEntry>[];
         _loading = false;
-        _failed = true;
+        _failure = movementsUnavailableMessage(error);
       });
     }
   }
@@ -101,6 +105,7 @@ class _MovementsViewState extends State<MovementsView> {
   }
 
   Future<void> _readProfile(String uid) async {
+    final int writes = _nameWrites[uid] ?? 0;
     SellerProfileLookup lookup;
     try {
       lookup = await widget.movements.readProfile(uid);
@@ -109,6 +114,12 @@ class _MovementsViewState extends State<MovementsView> {
     }
     _resolving.remove(uid);
     if (!mounted) return;
+    // A save confirmed while this read was in flight is newer than it.
+    if ((_nameWrites[uid] ?? 0) != writes) return;
+    // A background failure never downgrades a confirmed name.
+    if (lookup is SellerProfileUnavailable && _names[uid] is SellerNamed) {
+      return;
+    }
     setState(() => _names[uid] = lookup);
   }
 
@@ -129,6 +140,7 @@ class _MovementsViewState extends State<MovementsView> {
       if (_resolving.add(uid)) _readProfile(uid);
       return;
     }
+    _nameWrites[uid] = (_nameWrites[uid] ?? 0) + 1;
     setState(() => _names[uid] = SellerNamed(saved));
   }
 
@@ -194,12 +206,12 @@ class _MovementsViewState extends State<MovementsView> {
         ),
       );
     }
-    if (_failed) {
+    if (_failure case final String failure) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Text('No se pudieron cargar los movimientos'),
+            Text(failure, textAlign: TextAlign.center),
             const SizedBox(height: 12),
             FilledButton(onPressed: _load, child: const Text('Reintentar')),
           ],

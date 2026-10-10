@@ -12,6 +12,7 @@ class _FakeSource implements MovementReadSource {
   final List<String> events = <String>[];
   List<CatalogDocument> movements = <CatalogDocument>[];
   Map<String, Object?> documents = <String, Object?>{};
+  Object? queryError;
 
   @override
   Future<List<CatalogDocument>> queryMovements({
@@ -19,6 +20,7 @@ class _FakeSource implements MovementReadSource {
     required int limit,
   }) async {
     events.add('query:${branchId ?? '*'}:$limit');
+    if (queryError case final Object error) throw error;
     return movements;
   }
 
@@ -150,5 +152,51 @@ void main() {
       await repository.sellerProfile('a'),
       const SellerProfileUnavailable(),
     );
+  });
+
+  test('a failed query keeps its cause and stack trace', () async {
+    final FirebaseException missingIndex = FirebaseException(
+      plugin: 'cloud_firestore',
+      code: 'failed-precondition',
+    );
+    source.queryError = missingIndex;
+    final Object? error = await repository.recentMovements().then<Object?>(
+      (_) => null,
+      onError: (Object error) => error,
+    );
+    expect(error, isA<MovementsUnavailable>());
+    final MovementsUnavailable unavailable = error! as MovementsUnavailable;
+    expect(unavailable.cause, same(missingIndex));
+    expect(unavailable.stackTrace, isNotNull);
+  });
+
+  test('a branch-scoped expected session is never the administrator', () async {
+    const EmulatorSession scoped = EmulatorSession(
+      userId: 'administrator-1',
+      email: 'admin@demo.invalid',
+      role: InventoryRole.administrator,
+      branchId: 'branch-north',
+    );
+    // The live session is the exact administrator; the expected one is not.
+    repository = FirestoreMovementRepository(
+      source: source,
+      session: scoped,
+      sessionChecker: () async => current,
+    );
+    source.documents = <String, Object?>{
+      'sellerProfiles/a': <String, Object?>{
+        'displayName': 'Ana',
+        'branchId': 'branch-north',
+      },
+    };
+    await expectLater(
+      repository.recentMovements(),
+      throwsA(isA<MovementsUnavailable>()),
+    );
+    expect(
+      await repository.sellerProfile('a'),
+      const SellerProfileUnavailable(),
+    );
+    expect(source.events, isEmpty);
   });
 }

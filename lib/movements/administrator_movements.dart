@@ -1,7 +1,10 @@
+import 'dart:developer' as developer;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../auth/emulator_session.dart';
 import '../catalog/firestore_catalog_repository.dart';
+import 'administrator_session.dart';
 import 'inventory_movement.dart';
 import 'seller_profiles.dart';
 
@@ -49,7 +52,34 @@ typedef AdministratorMovementsLoader =
     Future<AdministratorMovementsBackend> Function(EmulatorSession session);
 
 class MovementsUnavailable implements Exception {
-  const MovementsUnavailable();
+  const MovementsUnavailable({this.cause, this.stackTrace});
+
+  /// The original failure, kept for diagnosis; null when there was none.
+  final Object? cause;
+  final StackTrace? stackTrace;
+}
+
+/// Spanish message for a failed movements load. A missing composite index
+/// and a rules denial get their own message; everything else is generic.
+String movementsUnavailableMessage(Object error) {
+  final Object? cause = error is MovementsUnavailable ? error.cause : null;
+  return switch (cause) {
+    FirebaseException(code: 'failed-precondition') =>
+      'Falta un índice en la base de datos; contacta a soporte.',
+    FirebaseException(code: 'permission-denied') =>
+      'No tienes permiso para ver los movimientos.',
+    _ => 'No se pudieron cargar los movimientos',
+  };
+}
+
+/// Logs a movements failure with its cause, like the corrections gateway.
+void logMovementsFailure(String message, Object error, StackTrace stackTrace) {
+  developer.log(
+    message,
+    name: 'lda.movements',
+    error: error,
+    stackTrace: stackTrace,
+  );
 }
 
 /// Fakeable Firestore seam for the movements query and single profile GETs.
@@ -105,7 +135,6 @@ class FirebaseFirestoreMovementReadSource implements MovementReadSource {
   }
 }
 
-final RegExp _branchIdPattern = RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$');
 const Set<String> _profileFields = <String>{'displayName', 'branchId'};
 
 class FirestoreMovementRepository implements MovementReader {
@@ -122,7 +151,7 @@ class FirestoreMovementRepository implements MovementReader {
   @override
   Future<List<MovementEntry>> recentMovements({String? branchId}) async {
     try {
-      if (branchId != null && !_branchIdPattern.hasMatch(branchId)) {
+      if (branchId != null && !isBranchId(branchId)) {
         throw const FormatException('branch filter is invalid');
       }
       await _requireAdministrator();
@@ -143,15 +172,16 @@ class FirestoreMovementRepository implements MovementReader {
             return entry;
           })
           .toList(growable: false);
-    } catch (_) {
-      throw const MovementsUnavailable();
+    } catch (error, stackTrace) {
+      logMovementsFailure('Movements query failed', error, stackTrace);
+      throw MovementsUnavailable(cause: error, stackTrace: stackTrace);
     }
   }
 
   @override
   Future<SellerProfileLookup> sellerProfile(String uid) async {
     try {
-      if (!isSellerUid(uid)) return const SellerProfileUnavailable();
+      if (!isPathSafeUid(uid)) return const SellerProfileUnavailable();
       await _requireAdministrator();
       final CatalogDocument? document = await source.findDocument(
         'sellerProfiles/$uid',
@@ -170,11 +200,7 @@ class FirestoreMovementRepository implements MovementReader {
 
   Future<void> _requireAdministrator() async {
     final EmulatorSession? active = await sessionChecker();
-    if (active == null ||
-        active.userId != session.userId ||
-        active.role != InventoryRole.administrator ||
-        session.role != InventoryRole.administrator ||
-        active.branchId != null) {
+    if (!isSameExactAdministrator(expected: session, current: active)) {
       throw const FormatException('administrator session is not active');
     }
   }
@@ -188,8 +214,7 @@ String _parseDisplayName(Map<String, Object?> data) {
   if (data.length != _profileFields.length ||
       displayName is! String ||
       normalizeSellerDisplayName(displayName) != displayName ||
-      branchId is! String ||
-      !_branchIdPattern.hasMatch(branchId)) {
+      !isBranchId(branchId)) {
     throw const FormatException('seller profile is invalid');
   }
   return displayName;
