@@ -4,8 +4,8 @@ import '../sales/sale_format.dart';
 import 'correction_sale.dart';
 
 // User-visible text is neutral, professional Spanish; identifiers stay in
-// English. Replacement and exchange forms arrive in CORR-07D, so those
-// actions are shown disabled here.
+// English. The exchange form arrives later in CORR-07D, so that action is
+// shown disabled here.
 
 /// One looked-up sale: folio, date, total, payment, invoice flag, the
 /// client-derived correction window (display only; the server decides), and
@@ -16,6 +16,7 @@ class CorrectionSaleDetail extends StatelessWidget {
     required this.productNames,
     required this.onBack,
     this.onReturn,
+    this.onReplace,
     super.key,
   });
 
@@ -28,6 +29,11 @@ class CorrectionSaleDetail extends StatelessWidget {
   /// Opens the return form. "Devolver" is disabled when this is null or the
   /// sale has nothing left to return.
   final VoidCallback? onReturn;
+
+  /// Opens the factory-defect replacement form; disabled like [onReturn].
+  /// A replacement consumes nothing but is capped at the remaining quantity
+  /// (decision 11).
+  final VoidCallback? onReplace;
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +79,10 @@ class CorrectionSaleDetail extends StatelessWidget {
                 name: productNames[line.productId] ?? line.productId,
               ),
             const Divider(height: 32),
-            _Actions(onReturn: sale.hasReturnableQuantity ? onReturn : null),
+            _Actions(
+              onReturn: sale.hasReturnableQuantity ? onReturn : null,
+              onReplace: sale.hasReturnableQuantity ? onReplace : null,
+            ),
           ],
         ),
       ),
@@ -116,9 +125,10 @@ class _CorrectionLine extends StatelessWidget {
 }
 
 class _Actions extends StatelessWidget {
-  const _Actions({required this.onReturn});
+  const _Actions({required this.onReturn, required this.onReplace});
 
   final VoidCallback? onReturn;
+  final VoidCallback? onReplace;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -133,10 +143,10 @@ class _Actions extends StatelessWidget {
             onPressed: onReturn,
             child: const Text('Devolver'),
           ),
-          const OutlinedButton(
-            key: ValueKey<String>('correction-action-replace'),
-            onPressed: null,
-            child: Text('Reemplazar (defecto de fábrica)'),
+          OutlinedButton(
+            key: const ValueKey<String>('correction-action-replace'),
+            onPressed: onReplace,
+            child: const Text('Reemplazar (defecto de fábrica)'),
           ),
           const OutlinedButton(
             key: ValueKey<String>('correction-action-exchange'),

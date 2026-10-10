@@ -320,7 +320,7 @@ void main() {
     expect(_key('correction-detail'), findsOneWidget);
   });
 
-  testWidgets('the detail shows the sale, the lines and disabled actions', (
+  testWidgets('the detail shows the sale, the lines and the actions', (
     WidgetTester tester,
   ) async {
     final CorrectableSale sale = _sale(ribbonReturned: 250);
@@ -379,19 +379,27 @@ void main() {
       findsNothing,
     );
 
-    // The pin is still returnable, so "Devolver" is enabled.
+    // The pin is still returnable, so return and replacement are enabled;
+    // the exchange is not offered yet.
     expect(find.text('Devolver'), findsOneWidget);
     expect(
       tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
       isNotNull,
     );
-    for (final (String key, String label) in <(String, String)>[
-      ('correction-action-replace', 'Reemplazar (defecto de fábrica)'),
-      ('correction-action-exchange', 'Cambiar producto'),
-    ]) {
-      expect(find.text(label), findsOneWidget);
-      expect(tester.widget<OutlinedButton>(_key(key)).onPressed, isNull);
-    }
+    expect(find.text('Reemplazar (defecto de fábrica)'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(_key('correction-action-replace'))
+          .onPressed,
+      isNotNull,
+    );
+    expect(find.text('Cambiar producto'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(_key('correction-action-exchange'))
+          .onPressed,
+      isNull,
+    );
     expect(find.text('Próximamente'), findsOneWidget);
 
     await _tap(tester, _key('correction-detail-back'));
@@ -494,6 +502,13 @@ void main() {
     await _search(tester, 'NTE-3F2A-9C1B');
     expect(
       tester.widget<FilledButton>(_key('correction-action-return')).onPressed,
+      isNull,
+    );
+    // Nothing remains, so nothing can be replaced either.
+    expect(
+      tester
+          .widget<OutlinedButton>(_key('correction-action-replace'))
+          .onPressed,
       isNull,
     );
   });

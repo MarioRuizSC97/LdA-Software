@@ -7,6 +7,8 @@ import '../sales/sale_format.dart';
 import 'correction_draft.dart';
 import 'correction_form_support.dart' show correctionSessionMessage;
 import 'correction_receipt.dart';
+import 'correction_replacement_form.dart';
+import 'correction_replacement_receipt_view.dart';
 import 'correction_return_form.dart';
 import 'correction_return_receipt_view.dart';
 import 'correction_sale.dart';
@@ -22,11 +24,12 @@ const String _searchFailedMessage =
 
 /// Seller correction lookup: a folio search plus the branch's recent sales
 /// (last [correctionWindowDays] days). Choosing a sale shows its
-/// [CorrectionSaleDetail], whose "Devolver" opens the [CorrectionReturnForm];
-/// a registered return shows its receipt, then the refetched sale. A return
-/// committed while no form was shown (for example, the view closed during
-/// its submit) shows its receipt on entry; leaving the receipt acknowledges
-/// it.
+/// [CorrectionSaleDetail], whose actions open the return and replacement
+/// forms; a registered correction shows its receipt, then the refetched
+/// sale. A correction of any kind committed while no form was
+/// shown (for example, the view closed during its submit) shows its receipt
+/// on entry, and an unresolved one reopens its locked form; leaving the
+/// receipt acknowledges it.
 class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
@@ -47,6 +50,8 @@ class CorrectionLookupView extends StatefulWidget {
 
 enum _RecentStatus { loading, failed, ready }
 
+enum _FormKind { returning, replacing }
+
 class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   final TextEditingController _folio = TextEditingController();
   _RecentStatus _recentStatus = _RecentStatus.loading;
@@ -58,11 +63,11 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   String? _searchError;
   CorrectableSale? _selected;
 
-  /// The sale whose return form is shown.
-  CorrectableSale? _returning;
+  /// The open correction form and the sale it corrects.
+  (_FormKind, CorrectableSale)? _form;
 
-  /// The registered return and the sale it was made against.
-  (SaleReturnReceipt, CorrectableSale)? _receipt;
+  /// The registered correction and the sale it was made against.
+  (SaleCorrectionReceipt, CorrectableSale)? _receipt;
 
   /// The sale ID being refetched after a return, and its failure if any.
   String? _refreshSaleId;
@@ -71,15 +76,17 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
   @override
   void initState() {
     super.initState();
-    // A committed but unseen return shows its receipt first; otherwise an
-    // unresolved return reopens its form, locked to the stored draft.
+    // A committed but unseen correction shows its receipt first; otherwise
+    // an unresolved one reopens its form, locked to the stored draft.
     final CompletedCorrection? committed = widget.corrections.unacknowledged();
     final SaleCorrectionDraft? unresolved = widget.corrections
         .unresolvedDraft();
-    if (committed is CompletedReturn) {
-      _receipt = (committed.receipt, committed.draft.sale);
+    if (committed is CompletedReturn || committed is CompletedReplacement) {
+      _receipt = (committed!.receipt, committed.draft.sale);
     } else if (unresolved is SaleReturnDraft) {
-      _returning = unresolved.sale;
+      _form = (_FormKind.returning, unresolved.sale);
+    } else if (unresolved is SaleReplacementDraft) {
+      _form = (_FormKind.replacing, unresolved.sale);
     }
     _loadRecent();
   }
@@ -169,11 +176,11 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     _ => _searchFailedMessage,
   };
 
-  void _completeReturn(SaleReturnReceipt receipt) {
-    final CorrectableSale? sale = _returning;
+  void _complete(SaleCorrectionReceipt receipt) {
+    final CorrectableSale? sale = _form?.$2;
     if (sale == null) return;
     setState(() {
-      _returning = null;
+      _form = null;
       _selected = null;
       _receipt = (receipt, sale);
     });
@@ -212,7 +219,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
     _searchGeneration += 1;
     setState(() {
       _receipt = null;
-      _returning = null;
+      _form = null;
       _selected = null;
       _refreshSaleId = null;
       _refreshError = null;
@@ -225,36 +232,10 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
 
   @override
   Widget build(BuildContext context) {
-    final (SaleReturnReceipt, CorrectableSale)? receipt = _receipt;
-    if (receipt != null) {
-      return CorrectionReturnReceiptView(
-        receipt: receipt.$1,
-        sale: receipt.$2,
-        productNames: widget.productNames,
-        onBackToSale: () {
-          widget.corrections.acknowledge(receipt.$1);
-          _refreshSale(receipt.$2.saleId);
-        },
-        onNewSearch: () {
-          widget.corrections.acknowledge(receipt.$1);
-          _newSearch();
-        },
-      );
-    }
-    final CorrectableSale? returning = _returning;
-    if (returning != null) {
-      return CorrectionReturnForm(
-        key: ValueKey<String>('return-form-${returning.saleId}'),
-        sale: returning,
-        corrections: widget.corrections,
-        productNames: widget.productNames,
-        onBack: () => setState(() {
-          _returning = null;
-          _selected ??= returning;
-        }),
-        onCompleted: _completeReturn,
-      );
-    }
+    final (SaleCorrectionReceipt, CorrectableSale)? receipt = _receipt;
+    if (receipt != null) return _receiptView(receipt.$1, receipt.$2);
+    final (_FormKind, CorrectableSale)? form = _form;
+    if (form != null) return _formView(form.$1, form.$2);
     final String? refreshSaleId = _refreshSaleId;
     if (refreshSaleId != null) return _refreshView(refreshSaleId);
     final CorrectableSale? selected = _selected;
@@ -263,7 +244,9 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         sale: selected,
         productNames: widget.productNames,
         onBack: () => setState(() => _selected = null),
-        onReturn: () => setState(() => _returning = selected),
+        onReturn: () => setState(() => _form = (_FormKind.returning, selected)),
+        onReplace: () =>
+            setState(() => _form = (_FormKind.replacing, selected)),
       );
     }
     final ThemeData theme = Theme.of(context);
@@ -330,6 +313,63 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         ),
       ),
     );
+  }
+
+  /// Return and replacement receipts have their views; exchanges are not
+  /// offered yet. Leaving a receipt acknowledges exactly that receipt.
+  Widget _receiptView(SaleCorrectionReceipt receipt, CorrectableSale sale) {
+    void back() {
+      widget.corrections.acknowledge(receipt);
+      _refreshSale(sale.saleId);
+    }
+
+    void search() {
+      widget.corrections.acknowledge(receipt);
+      _newSearch();
+    }
+
+    return switch (receipt) {
+      SaleExchangeReceipt() => throw StateError('exchanges are not offered'),
+      final SaleReturnReceipt value => CorrectionReturnReceiptView(
+        receipt: value,
+        sale: sale,
+        productNames: widget.productNames,
+        onBackToSale: back,
+        onNewSearch: search,
+      ),
+      final SaleReplacementReceipt value => CorrectionReplacementReceiptView(
+        receipt: value,
+        sale: sale,
+        productNames: widget.productNames,
+        onBackToSale: back,
+        onNewSearch: search,
+      ),
+    };
+  }
+
+  Widget _formView(_FormKind kind, CorrectableSale sale) {
+    void back() => setState(() {
+      _form = null;
+      _selected ??= sale;
+    });
+    return switch (kind) {
+      _FormKind.returning => CorrectionReturnForm(
+        key: ValueKey<String>('return-form-${sale.saleId}'),
+        sale: sale,
+        corrections: widget.corrections,
+        productNames: widget.productNames,
+        onBack: back,
+        onCompleted: _complete,
+      ),
+      _FormKind.replacing => CorrectionReplacementForm(
+        key: ValueKey<String>('replacement-form-${sale.saleId}'),
+        sale: sale,
+        corrections: widget.corrections,
+        productNames: widget.productNames,
+        onBack: back,
+        onCompleted: _complete,
+      ),
+    };
   }
 
   Widget _refreshView(String saleId) {
