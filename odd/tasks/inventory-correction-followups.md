@@ -45,6 +45,12 @@ Out of scope:
   - the hard-coded 16% IVA in `catalogCalculationFor` in the test fixtures;
   - the SALE-07 `R3-forged-folio-baseline` assertion;
   - the FIX-01 review follow-ups: comment or test that `SaleDraftStore.complete`'s receipt check is redundant with `SaleReceipt.fromCallable` (or resolve on mismatch); rename `showPendingReceipt` to say it reconciles; a shared cart-reset helper; a dedicated pending-receipt notice instead of the general message; and the duplicated shell test helper.
+  - the FIX-02 review suggestions:
+    - reword the "none is the default" test-helper comments;
+    - use an options object instead of a positional `undefined` message in the correction test helpers;
+    - named fields in the gateway reason table test;
+    - put the expected reason in each preview failure-table row;
+    - document that the client and server reasons ship together (`R4-reason-only-skew`, `R3-reason-only-client-coupling`).
   Route: delegated writer.
 - [ ] FIX-04 — Reconcile and report. Route: parent.
 
@@ -70,7 +76,24 @@ Out of scope:
 - FIX-01 closure: high-risk four-lens native review `review-a0a7103a98ca727d` approved and acknowledged; commit tree exactly the approved candidate `d83059ea`; commit `3c426d8`.
   - The `R4`/`R3-complete-argumenterror-wedge` warning (a mismatch throw after commit would wedge the seller) is not reachable in practice. The parent verified that `SaleReceipt.fromCallable` already binds the branch, method and amount to the draft (`lib/sales/sale_draft.dart:167-185`). A clarifying comment or test is folded into FIX-03.
   - The other R2 suggestions are folded into FIX-03.
+- FIX-02 writer (delegated, backend plus Flutter client):
+  - **Shared reasons:** a new frozen `SALE_ERROR_REASONS` in `sales.js` covers `paymentMismatch`, `insufficientStock`, `folioAmbiguous`, `correctionWindowClosed` and `overReturn`. Every reason throw site uses it.
+  - **Where they are thrown:**
+    - `correction-window-closed`: `correction-support.js:78-79` (shared by every service and preview) and `sale-lookup.js:87-88`;
+    - `insufficient-stock`: `sale-replacements.js:103` and `sale-exchanges.js:113`;
+    - `over-return`: `sale-returns.js:264`, `sale-exchanges.js:372` and `sale-replacements.js:188-189`.
+    - Codes and messages are unchanged; other rejections are asserted to carry no reason.
+  - **Client:** the `CorrectionRejection` helpers match code plus reason; the English-message matching is removed with no fallback, because the client and server ship together.
+  - **Evidence (author-reported):**
+    - backend 19 RED, then GREEN;
+    - 12 mutation probes, all killed;
+    - emulator suites run once each: returns 6/6, replacements 7/7, exchanges 6/6, lookup 10/10.
+  - **Accidental emulator start:** the writer once launched the emulator test files without their environment, and they stopped at the emulator guard within milliseconds, before any data access.
+  - **Parent fix:** the writer stopped `partial` because `test/auth/emulator_login_corrections_test.dart` was outside its edit surface, a parent brief omission. The parent read and applied the writer's 2-line fixture patch (adding `reason` to two fixtures).
+- FIX-02 parent checks: backend unit 320/320 from the root; `flutter test` 626/626.
+- FIX-02 closure: high-risk four-lens native review `review-a6251fc25a03f411` approved and acknowledged; commit tree exactly the approved candidate `a66577e1`; commit `3fc3fc0`. The suggestions are folded into FIX-03.
+- FIX-02 pending: one live HTTP transport run, which needs user approval. The harness now expects the reasons on the return over-return, the preview over-return and the replacement stock denials; it has no expired-window or exchange-stock denial.
 
 ## Next step
 
-FIX-02: correction server reasons and the client switch (delegated writer).
+FIX-02 live run (needs user approval), then FIX-03.
