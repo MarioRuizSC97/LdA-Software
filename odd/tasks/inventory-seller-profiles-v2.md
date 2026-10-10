@@ -116,7 +116,20 @@ New decision (user, 2026-10-10):
     - comment the magic `loaderFailures = 2`;
     - add a widget test for losing the session while a load is pending.
   - Out-of-scope copies remain: the branch regex in `emulator_session.dart` and `firestore_catalog_repository.dart`, and the per-gateway administrator checks in stock intake and product creation.
+- SP-05 writer (delegated): `functions/test/sellerProfiles-callable-transport.emulator.test.mjs` (989 lines). It is gated by `LDA_SELLER_PROFILES_HTTP_ACCEPTANCE=1` plus the fixture baseline and runtime approvals.
+  - **16 live steps:**
+    - `setSellerProfile`: refusal of a non-seller with `not-a-seller`, create, replay, rename, and denials for anonymous, unassigned, client and seller;
+    - an owned stock intake that creates a movement;
+    - profile rules over REST: an administrator GET is allowed; seller, client, unassigned, anonymous and foreign GETs are denied; LIST and client writes are denied;
+    - the administrator movements `runQuery`, unfiltered and branch-filtered;
+    - a seller's unfiltered query is denied, and a seller's own-branch query is allowed.
+  - **Owned data:** a branch, a product, 4 profile slots and the intake documents, with exact teardown.
+  - **Offline:** 9 rehearsal and forgery tests; 6 mutation probes, all killed.
+- SP-05 parent spot check: transport file offline 9 pass, 1 live skipped.
+- SP-05 test closure: native review `review-349d11e9711bd24c` (medium, one lens) approved and acknowledged; commit tree exactly `f1e3a4eb`; commit `e1ff2aa`.
+  - Warning `R3-live-step-failure-does-not-abort`: a failed live step does not stop the scenario. It stays safe, because the manifest marks the run uncertain and refuses later requests, but secondary failures cascade.
+- SP-05 pending: one live run, which needs user approval. Before it, confirm that the functions emulator serves `setSellerProfile` (OPTIONS 204) and that the Firestore emulator loaded the new `sellerProfiles` rule; a stale rule would make the administrator GET return 403.
 
 ## Next step
 
-SP-05: HTTP transport acceptance for setSellerProfile, the sellerProfiles rules and the administrator movements query, then one live run with user approval.
+The SP-05 live run (needs user approval), then SP-06.
