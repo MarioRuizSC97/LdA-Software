@@ -51,7 +51,8 @@ New decision (user, 2026-10-10):
 - [x] SP-01 — Port the profile service and its unit tests: the main-style guard (demo project, Firestore 8080, Auth 9099), an injected environment, and a `SaleError`-style reason where useful. Route: delegated writer.
 - [x] SP-02 — The `setSellerProfile` administrator callable in `functions/src/index.js`, with callable unit tests and an emulator test. Route: delegated writer.
 - [x] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
-- [ ] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
+- [x] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
+- [ ] SP-04b — Fix the SP-04 review warnings: a stale profile read overwriting a saved name, unobservable load failures, administrator-predicate drift, and the duplicated branch pattern; plus the review suggestions. Route: delegated writer.
 - [ ] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
 - [ ] SP-06 — Reconcile and report. Route: parent.
 
@@ -84,7 +85,22 @@ New decision (user, 2026-10-10):
   - **Rules tests not run (exception):** the harness uses project `demo-lda-inventory` and calls `clearFirestore()` in `beforeEach`, so running it against the live demo emulator would destroy the fixtures. Checks run instead: syntax OK, index JSON OK, backend 388/388. Rules behavior is accepted over HTTP in SP-05.
 - SP-03 closure: native review `review-bc843d4f439b60fa` (medium, one lens) approved and acknowledged; commit tree exactly the approved candidate `17f5186e`; commit `40c2970`.
   - Suggestion `R3-001`: no filtered-order case with two north movements. The emulator does not enforce composite indexes, so the index is proven only on deploy.
+- SP-04 writer (delegated, Flutter):
+  - **New files:**
+    - `lib/movements/inventory_movement.dart` (strict parse; malformed documents show as "Movimiento ilegible" rows, so they are never silently skipped);
+    - `lib/movements/seller_profiles.dart`;
+    - `lib/movements/administrator_movements.dart` (a fakeable Firestore source with session re-checks);
+    - `lib/movements/movements_view.dart`;
+    - `lib/firebase/emulator_seller_profile_gateway.dart`.
+  - **Wiring:** the administrator-only "Movimientos" app-bar action and the shell `administratorMovementsLoader`.
+  - **Branch filter:** "Todas" plus the catalog's `branchChoices`.
+  - **Actor labels:** stock intake shows "Administrador"; a seller with a profile shows only the name; without one, "Vendedor sin nombre (…)"; if the lookup is unavailable, "Nombre no disponible (…)".
+  - **Name dialog:** assign or edit, with an uncertain same-name retry and Spanish messages for each reason.
+  - **Finding:** the existing `formatScaledQuantity` in `lib/sales/sale_format.dart` misformats negative values with a nonzero remainder. SP-04 uses its own signed BigInt formatter; the existing helper is unchanged because current callers pass only non-negative values.
+  - **Evidence (author-reported):** compile-level RED, then GREEN; 13 mutation probes, with 11 killed and 2 equivalent.
+- SP-04 parent spot check: `flutter test` 669/669.
+- SP-04 closure: high-risk four-lens native review `review-f6c634e50600c04d` approved and acknowledged; commit tree exactly the approved candidate `724c68ca`; commit `f6c4a6b`. Its warnings and suggestions go into SP-04b.
 
 ## Next step
 
-SP-04: Flutter administrator movements screen with names and the assign-name form (delegated writer).
+SP-04b: the review fixes (delegated writer, running). Then SP-05.
