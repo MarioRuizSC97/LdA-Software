@@ -48,8 +48,8 @@ New decision (user, 2026-10-10):
 
 ## Tasks
 
-- [ ] SP-01 — Port the profile service and its unit tests: the main-style guard (demo project, Firestore 8080, Auth 9099), an injected environment, and a `SaleError`-style reason where useful. Route: delegated writer.
-- [ ] SP-02 — The `setSellerProfile` administrator callable in `functions/src/index.js`, with callable unit tests and an emulator test. Route: delegated writer.
+- [x] SP-01 — Port the profile service and its unit tests: the main-style guard (demo project, Firestore 8080, Auth 9099), an injected environment, and a `SaleError`-style reason where useful. Route: delegated writer.
+- [x] SP-02 — The `setSellerProfile` administrator callable in `functions/src/index.js`, with callable unit tests and an emulator test. Route: delegated writer.
 - [ ] SP-03 — Rules: `sellerProfiles` gets administrator GET only, with no list and no client writes. Confirm the administrator read and list rule on `inventoryMovements` and add the index the movements query needs. Add rules regression tests if a harness exists; otherwise accept over HTTP in SP-05. Route: delegated writer.
 - [ ] SP-04 — Flutter administrator movements screen with name resolution and an assign/edit name form through a `setSellerProfile` gateway (session re-check, stale and uncertain handling as in the other gateways). Widget and gateway tests. Route: delegated writer.
 - [ ] SP-05 — HTTP transport acceptance for `setSellerProfile`, the `sellerProfiles` rules and the administrator movements query, with one live run on user approval. Route: delegated writer plus verifier.
@@ -66,7 +66,17 @@ New decision (user, 2026-10-10):
 
 - Exploration (read-only, 2026-10-10): the old contract and reuse map; main touchpoints at `functions/src/index.js:41-99` (the administrator callable pattern), `firestore.rules:186-189` (`inventoryMovements` reads) and `:237-240` (catch-all deny). No Flutter administrator view of movements exists.
 - Delivery forecast: about 2,500–3,500 authored lines across 5 work units. Strategy: feature-branch chain (cached), one reviewed commit per task.
+- SP-01 and SP-02 writer (delegated, one backend work unit):
+  - **Port:** the old SPI-01 contract is ported unchanged. The isolated-c guard is replaced by `assertLocalSellerProfilesEmulator`, which requires the exact demo project, Firestore `127.0.0.1:8080` and Auth `127.0.0.1:9099`, and runs before authorization.
+  - **Errors:** `SellerProfileError` carries the reasons `not-a-seller`, `invalid-branch-claim` and `invalid-stored-profile`. `saleHttpsError` is renamed `reasonedHttpsError` and shared.
+  - **Lazy Auth import:** `setSellerProfile` imports `firebase-admin/auth` lazily after the guard. A static import would break the fail-closed loaders in the sales and corrections callable tests.
+  - **Evidence (author-reported):**
+    - RED, then GREEN; 7 mutation probes, all killed.
+    - The emulator test ran once, 1/1, with owned `sp-*` users and a `branch-<uuid>` branch. Afterwards 0 profiles and 0 `sp-*` users remained, and no demo fixtures were touched.
+  - **Not done:** the emulator test is not in `package.json` `test:emulator`, which was outside the edit surface.
+- SP-01 and SP-02 parent spot check: backend non-emulator 388/388.
+- SP-01 and SP-02 closure: native review `review-2fa427f257bb3e7e` (medium, one lens) approved with no findings and acknowledged; commit tree exactly the approved candidate `4dc33528`; commit `46e2170`.
 
 ## Next step
 
-SP-01: port the profile service (delegated writer).
+SP-03: rules and the movements index (delegated writer).
