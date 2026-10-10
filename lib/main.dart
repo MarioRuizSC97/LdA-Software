@@ -8,6 +8,7 @@ import 'catalog/catalog_repository.dart';
 import 'firebase/emulator_bootstrap.dart';
 import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
+import 'movements/administrator_movements.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
 const bool _localEmulatorsEnabled = bool.fromEnvironment('LDA_LOCAL_EMULATORS');
@@ -32,6 +33,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorStockIntakeLoader,
     this.emulatorSaleLoader,
     this.emulatorCorrectionLoader,
+    this.emulatorMovementsLoader,
     super.key,
   });
 
@@ -44,6 +46,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final StockIntakeGatewayLoader? emulatorStockIntakeLoader;
   final SaleGatewayLoader? emulatorSaleLoader;
   final CorrectionGatewayLoader? emulatorCorrectionLoader;
+  final AdministratorMovementsLoader? emulatorMovementsLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +74,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         correctionGatewayLoader:
             emulatorCorrectionLoader ??
             DemoEmulatorBootstrap.initializeCorrectionGateway,
+        administratorMovementsLoader:
+            emulatorMovementsLoader ??
+            DemoEmulatorBootstrap.initializeAdministratorMovements,
       );
     }
     return const CatalogSetupApp();
@@ -87,6 +93,8 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     this.saleGatewayLoader = DemoEmulatorBootstrap.initializeSaleGateway,
     this.correctionGatewayLoader =
         DemoEmulatorBootstrap.initializeCorrectionGateway,
+    this.administratorMovementsLoader =
+        DemoEmulatorBootstrap.initializeAdministratorMovements,
     super.key,
   });
 
@@ -98,6 +106,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
 
   final SaleGatewayLoader saleGatewayLoader;
   final CorrectionGatewayLoader correctionGatewayLoader;
+  final AdministratorMovementsLoader administratorMovementsLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -131,6 +140,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
       saleGatewayLoader: widget.saleGatewayLoader,
       correctionGatewayLoader: widget.correctionGatewayLoader,
+      administratorMovementsLoader: widget.administratorMovementsLoader,
     ),
   );
 }

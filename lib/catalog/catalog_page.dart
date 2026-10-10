@@ -6,6 +6,8 @@ import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
+import '../movements/administrator_movements.dart';
+import '../movements/movements_view.dart';
 import '../sales/sale_cart_controller.dart';
 import '../sales/sale_cart_panel.dart';
 import '../sales/sale_draft.dart';
@@ -131,6 +133,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.saleCheckout,
     this.onSaleCompleted,
     this.saleCorrections,
+    this.administratorMovements,
     super.key,
   });
 
@@ -157,6 +160,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 
   /// Seller-only sale corrections; null hides the "Correcciones" action.
   final SaleCorrections? saleCorrections;
+
+  /// Administrator-only movements; null hides the "Movimientos" action.
+  final AdministratorMovements? administratorMovements;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -217,6 +223,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   SaleCartController? _sale;
   bool _cartVisible = false;
   bool _correctionsVisible = false;
+  bool _movementsVisible = false;
 
   @override
   void initState() {
@@ -293,6 +300,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             (oldWidget.saleCorrections == null)) {
       _correctionsVisible = false;
     }
+    if (sessionChanged ||
+        (widget.administratorMovements == null) !=
+            (oldWidget.administratorMovements == null)) {
+      _movementsVisible = false;
+    }
     if (sessionChanged) _requestCatalog();
   }
 
@@ -307,6 +319,22 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _cartVisible = false;
       _correctionsVisible = true;
     });
+  }
+
+  AdministratorMovements? get _movements =>
+      widget.session.role == InventoryRole.administrator &&
+          widget.session.branchId == null
+      ? widget.administratorMovements
+      : null;
+
+  void _showMovements() {
+    _presentationRevision += 1;
+    setState(() => _movementsVisible = true);
+  }
+
+  void _closeMovements() {
+    _presentationRevision += 1;
+    setState(() => _movementsVisible = false);
   }
 
   void _closeCorrections() {
@@ -576,6 +604,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final SaleReceipt? receipt = sale?.lastReceipt;
     final SaleCorrections? corrections = _corrections;
     final bool showCorrections = corrections != null && _correctionsVisible;
+    final AdministratorMovements? movements = _movements;
+    final bool showMovements = movements != null && _movementsVisible;
     return Scaffold(
       bottomNavigationBar:
           sale != null && receipt == null && !_cartVisible && !showCorrections
@@ -590,6 +620,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               onPressed: showCorrections ? null : _showCorrections,
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
+            ),
+          if (movements != null)
+            TextButton.icon(
+              key: const ValueKey<String>('movements-open'),
+              onPressed: showMovements ? null : _showMovements,
+              icon: const Icon(Icons.swap_vert),
+              label: const Text('Movimientos'),
             ),
           IconButton(
             tooltip: 'Refresh catalog',
@@ -613,12 +650,21 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _PricingSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
-            if (_creationCoordinator != null)
+            if (_creationCoordinator != null && !showMovements)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: showCorrections
+              child: showMovements
+                  ? MovementsView(
+                      movements: movements,
+                      productNames: _productNames(),
+                      branchChoices:
+                          _snapshot?.branchChoices ??
+                          const <CatalogBranchChoice>[],
+                      onClose: _closeMovements,
+                    )
+                  : showCorrections
                   ? CorrectionLookupView(
                       corrections: corrections,
                       productNames: _productNames(),

@@ -12,9 +12,11 @@ import '../catalog/product_pricing.dart';
 import 'emulator_auth_routing.dart';
 import 'emulator_auth_routing_platform.dart';
 import 'emulator_auth_routing_preinit.dart';
+import '../movements/administrator_movements.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
+import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
@@ -544,8 +546,62 @@ class DemoEmulatorBootstrap {
     previewExchangeInvoke: callable('previewSaleExchange'),
   );
 
+  /// Administrator movements: the Firestore movements and profile reads,
+  /// plus the `setSellerProfile` gateway, on one trusted emulator app.
+  static Future<AdministratorMovementsBackend> initializeAdministratorMovements(
+    EmulatorSession session,
+  ) {
+    return _initializeLiveFirebase<AdministratorMovementsBackend>((
+      FirebaseAuth auth,
+      FirebaseFirestore firestore,
+      FirebaseFunctions functions,
+    ) {
+      final ActiveSessionChecker sessionChecker = _firebaseActiveSessionChecker(
+        auth,
+      );
+      return AdministratorMovementsBackend(
+        reader: FirestoreMovementRepository(
+          source: FirebaseFirestoreMovementReadSource(firestore),
+          session: session,
+          sessionChecker: sessionChecker,
+        ),
+        profiles: createSellerProfileGateway(
+          session: session,
+          sessionChecker: sessionChecker,
+          callable: (String name) => firebaseSaleCallable(functions, name),
+        ),
+      );
+    });
+  }
+
+  /// Binds the `setSellerProfile` callable by name. Separate from
+  /// [initializeAdministratorMovements] so the binding is testable without
+  /// Firebase.
+  @visibleForTesting
+  static EmulatorSellerProfileGateway createSellerProfileGateway({
+    required EmulatorSession session,
+    required SaleSessionChecker sessionChecker,
+    required SaleCallable Function(String name) callable,
+  }) => EmulatorSellerProfileGateway(
+    expectedSession: session,
+    sessionChecker: sessionChecker,
+    invoke: callable('setSellerProfile'),
+  );
+
   static Future<T> _initializeLiveFunctionsGateway<T>(
     T Function(FirebaseAuth auth, FirebaseFunctions functions) create,
+  ) => _initializeLiveFirebase<T>(
+    (FirebaseAuth auth, FirebaseFirestore _, FirebaseFunctions functions) =>
+        create(auth, functions),
+  );
+
+  static Future<T> _initializeLiveFirebase<T>(
+    T Function(
+      FirebaseAuth auth,
+      FirebaseFirestore firestore,
+      FirebaseFunctions functions,
+    )
+    create,
   ) async {
     late FirebaseApp app;
     late FirebaseAuth auth;
@@ -600,7 +656,7 @@ class DemoEmulatorBootstrap {
             );
         return connection.ensureConnected(host, port);
       },
-      createGateway: () => create(auth, functions),
+      createGateway: () => create(auth, firestore, functions),
     );
   }
 

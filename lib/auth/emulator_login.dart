@@ -13,6 +13,9 @@ import '../corrections/sale_corrections.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
+import '../movements/administrator_movements.dart';
+import '../movements/inventory_movement.dart';
+import '../movements/seller_profiles.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_cart_controller.dart';
 import '../sales/sale_draft.dart';
@@ -40,6 +43,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.stockIntakeGatewayLoader,
     this.saleGatewayLoader,
     this.correctionGatewayLoader,
+    this.administratorMovementsLoader,
     this.retryLoader,
     super.key,
   });
@@ -55,6 +59,9 @@ class EmulatorLoginShell extends StatefulWidget {
 
   /// Seller correction gateway loader; null hides corrections for every role.
   final CorrectionGatewayLoader? correctionGatewayLoader;
+
+  /// Administrator movements backend loader; null hides movements.
+  final AdministratorMovementsLoader? administratorMovementsLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -107,6 +114,11 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // Volatile retry storage: at most one unresolved correction per exact
   // seller and branch, retried with the same key until it resolves.
   final CorrectionDraftStore _correctionDrafts = CorrectionDraftStore();
+
+  // One movements backend per exact administrator, so the seller-profile
+  // gateway's stale generation spans the screen. A failed load is retried.
+  String? _movementsOwner;
+  Future<AdministratorMovementsBackend>? _movementsBackend;
   _SessionFailure _failure = _SessionFailure.none;
 
   @override
@@ -611,6 +623,90 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
   }
 
+  Future<AdministratorMovementsBackend> _movementsBackendFor(
+    EmulatorSession session,
+  ) async {
+    if (_movementsOwner != session.userId) {
+      _movementsOwner = session.userId;
+      _movementsBackend = null;
+    }
+    final Future<AdministratorMovementsBackend> pending = _movementsBackend ??=
+        widget.administratorMovementsLoader!(session);
+    try {
+      return await pending;
+    } catch (_) {
+      if (identical(_movementsBackend, pending)) _movementsBackend = null;
+      rethrow;
+    }
+  }
+
+  /// Runs one movements operation for the exact current administrator,
+  /// checked before the backend is loaded and again after the call returns.
+  Future<T> _movementsCall<T>(
+    EmulatorSession session,
+    Future<T> Function(AdministratorMovementsBackend backend) call,
+    Exception Function() lost,
+  ) async {
+    if (!_isSameCurrentAdministrator(session)) throw lost();
+    final T result = await call(await _movementsBackendFor(session));
+    if (!_isSameCurrentAdministrator(session)) throw lost();
+    return result;
+  }
+
+  AdministratorMovements? _administratorMovementsFor(EmulatorSession session) {
+    if (!_isExactAdministrator(session) ||
+        widget.administratorMovementsLoader == null) {
+      return null;
+    }
+    return AdministratorMovements(
+      load: (String? branchId) async {
+        try {
+          return await _movementsCall<List<MovementEntry>>(
+            session,
+            (AdministratorMovementsBackend backend) =>
+                backend.reader.recentMovements(branchId: branchId),
+            () => const MovementsUnavailable(),
+          );
+        } catch (_) {
+          throw const MovementsUnavailable();
+        }
+      },
+      readProfile: (String uid) async {
+        try {
+          return await _movementsCall<SellerProfileLookup>(
+            session,
+            (AdministratorMovementsBackend backend) =>
+                backend.reader.sellerProfile(uid),
+            () => const MovementsUnavailable(),
+          );
+        } catch (_) {
+          return const SellerProfileUnavailable();
+        }
+      },
+      setSellerName: (String uid, String displayName) async {
+        if (!_isSameCurrentAdministrator(session)) {
+          throw const SellerProfileSessionException();
+        }
+        final SellerProfileGateway gateway;
+        try {
+          gateway = (await _movementsBackendFor(session)).profiles;
+        } catch (_) {
+          // Nothing was sent; retrying the same name is safe.
+          throw const SellerProfileUncertainException();
+        }
+        final SellerProfileResult result = await gateway.setSellerProfile(
+          uid: uid,
+          displayName: displayName,
+        );
+        // Written, but the screen's owner changed: report it as uncertain.
+        if (!_isSameCurrentAdministrator(session)) {
+          throw const SellerProfileUncertainException();
+        }
+        return result;
+      },
+    );
+  }
+
   SaleCorrections? _saleCorrectionsFor(EmulatorSession session) {
     if (!_isExactSeller(session) || widget.correctionGatewayLoader == null) {
       return null;
@@ -781,6 +877,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             : null,
         saleCheckout: _saleCheckoutFor(session),
         saleCorrections: _saleCorrectionsFor(session),
+        administratorMovements: _administratorMovementsFor(session),
         onLogout: _logout,
       );
     }

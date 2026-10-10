@@ -5,6 +5,7 @@ import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
 import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
+import 'package:lda_inventory/firebase/emulator_seller_profile_gateway.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
 import 'package:lda_inventory/sales/sale_draft.dart';
 import 'package:lda_inventory/sales/sale_quote.dart';
@@ -616,4 +617,34 @@ void main() {
       ]);
     });
   });
+
+  test(
+    'seller profile gateway binds only the setSellerProfile callable',
+    () async {
+      const EmulatorSession administrator = EmulatorSession(
+        userId: 'administrator-1',
+        email: 'admin@demo.invalid',
+        role: InventoryRole.administrator,
+      );
+      final List<String> requested = <String>[];
+      final EmulatorSellerProfileGateway gateway =
+          DemoEmulatorBootstrap.createSellerProfileGateway(
+            session: administrator,
+            sessionChecker: () async => administrator,
+            callable: (String name) {
+              requested.add(name);
+              return (Map<String, Object?> request) async => <String, Object?>{
+                'uid': request['uid'],
+                'replayed': false,
+              };
+            },
+          );
+      expect(requested, <String>['setSellerProfile']);
+      expect(gateway.expectedSession, same(administrator));
+      expect(
+        (await gateway.setSellerProfile(uid: 'u-1', displayName: 'Ana')).uid,
+        'u-1',
+      );
+    },
+  );
 }
