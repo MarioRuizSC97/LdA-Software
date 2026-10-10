@@ -38,7 +38,7 @@ Out of scope:
 
 - [x] FIX-01 — Sale flow retry safety (Flutter): `SaleDraftStore` uses a revision counter that never resets. Sale success keeps the committed receipt until it is acknowledged (mirroring `CorrectionDraftStore.complete`/`acknowledge`), so a receipt that lands after the cart is disposed shows on the next catalog view, and no new sale can start unaware. Tests: the stale-attempt case, dispose during submit followed by success/failure/rejection, and the seller switch. Route: delegated writer.
 - [x] FIX-02 — Correction server reasons (backend plus Flutter client): add `details.reason` `correction-window-closed`, `insufficient-stock` and `over-return` (or the existing equivalents, if already defined) to returns, replacements, exchanges, previews and lookup where they apply, with codes and messages unchanged. Update the unit, callable and transport harness tests. Switch the Flutter `CorrectionRejection` helpers to reasons, keeping a message fallback only if justified. Route: delegated writer; one live run with user approval.
-- [ ] FIX-03 — Review suggestions (Flutter tests and small fixes):
+- [x] FIX-03 — Review suggestions (Flutter tests and small fixes):
   - untested replacement failure branches (unresolved, stale with an explanation message, session with a stored draft);
   - the exchange blocked message not refreshing while the form is open;
   - exchange new-line controllers disposed before the field unmounts;
@@ -52,7 +52,7 @@ Out of scope:
     - put the expected reason in each preview failure-table row;
     - document that the client and server reasons ship together (`R4-reason-only-skew`, `R3-reason-only-client-coupling`).
   Route: delegated writer.
-- [ ] FIX-04 — Reconcile and report. Route: parent.
+- [x] FIX-04 — Reconcile and report. Route: parent.
 
 ## Acceptance criteria
 
@@ -99,6 +99,42 @@ Out of scope:
   - The fixture hash `5ddfb8b8…` was equal before and after; Firestore stayed at 104 documents with the same listing, and Auth at 2 users. No residue.
   - Not covered live: the expired-window and exchange-stock reasons, which have no harness case. They are covered by the unit and emulator suites.
 
+- FIX-03 writer (delegated):
+  - **Replacement:** a stale submit now explains itself ("La solicitud quedó desactualizada. Intenta de nuevo."), or re-locks to a stored draft. Its unresolved, stale and session-with-draft branches are tested.
+  - **Exchange:** the block clears when the blocking correction is resolved, and retired new-line controllers are disposed after the frame. Both were real RED first, including "TextEditingController used after being disposed".
+  - **Test fixtures:** the IVA comes from `ivaRateBasisPoints`, and the SALE-07 genuine folio `HTS-HTTP-1234` is asserted.
+  - **Sale cart:** `reconcileOnOpen`, a shared `_resetCart`, a `receiptPending` getter, and a comment and test on `complete` being defensive only.
+  - **Test helpers:** options objects, per-row preview reasons, named record fields, and a comment that the client and functions ship together.
+- FIX-03 parent checks:
+  - backend unit 357/357;
+  - `flutter test` 633/633.
+  - Count correction: the earlier "318/320" parent counts used a filter that also dropped `sales-emulator-support.test.mjs`, which is not an emulator test. The correct non-emulator selection has 19 files.
+- FIX-03 closure: high-risk four-lens native review `review-668cc585cef16025` approved and acknowledged; commit tree exactly the approved candidate `80693709`; commit `5002f8e`.
+
+## Final report (FIX-04, 2026-10-10, parent, HEAD `5002f8e`)
+
+- **Outcome:** all follow-ups are done.
+  - FIX-01: a sale can no longer lose its receipt or confuse a stale attempt (`3c426d8`).
+  - FIX-02: correction rejections carry `details.reason`, and the client no longer matches English text (`3fc3fc0`, live 138/138).
+  - FIX-03: the review suggestions are resolved (`5002f8e`).
+- **Final checks at HEAD (parent, observed):**
+  - backend non-emulator unit tests, 19 files from the root: 357/357;
+  - transport offline: 41 tests, 39 pass, 2 live roots skipped;
+  - `flutter analyze`: no issues;
+  - `flutter test`: 633/633.
+  - Every commit is an ancestor of HEAD. Nothing is pushed.
+- **Not covered:**
+  - no device or integration run of the Flutter screens;
+  - the expired-window and exchange-stock reasons are not exercised live (the harness has no such case), only in unit and emulator tests.
+- **Remaining non-blocking suggestions from the FIX-03 review** (optional, not scheduled):
+  - comment the `_retire` batch guard;
+  - clear `_receiptPending` together with `_lastReceipt`;
+  - remove a redundant message clear;
+  - add a type guard on the `rejectsUnchanged` options object;
+  - give the exchange stale path the same explanatory message.
+  - The writer also noted that the return controller's stale branch is still silent and that the return and replacement setters lack the block refresh.
+- **Branch chain:** `feat/inventory-mvp-sales-corrections`, then `feat/inventory-mvp-seller-sale-ui`, then `feat/inventory-mvp-sale-corrections-ui`, then `feat/inventory-mvp-correction-followups`. Push and PRs are the user's decision.
+
 ## Next step
 
-FIX-03: review suggestions (delegated writer).
+Feature complete. Waiting for the user's next priority (for example push and PR strategy, the remaining optional suggestions, sellerProfiles, or ticket printing when the user asks).
