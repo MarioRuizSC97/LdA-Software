@@ -28,6 +28,11 @@ import {
   createSaleQuoteService,
   createSaleService,
 } from './sales.js';
+import {
+  SellerProfileError,
+  assertLocalSellerProfilesEmulator,
+  createSellerProfileService,
+} from './sellerProfiles.js';
 
 export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
@@ -117,7 +122,7 @@ export const submitSale = onCall(
       const submit = createSaleService({ firestore: getFirestore() });
       return await submit(request);
     } catch (error) {
-      if (error instanceof SaleError) throw saleHttpsError(error);
+      if (error instanceof SaleError) throw reasonedHttpsError(error);
       throw new HttpsError(
         'internal',
         'sale submission is temporarily unavailable',
@@ -127,10 +132,11 @@ export const submitSale = onCall(
 );
 
 /**
- * Public code and message, plus details { reason } only when the SaleError
- * carries a machine reason. Nothing else from the error reaches the caller.
+ * Public code and message, plus details { reason } only when the SaleError or
+ * SellerProfileError carries a machine reason. Nothing else from the error
+ * reaches the caller.
  */
-function saleHttpsError(error) {
+function reasonedHttpsError(error) {
   return typeof error.reason === 'string'
     ? new HttpsError(error.code, error.message, { reason: error.reason })
     : new HttpsError(error.code, error.message);
@@ -204,7 +210,7 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
         const operation = createOperation(getFirestore());
         return await operation(request);
       } catch (error) {
-        if (error instanceof SaleError) throw saleHttpsError(error);
+        if (error instanceof SaleError) throw reasonedHttpsError(error);
         throw new HttpsError('internal', unavailableMessage);
       }
     },
@@ -249,4 +255,42 @@ export const previewSaleReturn = saleCorrectionCallable(
 export const previewSaleExchange = saleCorrectionCallable(
   (firestore) => createSaleExchangePreviewService({ firestore }),
   'sale exchange preview is temporarily unavailable',
+);
+
+/**
+ * Emulator-only administrator callable. The guard runs before Admin SDK
+ * initialization, and Admin Auth is imported lazily after it, so a failed
+ * guard never loads the Auth SDK and the other callables never depend on it.
+ * The branch always comes from the target's trusted Auth claims.
+ */
+export const setSellerProfile = onCall(
+  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  async (request) => {
+    try {
+      assertLocalSellerProfilesEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'seller profiles are restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      if (getApps().length === 0) {
+        initializeApp();
+      }
+      const { getAuth } = await import('firebase-admin/auth');
+      const setProfile = createSellerProfileService({
+        firestore: getFirestore(),
+        auth: getAuth(),
+      });
+      return await setProfile(request);
+    } catch (error) {
+      if (error instanceof SellerProfileError) throw reasonedHttpsError(error);
+      throw new HttpsError(
+        'internal',
+        'seller profile update is temporarily unavailable',
+      );
+    }
+  },
 );
