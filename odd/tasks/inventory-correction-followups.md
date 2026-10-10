@@ -37,7 +37,7 @@ Out of scope:
 ## Tasks
 
 - [x] FIX-01 — Sale flow retry safety (Flutter): `SaleDraftStore` uses a revision counter that never resets. Sale success keeps the committed receipt until it is acknowledged (mirroring `CorrectionDraftStore.complete`/`acknowledge`), so a receipt that lands after the cart is disposed shows on the next catalog view, and no new sale can start unaware. Tests: the stale-attempt case, dispose during submit followed by success/failure/rejection, and the seller switch. Route: delegated writer.
-- [ ] FIX-02 — Correction server reasons (backend plus Flutter client): add `details.reason` `correction-window-closed`, `insufficient-stock` and `over-return` (or the existing equivalents, if already defined) to returns, replacements, exchanges, previews and lookup where they apply, with codes and messages unchanged. Update the unit, callable and transport harness tests. Switch the Flutter `CorrectionRejection` helpers to reasons, keeping a message fallback only if justified. Route: delegated writer; one live run with user approval.
+- [x] FIX-02 — Correction server reasons (backend plus Flutter client): add `details.reason` `correction-window-closed`, `insufficient-stock` and `over-return` (or the existing equivalents, if already defined) to returns, replacements, exchanges, previews and lookup where they apply, with codes and messages unchanged. Update the unit, callable and transport harness tests. Switch the Flutter `CorrectionRejection` helpers to reasons, keeping a message fallback only if justified. Route: delegated writer; one live run with user approval.
 - [ ] FIX-03 — Review suggestions (Flutter tests and small fixes):
   - untested replacement failure branches (unresolved, stale with an explanation message, session with a stored draft);
   - the exchange blocked message not refreshing while the form is open;
@@ -92,8 +92,13 @@ Out of scope:
   - **Parent fix:** the writer stopped `partial` because `test/auth/emulator_login_corrections_test.dart` was outside its edit surface, a parent brief omission. The parent read and applied the writer's 2-line fixture patch (adding `reason` to two fixtures).
 - FIX-02 parent checks: backend unit 320/320 from the root; `flutter test` 626/626.
 - FIX-02 closure: high-risk four-lens native review `review-a6251fc25a03f411` approved and acknowledged; commit tree exactly the approved candidate `a66577e1`; commit `3fc3fc0`. The suggestions are folded into FIX-03.
-- FIX-02 pending: one live HTTP transport run, which needs user approval. The harness now expects the reasons on the return over-return, the preview over-return and the replacement stock denials; it has no expired-window or exchange-stock denial.
+- FIX-02 live run (user-approved, exactly once, HEAD `a98ebaf`, verifier):
+  - OPTIONS returned 204 on all 12 routes.
+  - Result: 138/138.
+  - The `over-return` reason passed on the return and preview denials, `insufficient-stock` on the replacement denial, and `payment-mismatch` and `folio-ambiguous` also passed, so the emulator served the FIX-02 source.
+  - The fixture hash `5ddfb8b8…` was equal before and after; Firestore stayed at 104 documents with the same listing, and Auth at 2 users. No residue.
+  - Not covered live: the expired-window and exchange-stock reasons, which have no harness case. They are covered by the unit and emulator suites.
 
 ## Next step
 
-FIX-02 live run (needs user approval), then FIX-03.
+FIX-03: review suggestions (delegated writer).
