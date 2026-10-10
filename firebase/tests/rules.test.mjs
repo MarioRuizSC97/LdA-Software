@@ -13,9 +13,13 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
+  query,
   setDoc,
   Timestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import {
   deleteObject,
@@ -219,11 +223,21 @@ async function seedFirestore() {
       branchId: branchNorth,
       productId,
       delta: 8,
+      occurredAt: Timestamp.fromMillis(1_700_000_300_000),
     });
     await setDoc(doc(firestore, 'inventoryMovements', 'movement-south'), {
       branchId: branchSouth,
       productId,
       delta: 3,
+      occurredAt: Timestamp.fromMillis(1_700_000_400_000),
+    });
+    await setDoc(doc(firestore, 'sellerProfiles', 'seller-north'), {
+      displayName: 'North Seller',
+      branchId: branchNorth,
+    });
+    await setDoc(doc(firestore, 'sellerProfiles', 'seller-south'), {
+      displayName: 'South Seller',
+      branchId: branchSouth,
     });
     await setDoc(doc(firestore, 'unmodeledRecords', 'private-record'), {
       secret: true,
@@ -500,6 +514,88 @@ describe('collection query boundaries', () => {
 
     await assertFails(getDoc(doc(firestore, 'branches', branchNorth)));
     await assertFails(getDocs(collection(firestore, 'branches')));
+  });
+});
+
+describe('seller profiles', () => {
+  test('only administrators may get a profile by UID', async () => {
+    const administrator = firestoreFor('admin', { role: 'administrator' });
+    const seller = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+    const anonymous = testEnvironment.unauthenticatedContext().firestore();
+
+    await assertSucceeds(getDoc(doc(administrator, 'sellerProfiles', 'seller-north')));
+    await assertFails(getDoc(doc(seller, 'sellerProfiles', 'seller-north')));
+    await assertFails(getDoc(doc(seller, 'sellerProfiles', 'seller-south')));
+    await assertFails(getDoc(doc(anonymous, 'sellerProfiles', 'seller-north')));
+  });
+
+  test('denies every list, including the administrator', async () => {
+    const administrator = firestoreFor('admin', { role: 'administrator' });
+    const seller = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+
+    await assertFails(getDocs(collection(administrator, 'sellerProfiles')));
+    await assertFails(getDocs(collection(seller, 'sellerProfiles')));
+  });
+
+  test('denies every client create, update and delete', async () => {
+    const administrator = firestoreFor('admin', { role: 'administrator' });
+    const seller = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+
+    for (const firestore of [administrator, seller]) {
+      await assertFails(
+        setDoc(doc(firestore, 'sellerProfiles', 'seller-new'), {
+          displayName: 'Forged',
+          branchId: branchNorth,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(firestore, 'sellerProfiles', 'seller-north'), {
+          displayName: 'Rewritten',
+        }),
+      );
+      await assertFails(deleteDoc(doc(firestore, 'sellerProfiles', 'seller-north')));
+    }
+  });
+});
+
+describe('administrator movements query', () => {
+  function recentMovements(firestore, branchId) {
+    const constraints = [orderBy('occurredAt', 'desc'), limit(50)];
+    if (branchId) constraints.unshift(where('branchId', '==', branchId));
+    return query(collection(firestore, 'inventoryMovements'), ...constraints);
+  }
+
+  test('administrators list recent movements with and without a branch filter', async () => {
+    const administrator = firestoreFor('admin', { role: 'administrator' });
+
+    const all = await assertSucceeds(getDocs(recentMovements(administrator)));
+    if (all.size !== 2 || all.docs[0].id !== 'movement-south') {
+      throw new Error('administrator movements must include every branch, newest first');
+    }
+    const north = await assertSucceeds(getDocs(recentMovements(administrator, branchNorth)));
+    if (north.size !== 1 || north.docs[0].id !== 'movement-north') {
+      throw new Error('branch filter must return only that branch');
+    }
+  });
+
+  test('sellers list movements only when filtered to their own branch', async () => {
+    const seller = firestoreFor('seller-north', {
+      role: 'seller',
+      branchId: branchNorth,
+    });
+
+    await assertFails(getDocs(recentMovements(seller)));
+    await assertFails(getDocs(recentMovements(seller, branchSouth)));
+    await assertSucceeds(getDocs(recentMovements(seller, branchNorth)));
   });
 });
 

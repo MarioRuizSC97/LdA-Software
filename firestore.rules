@@ -234,6 +234,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Seller profiles hold only displayName and branchId. Administrators may
+    // fetch one by UID; nobody may list them, and only the trusted
+    // setSellerProfile callable writes them.
+    match /sellerProfiles/{uid} {
+      allow get: if isAdministrator();
+      allow list: if false;
+      allow write: if false;
+    }
+
     // New paths remain closed until their access contract has tests.
     match /{document=**} {
       allow read, write: if false;
