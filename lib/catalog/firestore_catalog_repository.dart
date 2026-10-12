@@ -318,9 +318,11 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
 }
 
 final RegExp _branchIdPattern = RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$');
+// Same canonical folio prefix as sales.js BRANCH_CODE_PATTERN.
+final RegExp _branchCodePattern = RegExp(r'^[A-Z]{2,4}$');
 // Same canonical identifier contract as inventory.js ID_PATTERN.
 final RegExp _movementIdPattern = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$');
-const Set<String> _branchFields = <String>{'name', 'demoSeedVersion'};
+const Set<String> _branchFields = <String>{'name', 'code', 'demoSeedVersion'};
 const Set<String> _stockFields = <String>{
   'quantityScaled',
   'unit',
@@ -361,6 +363,15 @@ String _parseBranch(Map<String, Object?> data) {
       name.trim() != name ||
       RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
     throw const FormatException('branch name is invalid');
+  }
+  // Optional: legacy and unseeded branches predate folios and stay readable.
+  // When present the value must match the backend folio prefix exactly, but it
+  // is only validated here - never returned, stored, or shown.
+  if (data.containsKey('code')) {
+    final Object? code = data['code'];
+    if (code is! String || !_branchCodePattern.hasMatch(code)) {
+      throw const FormatException('branch code is invalid');
+    }
   }
   return name;
 }

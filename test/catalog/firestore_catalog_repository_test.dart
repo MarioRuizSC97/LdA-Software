@@ -1062,6 +1062,199 @@ void main() {
     });
   });
 
+  group('branch code compatibility', () {
+    // The read model has only branchId and branchName, so a parsed code can
+    // never reach the UI; these tests keep that structural guarantee honest by
+    // asserting the exact expected choices.
+    Map<String, Object?> branchData(Object? code) => <String, Object?>{
+      'name': 'North Demo Branch',
+      'code': code,
+      'demoSeedVersion': 1,
+    };
+
+    CatalogDocument branchDocument(String path, Map<String, Object?> data) =>
+        CatalogDocument(path: path, data: data);
+
+    Future<CatalogSnapshot> administratorCatalog(
+      List<CatalogDocument> branches,
+    ) async {
+      final _FakeCatalogReadSource source = _FakeCatalogReadSource(
+        collections: <String, List<CatalogDocument>>{
+          'products': <CatalogDocument>[
+            CatalogDocument(path: 'products/DEMO-RIBBON', data: _product()),
+          ],
+          'branches': branches,
+        },
+        collectionGroups: <String, List<CatalogDocument>>{
+          'stock': <CatalogDocument>[
+            CatalogDocument(
+              path: 'branches/branch-north/stock/DEMO-RIBBON',
+              data: _stock(quantityScaled: 425),
+            ),
+          ],
+        },
+      );
+      return FirestoreCatalogRepository.administrator(
+        source: source,
+        session: _administrator,
+        sessionChecker: () async => _administrator,
+      ).fetchCatalog();
+    }
+
+    test('accepts the seeded demo branches that carry a folio code', () async {
+      final CatalogSnapshot catalog = await administratorCatalog(
+        <CatalogDocument>[
+          branchDocument('branches/branch-north', <String, Object?>{
+            'name': 'North Demo Branch',
+            'code': 'NTE',
+            'demoSeedVersion': 1,
+          }),
+          branchDocument('branches/branch-south', <String, Object?>{
+            'name': 'South Demo Branch',
+            'code': 'SUR',
+            'demoSeedVersion': 1,
+          }),
+        ],
+      );
+
+      expect(catalog.branchChoices, <CatalogBranchChoice>[
+        const CatalogBranchChoice(
+          branchId: 'branch-north',
+          branchName: 'North Demo Branch',
+        ),
+        const CatalogBranchChoice(
+          branchId: 'branch-south',
+          branchName: 'South Demo Branch',
+        ),
+      ]);
+      expect(
+        catalog.items.single.holdings.single.branchName,
+        'North Demo Branch',
+      );
+      expect(catalog.items.single.holdings.single.quantityScaled, 425);
+    });
+
+    test('accepts a legacy branch document without any code', () async {
+      final CatalogSnapshot catalog = await administratorCatalog(
+        <CatalogDocument>[
+          branchDocument('branches/branch-north', <String, Object?>{
+            'name': 'North Demo Branch',
+            'demoSeedVersion': 1,
+          }),
+        ],
+      );
+
+      expect(catalog.branchChoices.single.branchName, 'North Demo Branch');
+    });
+
+    test(
+      'accepts every present code of two, three, or four uppercase letters',
+      () async {
+        for (final String code in <String>['NT', 'AB', 'ABC', 'ABCD', 'WXYZ']) {
+          final CatalogSnapshot catalog = await administratorCatalog(
+            <CatalogDocument>[
+              branchDocument('branches/branch-north', branchData(code)),
+            ],
+          );
+          expect(catalog.branchChoices.single.branchId, 'branch-north');
+        }
+      },
+    );
+
+    test(
+      'rejects a present code that is not 2-4 uppercase ASCII letters',
+      () async {
+        for (final Object? code in <Object?>[
+          null,
+          1,
+          1.5,
+          true,
+          <Object?>['NT'],
+          <String, Object?>{'code': 'NT'},
+          '',
+          'N',
+          'ABCDE',
+          'nte',
+          'Nte',
+          'NTe',
+          ' NT',
+          'NT ',
+          'N T',
+          'N\tT',
+          'NT\n',
+          'N\u0000T',
+          'NT\u007f',
+          '1234',
+          'N-T',
+          'ÑTE',
+          '\uff2e\uff34',
+        ]) {
+          await expectLater(
+            administratorCatalog(<CatalogDocument>[
+              branchDocument('branches/branch-north', branchData(code)),
+            ]),
+            throwsA(
+              isA<CatalogRepositoryUnavailable>().having(
+                (CatalogRepositoryUnavailable error) => error.message,
+                'message',
+                'Catalog data is unavailable or invalid.',
+              ),
+            ),
+            reason: code is String
+                ? 'should reject "$code"'
+                : 'should reject ${code.runtimeType} $code',
+          );
+        }
+      },
+    );
+
+    test('rejects unknown branch fields even next to a valid code', () async {
+      for (final Map<String, Object?> data in <Map<String, Object?>>[
+        <String, Object?>{...branchData('NTE'), 'Code': 'SUR'},
+        <String, Object?>{...branchData('NTE'), 'cod': 'SUR'},
+        <String, Object?>{...branchData('NTE'), 'note': 'renamed later'},
+        <String, Object?>{...branchData('NTE'), 'createdBy': 'legacy-admin'},
+        <String, Object?>{'code': 'NTE', 'demoSeedVersion': 1},
+      ]) {
+        await expectLater(
+          administratorCatalog(<CatalogDocument>[
+            branchDocument('branches/branch-north', data),
+          ]),
+          throwsA(isA<CatalogRepositoryUnavailable>()),
+        );
+      }
+    });
+
+    test(
+      'keeps every branch name guard in force when a code is present',
+      () async {
+        for (final Object? name in <Object?>[
+          null,
+          42,
+          '',
+          'North Demo Branch ',
+          ' North Demo Branch',
+          'North\u0000Branch',
+          'a' * 121,
+        ]) {
+          await expectLater(
+            administratorCatalog(<CatalogDocument>[
+              branchDocument('branches/branch-north', <String, Object?>{
+                'name': name,
+                'code': 'NTE',
+                'demoSeedVersion': 1,
+              }),
+            ]),
+            throwsA(isA<CatalogRepositoryUnavailable>()),
+            reason: name is String
+                ? 'should reject name "$name"'
+                : 'should reject name ${name.runtimeType} $name',
+          );
+        }
+      },
+    );
+  });
+
   group('safe load diagnostics', () {
     late List<CatalogLoadDiagnostic> reported;
     setUp(() {
