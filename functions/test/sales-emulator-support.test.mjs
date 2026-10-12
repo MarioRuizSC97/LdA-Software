@@ -3,7 +3,7 @@ import test from 'node:test';
 import { calculateSale } from '../src/sales.js';
 import {
   validateTarget, namespace, assertOwnedPath, OwnedRun, canonical,
-  openRuntime, initializeRuntime, observeTransactions, inspectSdkChain,
+  openRuntime, initializeRuntime, observeTransactions, inspectSdkChain, settleAll,
 } from './sales-emulator-support.mjs';
 
 const root = '/Users/luismarioruiz/LdA-Software/functions/node_modules';
@@ -343,4 +343,26 @@ test('owned repricing preserves immutable product identity and refuses concurren
 test('canonical ownership equality tolerates Firestore map order and Timestamp roundtrip', () => {
   const date = new Date('2026-01-01T00:00:00Z');
   assert.equal(canonical({ b: 1, a: date }), canonical({ a: { toDate: () => date }, b: 1 }));
+});
+
+test('settleAll keeps success order and drains every read before rethrowing the first failure', async () => {
+  assert.deepEqual(await settleAll([Promise.resolve(1), 2, Promise.resolve(3)]), [1, 2, 3]);
+  const first = new Error('first read failed');
+  const settled = [];
+  let releaseSlow;
+  const slow = new Promise((resolve) => { releaseSlow = resolve; })
+    .then(() => { settled.push('slow'); return 'slow'; });
+  const later = Promise.reject(new Error('later read failed'));
+  later.catch(() => settled.push('later'));
+  let outcome = 'pending';
+  const result = settleAll([Promise.reject(first), slow, later])
+    .then(() => { outcome = 'fulfilled'; }, (error) => { outcome = 'rejected'; return error; });
+  // Fail-fast would already have rejected here; draining must still wait for the slow read.
+  for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  assert.equal(outcome, 'pending', 'rejection must wait for outstanding reads');
+  releaseSlow();
+  const error = await result;
+  assert.equal(outcome, 'rejected');
+  assert.equal(error, first, 'original first error identity preserved');
+  assert.deepEqual(settled.sort(), ['later', 'slow']);
 });

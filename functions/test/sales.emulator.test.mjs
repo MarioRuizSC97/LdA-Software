@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculateSale, createSaleService } from '../src/sales.js';
 import {
-  openRuntime, OwnedRun, canonical, observeTransactions,
+  openRuntime, OwnedRun, canonical, observeTransactions, settleAll,
 } from './sales-emulator-support.mjs';
 
 const seedTime = new Date('2026-06-01T12:00:00Z');
@@ -17,7 +17,7 @@ const pricing1 = {
 const pricing2 = { ...pricing1, listedPriceCentavos: 200, priceMode: 'iva-included' };
 
 async function snapshot(run) {
-  const records = await Promise.all([...run.entries.keys()].map(async (path) => {
+  const records = await settleAll([...run.entries.keys()].map(async (path) => {
     const doc = await run.doc(path).get();
     return [path, doc.exists ? canonical(doc.data()) : null];
   }));
@@ -216,6 +216,42 @@ test('INV05 real isolated atomic Firestore sales (REAL-06 invocation only)', asy
     assert.deepEqual(successes.map((outcome) => outcome.result.replayed).sort(), [false, true]);
     assert.equal(canonical(successes[0].result.receipt), canonical(successes[1].result.receipt));
     assert.equal((await run.doc(`branches/${a}/stock/${p1}`).get()).data().quantityScaled, before - 50);
+  });
+  await t.test('concurrent same-key payload, actor and branch collisions commit exactly one sale', async () => {
+    const stockPaths = [a, b].map((branchId) => `branches/${branchId}/stock/${p1}`);
+    const stock = () => settleAll(stockPaths.map(async (path) => (await run.doc(path).get()).data()));
+    for (const dimension of ['payload', 'actor', 'branch']) {
+      const base = request(`collide-${dimension}`, [{ productId: p1, quantity: '0.50' }]);
+      const variant = structuredClone(base);
+      if (dimension === 'payload') variant.data.payment.method = 'card';
+      if (dimension === 'actor') variant.auth.uid = `${run.ns.actor}-other`;
+      if (dimension === 'branch') variant.auth.token.branchId = b;
+      const before = await stock();
+      // concurrent() confirms and byte-checks the winner's artifacts against the exact manifest.
+      const { outcomes, successes } = await concurrent([base, variant]);
+      assert.equal(successes.length, 1, `${dimension}: exactly one submission commits`);
+      assert.equal(successes[0].result.replayed, false, `${dimension}: loser never replays a foreign sale`);
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+      assert.equal(rejected.length, 1);
+      assert.equal(rejected[0].reason.code, 'already-exists', `${dimension}: loser rejected by fingerprint`);
+      const winner = successes[0].input;
+      const key = base.data.idempotencyKey;
+      // Every record under the shared key belongs to the winner; nothing carries the loser's identity.
+      for (const path of [`saleAudits/${key}`, `saleSubmissionReceipts/${key}`, `inventoryMovements/sale-${key}-0`]) {
+        const data = (await run.doc(path).get()).data();
+        assert.equal(data.actorId, winner.auth.uid, `${dimension}: ${path} actor`);
+        assert.equal(data.branchId, winner.auth.token.branchId, `${dimension}: ${path} branch`);
+      }
+      assert.equal((await run.doc(`saleSubmissionReceipts/${key}`).get()).data().fingerprint,
+        JSON.stringify({ actorId: winner.auth.uid, branchId: winner.auth.token.branchId, ...winner.data }));
+      const after = await stock();
+      [a, b].forEach((branchId, index) => {
+        const decrement = branchId === winner.auth.token.branchId ? 50 : 0;
+        assert.equal(after[index].quantityScaled, before[index].quantityScaled - decrement,
+          `${dimension}: ${branchId} stock decremented exactly once by the winner only`);
+        if (!decrement) assert.equal(canonical(after[index]), canonical(before[index]));
+      });
+    }
   });
   await t.test('distinct competing keys consume shared stock without negatives or extra successes', async () => {
     const stockPath = `branches/${a}/stock/${p1}`;

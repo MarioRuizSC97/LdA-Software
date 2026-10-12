@@ -137,6 +137,15 @@ export async function initializeRuntime({ initializeApp, cert, deleteApp, getFir
   }
 }
 
+// Promise.all-shaped, but a failure surfaces only after every other read settles,
+// so no in-flight read outlives the caller (e.g. a teardown or a transaction).
+export async function settleAll(values) {
+  const outcomes = await Promise.allSettled(values);
+  const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+  if (failure) throw failure.reason;
+  return outcomes.map((outcome) => outcome.value);
+}
+
 export function canonical(value) {
   if (value instanceof Date) return JSON.stringify(value.toISOString());
   if (typeof value?.toDate === 'function') return canonical(value.toDate());
@@ -303,7 +312,7 @@ export class OwnedRun {
     try {
       await this.firestore.runTransaction(async (tx) => {
         // All ownership reads finish before ANY delete, including parent anchors.
-        const snapshots = await Promise.all(paths.map((path) => tx.get(this.doc(path))));
+        const snapshots = await settleAll(paths.map((path) => tx.get(this.doc(path))));
         const present = paths.filter((_, index) => snapshots[index].exists);
         const suspicious = paths.filter((path, index) => {
           const entry = this.entries.get(path);
