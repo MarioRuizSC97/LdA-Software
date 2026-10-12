@@ -12,9 +12,12 @@ const emulatorDemoOptions = FirebaseOptions(
 
 /// Native iOS FirebaseCore requires a v1 appId shaped
 /// `1:<project number>:ios:<hex>`; any other platform segment aborts
-/// configuration. Same demo project, key and sender as [emulatorDemoOptions].
+/// configuration. Native FirebaseInstallations also aborts unless the apiKey
+/// is exactly 39 base64 url-safe characters starting with `A`, so iOS uses a
+/// format-valid, obviously fake demo key. Same demo project and sender as
+/// [emulatorDemoOptions].
 const emulatorDemoIosOptions = FirebaseOptions(
-  apiKey: 'demo-api-key',
+  apiKey: 'A-demo-lda-inventory-emulator-only-0000',
   appId: '1:1234567890:ios:0dda0dda0dda0dda',
   messagingSenderId: '1234567890',
   projectId: 'demo-lda-inventory',

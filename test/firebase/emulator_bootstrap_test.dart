@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
+import 'package:lda_inventory/firebase/emulator_auth_routing_preinit.dart';
 import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_seller_profile_gateway.dart';
@@ -109,7 +110,7 @@ void main() {
           'gateway',
         ]);
         expect(options?.projectId, 'demo-lda-inventory');
-        expect(options?.apiKey, DemoEmulatorBootstrap.options.apiKey);
+        expect(options?.apiKey, emulatorDemoIosOptions.apiKey);
         // Native iOS FirebaseCore rejects any v1 appId whose platform is not
         // `ios` or whose last segment is not hexadecimal.
         expect(options?.appId, matches(RegExp(r'^1:\d+:ios:[0-9a-f]+$')));
@@ -162,7 +163,7 @@ void main() {
       ]);
     });
 
-    test('maps only Android and iOS native targets to emulator clients', () {
+    test('maps only Android and the iOS simulator to emulator clients', () {
       final Map<TargetPlatform, EmulatorClientPlatform> expected =
           <TargetPlatform, EmulatorClientPlatform>{
             TargetPlatform.android: EmulatorClientPlatform.android,
@@ -172,19 +173,139 @@ void main() {
             TargetPlatform.linux: EmulatorClientPlatform.unsupported,
             TargetPlatform.fuchsia: EmulatorClientPlatform.unsupported,
           };
+      for (final MapEntry<TargetPlatform, EmulatorClientPlatform> entry
+          in expected.entries) {
+        expect(
+          DemoEmulatorBootstrap.platformFor(
+            isWeb: false,
+            target: entry.key,
+            isIosSimulator: true,
+          ),
+          entry.value,
+          reason: '${entry.key}',
+        );
+      }
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: true,
+          target: TargetPlatform.iOS,
+          isIosSimulator: false,
+        ),
+        EmulatorClientPlatform.web,
+      );
+    });
+
+    test('current platform still resolves Android from the target', () {
       try {
-        for (final MapEntry<TargetPlatform, EmulatorClientPlatform> entry
-            in expected.entries) {
-          debugDefaultTargetPlatformOverride = entry.key;
-          expect(
-            DemoEmulatorBootstrap.currentPlatform,
-            entry.value,
-            reason: '${entry.key}',
-          );
-        }
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        expect(
+          DemoEmulatorBootstrap.currentPlatform,
+          EmulatorClientPlatform.android,
+        );
       } finally {
         debugDefaultTargetPlatformOverride = null;
       }
+    });
+
+    test('a physical iOS device fails closed before initialization', () async {
+      final EmulatorClientPlatform platform = DemoEmulatorBootstrap.platformFor(
+        isWeb: false,
+        target: TargetPlatform.iOS,
+        isIosSimulator: false,
+      );
+      expect(platform, EmulatorClientPlatform.unsupported);
+
+      bool initialized = false;
+      await expectLater(
+        DemoEmulatorBootstrap.start(
+          platform: platform,
+          initializeApp: (_) async => initialized = true,
+          connectAuthEmulator: (_, _) async {},
+          createGateway: _Gateway.new,
+          prepareWebAuth: () async {},
+        ),
+        throwsUnsupportedError,
+      );
+      expect(initialized, isFalse);
+    });
+
+    test('iOS demo apiKey satisfies the native Installations format', () {
+      final String apiKey = emulatorDemoIosOptions.apiKey;
+      // FIRInstallations validateAPIKey: exactly 39 characters, leading `A`,
+      // base64 url-safe characters only. Otherwise native init aborts.
+      expect(apiKey.length, 39);
+      expect(apiKey.startsWith('A'), isTrue);
+      expect(apiKey, matches(RegExp(r'^[A-Za-z0-9_-]+$')));
+      expect(apiKey, contains('demo'));
+      expect(emulatorDemoIosOptions.projectId, 'demo-lda-inventory');
+      expect(emulatorDemoIosOptions.messagingSenderId, isNotEmpty);
+      expect(emulatorDemoIosOptions.appId, isNotEmpty);
+    });
+
+    group('trusted app gate', () {
+      void verify(
+        EmulatorClientPlatform platform, {
+        required FirebaseOptions explicit,
+        required FirebaseOptions app,
+        String appName = emulatorDemoAppName,
+      }) => DemoEmulatorBootstrap.verifyTrustedApp(
+        platform: platform,
+        appName: appName,
+        explicitOptions: explicit,
+        appOptions: app,
+      );
+
+      test('accepts the matching options for iOS and Android', () {
+        verify(
+          EmulatorClientPlatform.ios,
+          explicit: emulatorDemoIosOptions,
+          app: emulatorDemoIosOptions,
+        );
+        verify(
+          EmulatorClientPlatform.android,
+          explicit: emulatorDemoOptions,
+          app: emulatorDemoOptions,
+        );
+      });
+
+      test('rejects options from another platform', () {
+        expect(
+          () => verify(
+            EmulatorClientPlatform.ios,
+            explicit: emulatorDemoOptions,
+            app: emulatorDemoOptions,
+          ),
+          throwsStateError,
+        );
+        expect(
+          () => verify(
+            EmulatorClientPlatform.android,
+            explicit: emulatorDemoIosOptions,
+            app: emulatorDemoIosOptions,
+          ),
+          throwsStateError,
+        );
+      });
+
+      test('rejects a mismatched app or app name', () {
+        expect(
+          () => verify(
+            EmulatorClientPlatform.ios,
+            explicit: emulatorDemoIosOptions,
+            app: emulatorDemoOptions,
+          ),
+          throwsStateError,
+        );
+        expect(
+          () => verify(
+            EmulatorClientPlatform.android,
+            explicit: emulatorDemoOptions,
+            app: emulatorDemoOptions,
+            appName: '[DEFAULT]',
+          ),
+          throwsStateError,
+        );
+      });
     });
 
     test('connects Firestore before constructing the catalog reader', () async {

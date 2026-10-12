@@ -14,6 +14,7 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 ## Tasks
 - [x] IOS-EMU-01 — Add `ios` to `EmulatorClientPlatform`, map it to `127.0.0.1`, and add tests. Route: delegated writer (preparation reading plus source and test files).
 - [ ] IOS-EMU-02 — Run on the iPhone 18 Pro iOS 27.0 simulator with `LDA_LOCAL_EMULATORS=true`; confirm the login screen renders without a Firebase error. The user then signs in. Route: delegated verifier, then user acceptance.
+- [x] IOS-EMU-03 — Fix iOS native init crash (apiKey format), simulator-only guard and review advisories. Route: delegated writer (source, new conditional-import files and tests). Done, uncommitted.
 
 ## Acceptance criteria
 - iOS resolves to `127.0.0.1`; Android and web behavior is unchanged; other platforms still fail closed.
@@ -21,12 +22,21 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 - The simulator shows the emulator login screen; the user can sign in and see the catalog.
 
 ## Progress and evidence
-- IOS-EMU-01 (route: delegated writer; trigger: preparation reading plus source and test files). Done, uncommitted.
+- IOS-EMU-01 (route: delegated writer; trigger: preparation reading plus source and test files). Committed as `4db6346`. Native review lineage `review-3440a5cf71b3b25c` approved (4 lenses, advisory findings only) and acknowledged.
   - RED 1: new tests in `test/firebase/emulator_bootstrap_test.dart` failed to compile (`Member not found: 'ios'`).
   - RED 2: with only the enum member added (host still unmapped), 3 tests failed (iOS `start`, iOS `startProductCreation`, iOS `currentPlatform` mapping); 24 passed, including the Android/web shared-options guard.
   - GREEN: `ios` added; `currentPlatform` maps `TargetPlatform.iOS` to `ios`; `_hostFor(ios)` is `127.0.0.1`; the unsupported error names Android, iOS and web. Web Auth preparation stays web-only.
   - Finding: native iOS FirebaseCore (`FIRApp.m`, `validateAppIDFormat`) raises "Configuration fails ... invalid GOOGLE_APP_ID" unless a v1 appId is `1:<number>:ios:<hex>`. The shared demo appId is web format, so iOS now uses `emulatorDemoIosOptions` (same demo project, key and sender; appId `1:1234567890:ios:0dda0dda0dda0dda`) via `DemoEmulatorBootstrap.optionsFor(platform)`. `_initializeTrustedApp` now checks against the platform's trusted options. Android and web options are unchanged.
   - Checks: `flutter test test/firebase/` 123 passed; `flutter test` 712 passed; `flutter analyze` no issues; `git diff --check` clean.
 
+- IOS-EMU-02 first attempt: blocked. The simulator app aborted at native init with `[FirebaseInstallations][I-FIS008000] ... FirebaseOptions.APIKey doesn't match the expected format: API Key length must be 39 characters, API Key must start with A.`
+- IOS-EMU-03 (route: delegated writer; trigger: source plus two new conditional-import files and tests).
+  - Finding: `FIRInstallations.m` `validateAppOptions` requires non-empty app name, APIKey, googleAppID and projectID, then `validateAPIKey` requires exactly 39 characters, a leading `A`, and only alphanumeric, `-` or `_`. No GCMSenderID check there; the iOS appId format is already enforced by FirebaseCore (IOS-EMU-01).
+  - RED 1: new tests failed to compile (`Member not found: 'DemoEmulatorBootstrap.platformFor'` and `'DemoEmulatorBootstrap.verifyTrustedApp'`).
+  - RED 2: with the seams added and the old key, `iOS demo apiKey satisfies the native Installations format` failed (`Expected: <39> Actual: <12>`); 32 passed.
+  - GREEN: `emulatorDemoIosOptions.apiKey` is the format-valid, obviously fake `A-demo-lda-inventory-emulator-only-0000` (project stays `demo-lda-inventory`; Android/web options unchanged). `currentPlatform` delegates to `platformFor(isWeb, target, isIosSimulator)`; iOS maps to `ios` only when `SIMULATOR_DEVICE_NAME` is set (`emulator_platform_io.dart`, conditionally imported; web uses `emulator_platform_stub.dart`), so a physical device is `unsupported` and fails before init (review R3-002/R4). The trust check is extracted into `verifyTrustedApp`, tested for iOS and Android match/mismatch and a wrong app name (review R3-001). `DemoEmulatorBootstrap.options` is documented as the shared Android/web set (R2; no rename, kept API compatible).
+  - Checks: `flutter test test/firebase/` 129 passed; `flutter test` 718 passed; `flutter analyze` no issues; `git diff --check` clean.
+  - Review R3-003 (plist missing in a clean checkout) refuted: `ios/Runner/GoogleService-Info.plist` is tracked since `29d0ebb`. Review R3-004 (settleAll error order) remains unscheduled.
+
 ## Next step
-Commit IOS-EMU-01, then IOS-EMU-02.
+Commit IOS-EMU-03, then re-run IOS-EMU-02 on the simulator.

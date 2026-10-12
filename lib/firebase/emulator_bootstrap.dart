@@ -12,6 +12,9 @@ import '../catalog/product_pricing.dart';
 import 'emulator_auth_routing.dart';
 import 'emulator_auth_routing_platform.dart';
 import 'emulator_auth_routing_preinit.dart';
+import 'emulator_platform_stub.dart'
+    if (dart.library.io) 'emulator_platform_io.dart'
+    as emulator_platform;
 import '../movements/administrator_movements.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_product_creation_gateway.dart';
@@ -155,6 +158,8 @@ class DemoEmulatorBootstrap {
   static final Map<String, FunctionsEmulatorConnection> _functionsConnections =
       <String, FunctionsEmulatorConnection>{};
 
+  /// The shared Android and web demo options. iOS uses
+  /// [emulatorDemoIosOptions]; call [optionsFor] for a specific platform.
   static const FirebaseOptions options = emulatorDemoOptions;
 
   /// Native iOS FirebaseCore rejects the shared web-format appId at configure
@@ -167,12 +172,23 @@ class DemoEmulatorBootstrap {
         EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
       };
 
-  static EmulatorClientPlatform get currentPlatform {
-    if (kIsWeb) return EmulatorClientPlatform.web;
-    return switch (defaultTargetPlatform) {
+  static EmulatorClientPlatform get currentPlatform => platformFor(
+    isWeb: kIsWeb,
+    target: defaultTargetPlatform,
+    isIosSimulator: !kIsWeb && emulator_platform.isIosSimulator(),
+  );
+
+  @visibleForTesting
+  static EmulatorClientPlatform platformFor({
+    required bool isWeb,
+    required TargetPlatform target,
+    required bool isIosSimulator,
+  }) {
+    if (isWeb) return EmulatorClientPlatform.web;
+    return switch (target) {
       TargetPlatform.android => EmulatorClientPlatform.android,
       // Simulator only: a physical device cannot reach the host loopback.
-      TargetPlatform.iOS => EmulatorClientPlatform.ios,
+      TargetPlatform.iOS when isIosSimulator => EmulatorClientPlatform.ios,
       _ => EmulatorClientPlatform.unsupported,
     };
   }
@@ -724,14 +740,29 @@ class DemoEmulatorBootstrap {
         currentPlatform == EmulatorClientPlatform.web || existing == null
         ? await Firebase.initializeApp(name: _appName, options: explicitOptions)
         : existing;
-    final FirebaseOptions trusted = optionsFor(currentPlatform);
-    if (app.name != _appName ||
+    verifyTrustedApp(
+      platform: currentPlatform,
+      appName: app.name,
+      explicitOptions: explicitOptions,
+      appOptions: app.options,
+    );
+    return app;
+  }
+
+  @visibleForTesting
+  static void verifyTrustedApp({
+    required EmulatorClientPlatform platform,
+    required String appName,
+    required FirebaseOptions explicitOptions,
+    required FirebaseOptions appOptions,
+  }) {
+    final FirebaseOptions trusted = optionsFor(platform);
+    if (appName != _appName ||
         explicitOptions != trusted ||
-        app.options.projectId != trusted.projectId ||
-        app.options.appId != trusted.appId ||
-        app.options.apiKey != trusted.apiKey) {
+        appOptions.projectId != trusted.projectId ||
+        appOptions.appId != trusted.appId ||
+        appOptions.apiKey != trusted.apiKey) {
       throw StateError('The local emulator Firebase app is not trusted.');
     }
-    return app;
   }
 }
