@@ -16,6 +16,7 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 - [x] IOS-EMU-02 — Run on the iPhone 18 Pro iOS 27.0 simulator with `LDA_LOCAL_EMULATORS=true`; confirm the login screen renders without a Firebase error. The user then signs in. Route: delegated verifier, then user acceptance.
 - [x] IOS-EMU-03 — Fix iOS native init crash (apiKey format), simulator-only guard and review advisories. Route: delegated writer (source, new conditional-import files and tests). Committed as `6a639cf`.
 - [x] IOS-EMU-04 — Detect the iOS simulator from the app executable path instead of `Platform.environment`. Route: delegated writer (source plus new test file, simulator validation). Committed as `b88b5d8` (assessed medium, under the review budget; no review due).
+- [x] IOS-EMU-05 — Optional review follow-ups: rename `DemoEmulatorBootstrap.options` to `sharedOptions`, a `currentPlatform` wiring test through the simulator probe, per-field trust-gate mutation tests, and a sanitized console diagnostic for the swallowed session gateway bootstrap error. Route: delegated writer (source, new helper and test files). Not committed yet.
 
 ## Acceptance criteria
 - iOS resolves to `127.0.0.1`; Android and web behavior is unchanged; other platforms still fail closed.
@@ -51,5 +52,11 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 - IOS-EMU-02 accepted by the user on 2026-10-12: signed in on the iPhone 18 Pro iOS 27.0 simulator (`LDA_LOCAL_EMULATORS=true`, built from `b88b5d8`) and confirmed the catalog and the other screens look right. First real run of Auth, Firestore and Functions on iOS. The simulator UI in Xcode 27 is `DeviceHub.app`; `open -a Simulator` does not exist.
 - Not covered: physical iOS devices (fail closed by design), release builds, data-changing flows on iOS beyond what the user tried.
 
+- IOS-EMU-05 (route: delegated writer; trigger: 2+ non-trivial files plus preparation reading).
+  - Rename: `DemoEmulatorBootstrap.options` -> `sharedOptions`; the only callers were `lib/firebase/emulator_bootstrap.dart` and `test/firebase/emulator_bootstrap_test.dart`. Checked by analyze and tests.
+  - Wiring: new `@visibleForTesting` `DemoEmulatorBootstrap.iosSimulatorProbe` (defaults to the conditional-import `isIosSimulator`). RED: the new tests failed to compile (`Setter not found: 'iosSimulatorProbe'`). GREEN: `currentPlatform` with an iOS target override returns `ios` when the probe is true and `unsupported` when false; a second test proves the default probe is the real one and is false on the test host.
+  - Trust gate: per-field mutations (projectId, appId, apiKey) of `appOptions` for iOS and Android, explicit options kept trusted. Coverage-only GREEN: the existing gate already compared each field, so no RED was possible without breaking the code.
+  - Diagnostic: new `lib/auth/emulator_bootstrap_diagnostics.dart` mirrors the catalog diagnostics pattern and prints `[emulator-bootstrap] stage=gateway category=<unsupported-platform|firebase|state|other> code=<allowlisted|other|none>`; `lib/auth/emulator_login.dart` reports before setting `_SessionFailure.bootstrap`. RED: the new test file failed to compile (missing helper); with the helper but the call removed, the widget test `reports one sanitized diagnostic` failed. GREEN with the call in place; a throwing reporter keeps the same failure view.
+
 ## Next step
-Feature complete. Optional, unscheduled: review suggestions (rename `DemoEmulatorBootstrap.options`, a wiring test for `currentPlatform`, per-field trust-gate mutations) and logging the swallowed bootstrap error in `lib/auth/emulator_login.dart`.
+Feature complete. IOS-EMU-05 follow-ups are implemented and verified in the working tree; next is a work-unit commit and its review assessment, at the user's discretion.

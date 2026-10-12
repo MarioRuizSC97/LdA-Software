@@ -20,6 +20,7 @@ import '../sales/sale_cart.dart';
 import '../sales/sale_cart_controller.dart';
 import '../sales/sale_draft.dart';
 import '../sales/sale_quote.dart';
+import 'emulator_bootstrap_diagnostics.dart';
 import 'emulator_session.dart';
 
 typedef EmulatorSessionGatewayLoader =
@@ -146,7 +147,8 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     late EmulatorSessionGateway gateway;
     try {
       gateway = await gatewayFuture;
-    } catch (_) {
+    } catch (error) {
+      reportEmulatorBootstrapFailure(error);
       if (!_isCurrentAuthOperation(generation)) return;
       setState(() {
         _gateway = null;

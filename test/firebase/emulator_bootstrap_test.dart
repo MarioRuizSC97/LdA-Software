@@ -6,6 +6,8 @@ import 'package:lda_inventory/corrections/correction_sale.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
 import 'package:lda_inventory/firebase/emulator_auth_routing_preinit.dart';
 import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
+import 'package:lda_inventory/firebase/emulator_platform_io.dart'
+    as emulator_platform_io;
 import 'package:lda_inventory/firebase/emulator_sale_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_seller_profile_gateway.dart';
 import 'package:lda_inventory/sales/sale_cart.dart';
@@ -133,8 +135,8 @@ void main() {
       }
 
       expect(received, <FirebaseOptions>[
-        DemoEmulatorBootstrap.options,
-        DemoEmulatorBootstrap.options,
+        DemoEmulatorBootstrap.sharedOptions,
+        DemoEmulatorBootstrap.sharedOptions,
       ]);
     });
 
@@ -207,6 +209,54 @@ void main() {
       }
     });
 
+    test('current platform asks the real simulator probe by default', () {
+      expect(
+        identical(
+          DemoEmulatorBootstrap.iosSimulatorProbe,
+          emulator_platform_io.isIosSimulator,
+        ),
+        isTrue,
+      );
+      try {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        // The test host is not an iOS simulator, so the real probe is false.
+        expect(
+          DemoEmulatorBootstrap.currentPlatform,
+          EmulatorClientPlatform.unsupported,
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    test('current platform on iOS follows the simulator probe', () {
+      final bool Function() original = DemoEmulatorBootstrap.iosSimulatorProbe;
+      int calls = 0;
+      try {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        DemoEmulatorBootstrap.iosSimulatorProbe = () {
+          calls += 1;
+          return true;
+        };
+        expect(
+          DemoEmulatorBootstrap.currentPlatform,
+          EmulatorClientPlatform.ios,
+        );
+        DemoEmulatorBootstrap.iosSimulatorProbe = () {
+          calls += 1;
+          return false;
+        };
+        expect(
+          DemoEmulatorBootstrap.currentPlatform,
+          EmulatorClientPlatform.unsupported,
+        );
+        expect(calls, 2);
+      } finally {
+        DemoEmulatorBootstrap.iosSimulatorProbe = original;
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
     test('a physical iOS device fails closed before initialization', () async {
       final EmulatorClientPlatform platform = DemoEmulatorBootstrap.platformFor(
         isWeb: false,
@@ -266,6 +316,33 @@ void main() {
           explicit: emulatorDemoOptions,
           app: emulatorDemoOptions,
         );
+      });
+
+      test('rejects a single mismatched app field on iOS and Android', () {
+        final Map<EmulatorClientPlatform, FirebaseOptions> trusted =
+            <EmulatorClientPlatform, FirebaseOptions>{
+              EmulatorClientPlatform.ios: emulatorDemoIosOptions,
+              EmulatorClientPlatform.android: emulatorDemoOptions,
+            };
+        for (final MapEntry<EmulatorClientPlatform, FirebaseOptions> entry
+            in trusted.entries) {
+          final FirebaseOptions options = entry.value;
+          final Map<String, FirebaseOptions> mutations =
+              <String, FirebaseOptions>{
+                'projectId': options.copyWith(projectId: 'other-project'),
+                'appId': options.copyWith(appId: '${options.appId}0'),
+                'apiKey': options.copyWith(apiKey: '${options.apiKey}0'),
+              };
+          for (final MapEntry<String, FirebaseOptions> mutation
+              in mutations.entries) {
+            expect(
+              () => verify(entry.key, explicit: options, app: mutation.value),
+              throwsStateError,
+              reason: '${entry.key.name} ${mutation.key}',
+            );
+          }
+          verify(entry.key, explicit: options, app: options.copyWith());
+        }
       });
 
       test('rejects options from another platform', () {

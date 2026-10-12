@@ -160,7 +160,7 @@ class DemoEmulatorBootstrap {
 
   /// The shared Android and web demo options. iOS uses
   /// [emulatorDemoIosOptions]; call [optionsFor] for a specific platform.
-  static const FirebaseOptions options = emulatorDemoOptions;
+  static const FirebaseOptions sharedOptions = emulatorDemoOptions;
 
   /// Native iOS FirebaseCore rejects the shared web-format appId at configure
   /// time, so iOS gets an iOS-format appId for the same demo project.
@@ -172,10 +172,15 @@ class DemoEmulatorBootstrap {
         EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
       };
 
+  /// The iOS simulator probe [currentPlatform] asks. Tests may replace it to
+  /// prove the wiring and must restore it; production never reassigns it.
+  @visibleForTesting
+  static bool Function() iosSimulatorProbe = emulator_platform.isIosSimulator;
+
   static EmulatorClientPlatform get currentPlatform => platformFor(
     isWeb: kIsWeb,
     target: defaultTargetPlatform,
-    isIosSimulator: !kIsWeb && emulator_platform.isIosSimulator(),
+    isIosSimulator: !kIsWeb && iosSimulatorProbe(),
   );
 
   @visibleForTesting
@@ -710,7 +715,10 @@ class DemoEmulatorBootstrap {
   ) async {
     if (platform == EmulatorClientPlatform.web) {
       await (prepare ??
-          () => prepareWebAuthEmulator(appName: _appName, options: options))();
+          () => prepareWebAuthEmulator(
+            appName: _appName,
+            options: sharedOptions,
+          ))();
     }
   }
 
