@@ -14,7 +14,8 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 ## Tasks
 - [x] IOS-EMU-01 — Add `ios` to `EmulatorClientPlatform`, map it to `127.0.0.1`, and add tests. Route: delegated writer (preparation reading plus source and test files).
 - [ ] IOS-EMU-02 — Run on the iPhone 18 Pro iOS 27.0 simulator with `LDA_LOCAL_EMULATORS=true`; confirm the login screen renders without a Firebase error. The user then signs in. Route: delegated verifier, then user acceptance.
-- [x] IOS-EMU-03 — Fix iOS native init crash (apiKey format), simulator-only guard and review advisories. Route: delegated writer (source, new conditional-import files and tests). Done, uncommitted.
+- [x] IOS-EMU-03 — Fix iOS native init crash (apiKey format), simulator-only guard and review advisories. Route: delegated writer (source, new conditional-import files and tests). Committed as `6a639cf`.
+- [x] IOS-EMU-04 — Detect the iOS simulator from the app executable path instead of `Platform.environment`. Route: delegated writer (source plus new test file, simulator validation). Done, uncommitted.
 
 ## Acceptance criteria
 - iOS resolves to `127.0.0.1`; Android and web behavior is unchanged; other platforms still fail closed.
@@ -38,5 +39,13 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
   - Checks: `flutter test test/firebase/` 129 passed; `flutter test` 718 passed; `flutter analyze` no issues; `git diff --check` clean.
   - Review R3-003 (plist missing in a clean checkout) refuted: `ios/Runner/GoogleService-Info.plist` is tracked since `29d0ebb`. Review R3-004 (settleAll error order) remains unscheduled.
 
+  - Committed as `6a639cf`. Native review `review-5514ae0d5127c8f5` approved with 3 SUGGESTIONs (iOS options naming, no test of the `currentPlatform` to probe wiring, per-field trust-gate mutations) and acknowledged.
+- IOS-EMU-02 second attempt: no native crash, but the login screen showed "Local Auth emulator unavailable". Root cause (observed via VM service): on the iOS simulator Dart `Platform.environment` is empty, so `isIosSimulator()` (`SIMULATOR_DEVICE_NAME` check) was always false, `platformFor` mapped iOS to `unsupported`, and the host lookup threw, swallowed by `lib/auth/emulator_login.dart` `catch (_)`.
+- IOS-EMU-04 (route: delegated writer; trigger: source plus new test file and simulator validation).
+  - Fix: `emulator_platform_io.dart` adds pure `isIosSimulatorExecutable(path)` (true only when the path contains `/Library/Developer/CoreSimulator/Devices/`); `isIosSimulator()` is `Platform.isIOS && isIosSimulatorExecutable(Platform.resolvedExecutable)`. Physical devices run from `/private/var/containers/Bundle/Application/...` and still fail closed. Web stub unchanged.
+  - RED: new `test/firebase/emulator_platform_io_test.dart` failed to load (missing `isIosSimulatorExecutable`). GREEN: 3 tests pass (CoreSimulator path true, physical device path false, empty false).
+  - Simulator: `flutter build ios --simulator --debug --dart-define=LDA_LOCAL_EMULATORS=true`, installed and launched on `9BF59A32-569D-465E-88F7-C1B065C7ED36`; after 12 s the screenshot shows the "Local emulator sign in" form (Email, Password, Sign in) with no bootstrap error.
+  - Checks: `flutter test test/firebase/` 132 passed; `flutter test` 721 passed; `flutter analyze` no issues; `git diff --check` clean.
+
 ## Next step
-Commit IOS-EMU-03, then re-run IOS-EMU-02 on the simulator.
+Commit IOS-EMU-04, then the user signs in on the simulator to complete IOS-EMU-02 acceptance.
