@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'auth/emulator_login.dart';
 import 'auth/emulator_session.dart';
+import 'catalog/catalog_load_diagnostics.dart';
 import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
@@ -145,11 +146,12 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
   );
 }
 
-Future<CatalogSnapshot> _loadLiveCatalog(EmulatorSession session) async {
-  final RoleScopedCatalogRepository repository =
-      await DemoEmulatorBootstrap.initializeCatalogRepository(session);
-  return repository.fetchCatalog();
-}
+Future<CatalogSnapshot> _loadLiveCatalog(EmulatorSession session) =>
+    guardCatalogBootstrap(() async {
+      final RoleScopedCatalogRepository repository =
+          await DemoEmulatorBootstrap.initializeCatalogRepository(session);
+      return repository.fetchCatalog();
+    });
 
 class LdaInventoryApp extends StatelessWidget {
   const LdaInventoryApp({

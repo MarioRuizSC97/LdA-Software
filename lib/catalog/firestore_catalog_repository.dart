@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../auth/emulator_session.dart';
+import 'catalog_load_diagnostics.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 
@@ -114,10 +115,14 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
         InventoryRole.seller => await _fetchSeller(),
         InventoryRole.administrator => await _fetchAdministrator(),
       };
-    } catch (_) {
-      throw const CatalogRepositoryUnavailable(
+    } catch (error) {
+      const CatalogRepositoryUnavailable failure = CatalogRepositoryUnavailable(
         'Catalog data is unavailable or invalid.',
       );
+      // Sanitized console evidence, recorded before the original cause is
+      // discarded by the generic wrapper below.
+      reportCatalogRepositoryFailure(error: error, failure: failure);
+      throw failure;
     }
   }
 
@@ -306,7 +311,8 @@ class FirestoreCatalogRepository implements RoleScopedCatalogRepository {
         active.role != _expectedRole ||
         active.role != _session.role ||
         active.branchId != _session.branchId) {
-      throw const FormatException('catalog session is no longer active');
+      reportCatalogSessionFence();
+      throw catalogSessionInactiveFailure;
     }
   }
 }

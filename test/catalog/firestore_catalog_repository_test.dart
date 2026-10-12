@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:lda_inventory/auth/emulator_session.dart';
+import 'package:lda_inventory/catalog/catalog_load_diagnostics.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/firestore_catalog_repository.dart';
 
@@ -1058,6 +1059,148 @@ void main() {
           throwsA(isA<CatalogRepositoryUnavailable>()),
         );
       }
+    });
+  });
+
+  group('safe load diagnostics', () {
+    late List<CatalogLoadDiagnostic> reported;
+    setUp(() {
+      reported = <CatalogLoadDiagnostic>[];
+      CatalogLoadDiagnostics.reporter = reported.add;
+    });
+    tearDown(CatalogLoadDiagnostics.restoreDefaultReporter);
+
+    test('successful loads emit no diagnostic', () async {
+      final _FakeCatalogReadSource source = _intakeSource(
+        InventoryRole.seller,
+        <CatalogDocument>[
+          CatalogDocument(
+            path: 'branches/branch-north/stock/DEMO-RIBBON',
+            data: _intakeStock(),
+          ),
+        ],
+      );
+
+      await _intakeRepository(InventoryRole.seller, source).fetchCatalog();
+
+      expect(source.calls, <String>[
+        'list:branches/branch-north/stock',
+        'get:products/DEMO-RIBBON',
+      ]);
+      expect(reported, isEmpty);
+    });
+
+    test('one sanitized line precedes the unchanged generic wrapper', () async {
+      final _FakeCatalogReadSource source = _FakeCatalogReadSource(
+        onListCollection: (String path) {
+          if (path == 'branches/branch-north/stock') {
+            throw FirebaseException(
+              plugin: 'cloud_firestore',
+              code: 'unavailable',
+              message: 'Hostile text for products/DEMO-RIBBON token=abc123',
+            );
+          }
+        },
+      );
+
+      await expectLater(
+        _intakeRepository(InventoryRole.seller, source).fetchCatalog(),
+        throwsA(
+          isA<CatalogRepositoryUnavailable>().having(
+            (CatalogRepositoryUnavailable error) => error.message,
+            'message',
+            'Catalog data is unavailable or invalid.',
+          ),
+        ),
+      );
+
+      expect(reported, hasLength(1));
+      expect(
+        reported.single.render(),
+        '[catalog-load] stage=repository category=read code=unavailable',
+      );
+      expect(
+        reported.single.toString(),
+        isNot(allOf(contains('Hostile'), contains('abc123'), contains('DEMO'))),
+      );
+    });
+
+    test(
+      'session drift logs one session line, never a second parse line',
+      () async {
+        EmulatorSession? currentSession = _seller;
+        final _FakeCatalogReadSource drifting = _FakeCatalogReadSource(
+          collections: <String, List<CatalogDocument>>{
+            'branches/branch-north/stock': <CatalogDocument>[
+              CatalogDocument(
+                path: 'branches/branch-north/stock/DEMO-RIBBON',
+                data: _intakeStock(),
+              ),
+            ],
+          },
+          documents: <String, CatalogDocument>{
+            'products/DEMO-RIBBON': CatalogDocument(
+              path: 'products/DEMO-RIBBON',
+              data: _product(),
+            ),
+          },
+          onListCollection: (_) => currentSession = null,
+        );
+
+        await expectLater(
+          FirestoreCatalogRepository.seller(
+            source: drifting,
+            session: _seller,
+            sessionChecker: () async => currentSession,
+          ).fetchCatalog(),
+          throwsA(isA<CatalogRepositoryUnavailable>()),
+        );
+
+        expect(reported, hasLength(1));
+        expect(
+          reported.single.render(),
+          '[catalog-load] stage=repository category=session code=none',
+        );
+      },
+    );
+
+    test('a throwing reporter cannot change the catalog failure', () async {
+      CatalogLoadDiagnostics.reporter = (CatalogLoadDiagnostic diagnostic) =>
+          throw StateError('sink failed');
+      final _FakeCatalogReadSource source = _FakeCatalogReadSource(
+        collections: <String, List<CatalogDocument>>{
+          'branches/branch-north/stock': <CatalogDocument>[
+            CatalogDocument(
+              path: 'branches/branch-north/stock/DEMO-RIBBON',
+              data: _intakeStock(),
+            ),
+          ],
+        },
+        documents: <String, CatalogDocument>{
+          'products/DEMO-RIBBON': CatalogDocument(
+            path: 'products/DEMO-RIBBON',
+            data: _product(),
+          ),
+        },
+        onGetDocument: (String path) {
+          throw FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'permission-denied',
+            message: 'uid-42 cannot read products/DEMO-RIBBON',
+          );
+        },
+      );
+
+      await expectLater(
+        _intakeRepository(InventoryRole.seller, source).fetchCatalog(),
+        throwsA(
+          isA<CatalogRepositoryUnavailable>().having(
+            (CatalogRepositoryUnavailable error) => error.message,
+            'message',
+            'Catalog data is unavailable or invalid.',
+          ),
+        ),
+      );
     });
   });
 }
