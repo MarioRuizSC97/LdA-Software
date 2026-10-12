@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/corrections/correction_sale.dart';
@@ -78,6 +79,112 @@ void main() {
       );
 
       expect(connections, <String>['127.0.0.1:9099']);
+    });
+
+    test(
+      'uses loopback and iOS-format demo options for the iOS simulator',
+      () async {
+        final List<String> events = <String>[];
+        FirebaseOptions? options;
+
+        await DemoEmulatorBootstrap.start(
+          platform: EmulatorClientPlatform.ios,
+          initializeApp: (FirebaseOptions value) async {
+            events.add('initialize');
+            options = value;
+          },
+          connectAuthEmulator: (String host, int port) async {
+            events.add('connect:$host:$port');
+          },
+          createGateway: () {
+            events.add('gateway');
+            return _Gateway();
+          },
+          prepareWebAuth: () async => events.add('web-auth'),
+        );
+
+        expect(events, <String>[
+          'initialize',
+          'connect:127.0.0.1:9099',
+          'gateway',
+        ]);
+        expect(options?.projectId, 'demo-lda-inventory');
+        expect(options?.apiKey, DemoEmulatorBootstrap.options.apiKey);
+        // Native iOS FirebaseCore rejects any v1 appId whose platform is not
+        // `ios` or whose last segment is not hexadecimal.
+        expect(options?.appId, matches(RegExp(r'^1:\d+:ios:[0-9a-f]+$')));
+      },
+    );
+
+    test('Android and web keep the shared demo options', () async {
+      final List<FirebaseOptions> received = <FirebaseOptions>[];
+      for (final EmulatorClientPlatform platform in <EmulatorClientPlatform>[
+        EmulatorClientPlatform.android,
+        EmulatorClientPlatform.web,
+      ]) {
+        await DemoEmulatorBootstrap.start(
+          platform: platform,
+          initializeApp: (FirebaseOptions value) async => received.add(value),
+          connectAuthEmulator: (_, _) async {},
+          createGateway: _Gateway.new,
+          prepareWebAuth: () async {},
+        );
+      }
+
+      expect(received, <FirebaseOptions>[
+        DemoEmulatorBootstrap.options,
+        DemoEmulatorBootstrap.options,
+      ]);
+    });
+
+    test('product creation uses loopback for the iOS simulator', () async {
+      final List<String> endpoints = <String>[];
+
+      await DemoEmulatorBootstrap.startProductCreation<String>(
+        platform: EmulatorClientPlatform.ios,
+        initializeApp: (_) async {},
+        connectAuthEmulator: (String host, int port) async {
+          endpoints.add('$host:$port');
+        },
+        connectFirestoreEmulator: (String host, int port) async {
+          endpoints.add('$host:$port');
+        },
+        connectFunctionsEmulator: (String host, int port) async {
+          endpoints.add('$host:$port');
+        },
+        createGateway: () => 'gateway',
+      );
+
+      expect(endpoints, <String>[
+        '127.0.0.1:9099',
+        '127.0.0.1:8080',
+        '127.0.0.1:5001',
+      ]);
+    });
+
+    test('maps only Android and iOS native targets to emulator clients', () {
+      final Map<TargetPlatform, EmulatorClientPlatform> expected =
+          <TargetPlatform, EmulatorClientPlatform>{
+            TargetPlatform.android: EmulatorClientPlatform.android,
+            TargetPlatform.iOS: EmulatorClientPlatform.ios,
+            TargetPlatform.macOS: EmulatorClientPlatform.unsupported,
+            TargetPlatform.windows: EmulatorClientPlatform.unsupported,
+            TargetPlatform.linux: EmulatorClientPlatform.unsupported,
+            TargetPlatform.fuchsia: EmulatorClientPlatform.unsupported,
+          };
+      try {
+        for (final MapEntry<TargetPlatform, EmulatorClientPlatform> entry
+            in expected.entries) {
+          debugDefaultTargetPlatformOverride = entry.key;
+          expect(
+            DemoEmulatorBootstrap.currentPlatform,
+            entry.value,
+            reason: '${entry.key}',
+          );
+        }
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
     test('connects Firestore before constructing the catalog reader', () async {

@@ -20,7 +20,7 @@ import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
-enum EmulatorClientPlatform { android, web, unsupported }
+enum EmulatorClientPlatform { android, ios, web, unsupported }
 
 typedef AuthEmulatorConnect = Future<void> Function(String host, int port);
 typedef FirestoreEmulatorConnect = Future<void> Function(String host, int port);
@@ -157,12 +157,24 @@ class DemoEmulatorBootstrap {
 
   static const FirebaseOptions options = emulatorDemoOptions;
 
+  /// Native iOS FirebaseCore rejects the shared web-format appId at configure
+  /// time, so iOS gets an iOS-format appId for the same demo project.
+  static FirebaseOptions optionsFor(EmulatorClientPlatform platform) =>
+      switch (platform) {
+        EmulatorClientPlatform.ios => emulatorDemoIosOptions,
+        EmulatorClientPlatform.android ||
+        EmulatorClientPlatform.web => emulatorDemoOptions,
+        EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
+      };
+
   static EmulatorClientPlatform get currentPlatform {
     if (kIsWeb) return EmulatorClientPlatform.web;
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return EmulatorClientPlatform.android;
-    }
-    return EmulatorClientPlatform.unsupported;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => EmulatorClientPlatform.android,
+      // Simulator only: a physical device cannot reach the host loopback.
+      TargetPlatform.iOS => EmulatorClientPlatform.ios,
+      _ => EmulatorClientPlatform.unsupported,
+    };
   }
 
   static Future<EmulatorSessionGateway> start({
@@ -174,7 +186,7 @@ class DemoEmulatorBootstrap {
   }) async {
     final String host = _hostFor(platform);
     await _prepareWebAuth(platform, prepareWebAuth);
-    await initializeApp(options);
+    await initializeApp(optionsFor(platform));
     await connectAuthEmulator(host, 9099);
     return createGateway();
   }
@@ -190,7 +202,7 @@ class DemoEmulatorBootstrap {
   }) async {
     final String host = _hostFor(platform);
     await _prepareWebAuth(platform, prepareWebAuth);
-    await initializeApp(options);
+    await initializeApp(optionsFor(platform));
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
     return createCatalog();
@@ -209,7 +221,7 @@ class DemoEmulatorBootstrap {
   }) async {
     final String host = _hostFor(platform);
     await _prepareWebAuth(platform, prepareWebAuth);
-    await initializeApp(options);
+    await initializeApp(optionsFor(platform));
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
     await connectFunctionsEmulator(host, 5001);
@@ -229,7 +241,7 @@ class DemoEmulatorBootstrap {
   }) async {
     final String host = _hostFor(platform);
     await _prepareWebAuth(platform, prepareWebAuth);
-    await initializeApp(options);
+    await initializeApp(optionsFor(platform));
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
     await connectFunctionsEmulator(host, 5001);
@@ -461,7 +473,7 @@ class DemoEmulatorBootstrap {
   }) async {
     final String host = _hostFor(platform);
     await _prepareWebAuth(platform, prepareWebAuth);
-    await initializeApp(options);
+    await initializeApp(optionsFor(platform));
     await connectAuthEmulator(host, 9099);
     await connectFirestoreEmulator(host, 8080);
     await connectFunctionsEmulator(host, 5001);
@@ -689,10 +701,14 @@ class DemoEmulatorBootstrap {
   static String _hostFor(EmulatorClientPlatform platform) => switch (platform) {
     EmulatorClientPlatform.android => '10.0.2.2',
     EmulatorClientPlatform.web => '127.0.0.1',
-    EmulatorClientPlatform.unsupported => throw UnsupportedError(
-      'Local Firebase emulators are supported only on Android and web.',
-    ),
+    // The iOS simulator shares the host network stack.
+    EmulatorClientPlatform.ios => '127.0.0.1',
+    EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
   };
+
+  static UnsupportedError _unsupportedPlatform() => UnsupportedError(
+    'Local Firebase emulators are supported only on Android, iOS and web.',
+  );
 
   static Future<FirebaseApp> _initializeTrustedApp(
     FirebaseOptions explicitOptions,
@@ -708,10 +724,12 @@ class DemoEmulatorBootstrap {
         currentPlatform == EmulatorClientPlatform.web || existing == null
         ? await Firebase.initializeApp(name: _appName, options: explicitOptions)
         : existing;
+    final FirebaseOptions trusted = optionsFor(currentPlatform);
     if (app.name != _appName ||
-        app.options.projectId != options.projectId ||
-        app.options.appId != options.appId ||
-        app.options.apiKey != options.apiKey) {
+        explicitOptions != trusted ||
+        app.options.projectId != trusted.projectId ||
+        app.options.appId != trusted.appId ||
+        app.options.apiKey != trusted.apiKey) {
       throw StateError('The local emulator Firebase app is not trusted.');
     }
     return app;

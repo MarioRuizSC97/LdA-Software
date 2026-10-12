@@ -10,6 +10,16 @@ const emulatorDemoOptions = FirebaseOptions(
   authDomain: 'demo-lda-inventory.firebaseapp.com',
 );
 
+/// Native iOS FirebaseCore requires a v1 appId shaped
+/// `1:<project number>:ios:<hex>`; any other platform segment aborts
+/// configuration. Same demo project, key and sender as [emulatorDemoOptions].
+const emulatorDemoIosOptions = FirebaseOptions(
+  apiKey: 'demo-api-key',
+  appId: '1:1234567890:ios:0dda0dda0dda0dda',
+  messagingSenderId: '1234567890',
+  projectId: 'demo-lda-inventory',
+);
+
 void validateDemoAuthApp(String name, FirebaseOptions options) {
   if (name != emulatorDemoAppName || options != emulatorDemoOptions) {
     throw StateError('Unexpected local Auth app/options.');
