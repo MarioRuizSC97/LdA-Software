@@ -17,6 +17,7 @@ import {
   assertLocalPricingEmulator,
   createProductPricingService,
 } from './pricing.js';
+import { createTransferService } from './transfers.js';
 
 import { createSaleExchangePreviewService, createSaleExchangeService } from './sale-exchanges.js';
 import { createSaleLookupService } from './sale-lookup.js';
@@ -174,6 +175,42 @@ export const stockIntake = onCall(
       throw new HttpsError(
         'internal',
         'stock intake is temporarily unavailable',
+      );
+    }
+  },
+);
+
+/**
+ * Emulator-only administrator transfer callable. The inventory guard runs before
+ * Admin SDK initialization, so a copied or deployed function can never move
+ * cloud stock. Domain failures are InventoryErrors and keep their code; any
+ * other error is masked as an internal fault.
+ */
+export const transferInventory = onCall(
+  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  async (request) => {
+    try {
+      assertLocalInventoryEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'transfers are restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      if (getApps().length === 0) {
+        initializeApp();
+      }
+      const transfer = createTransferService({ firestore: getFirestore() });
+      return await transfer(request);
+    } catch (error) {
+      if (error instanceof InventoryError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      throw new HttpsError(
+        'internal',
+        'inventory transfer is temporarily unavailable',
       );
     }
   },
