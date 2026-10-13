@@ -7,6 +7,25 @@ import 'movement_fixtures.dart';
 CatalogDocument _document(Map<String, Object?> data, {String id = 'm-1'}) =>
     CatalogDocument(path: 'inventoryMovements/$id', data: data);
 
+/// One transfer leg exactly as the backend writes it: the eight ledger fields
+/// plus `transferId`, an administrator actor and no counterpart metadata.
+Map<String, Object?> transferLegData({
+  required String type,
+  required int quantityScaled,
+  String? transferId = 'tr-key-1',
+  String branchId = 'branch-north',
+  Map<String, Object?> references = const <String, Object?>{},
+}) => movementData(
+  type: type,
+  branchId: branchId,
+  quantityScaled: quantityScaled,
+  actorId: 'administrator-1',
+  extra: <String, Object?>{'transferId': ?transferId, ...references},
+);
+
+MovementEntry _parse(Map<String, Object?> data) =>
+    parseMovementEntry(_document(data));
+
 void main() {
   test('every server movement type has a Spanish label', () {
     final Map<String, String> labels = <String, String>{
@@ -23,6 +42,8 @@ void main() {
       'exchange-return': 'Cambio (devolución)',
       'exchange-return-defect': 'Cambio (devolución, defecto)',
       'exchange-out': 'Cambio (salida)',
+      'transfer-out': 'Traslado (salida)',
+      'transfer-in': 'Traslado (entrada)',
     });
   });
 
@@ -110,6 +131,183 @@ void main() {
       ),
       isA<InventoryMovement>(),
     );
+  });
+
+  test('reads both transfer directions with the server labels', () {
+    final MovementEntry out = _parse(
+      transferLegData(type: 'transfer-out', quantityScaled: -250),
+    );
+    expect(out, isA<InventoryMovement>());
+    final InventoryMovement outLeg = out as InventoryMovement;
+    expect(outLeg.type.wireName, 'transfer-out');
+    expect(outLeg.type.label, 'Traslado (salida)');
+    expect(outLeg.quantityScaled, BigInt.from(-250));
+    expect(outLeg.branchId, 'branch-north');
+    expect(outLeg.productId, 'PRD-COFFEE-001');
+    expect(outLeg.actorId, 'administrator-1');
+
+    final MovementEntry inLeg = _parse(
+      transferLegData(
+        type: 'transfer-in',
+        quantityScaled: 250,
+        branchId: 'branch-south',
+      ),
+    );
+    expect(inLeg, isA<InventoryMovement>());
+    final InventoryMovement entered = inLeg as InventoryMovement;
+    expect(entered.type.wireName, 'transfer-in');
+    expect(entered.type.label, 'Traslado (entrada)');
+    expect(entered.quantityScaled, BigInt.from(250));
+    expect(entered.branchId, 'branch-south');
+  });
+
+  test('accepts a transfer key up to the backend leg-identifier bound', () {
+    final String key = 'k' * 112;
+    // The backend derives `transfer-{key}-{index}-out`, so a 112-character key
+    // is the longest one whose last leg id still fits Firestore's 128.
+    expect('transfer-$key-49-out'.length, 128);
+    expect(
+      _parse(
+        transferLegData(
+          type: 'transfer-out',
+          quantityScaled: -1,
+          transferId: key,
+        ),
+      ),
+      isA<InventoryMovement>(),
+    );
+    expect(
+      _parse(
+        transferLegData(
+          type: 'transfer-in',
+          quantityScaled: 1,
+          transferId: 'k_9-A',
+        ),
+      ),
+      isA<InventoryMovement>(),
+    );
+  });
+
+  test('rejects a missing, malformed or over-long transfer key', () {
+    final List<Map<String, Object?>> rejected = <Map<String, Object?>>[
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: null,
+      ),
+      transferLegData(type: 'transfer-in', quantityScaled: 1, transferId: ''),
+      transferLegData(
+        type: 'transfer-in',
+        quantityScaled: 1,
+        transferId: 'k' * 113,
+      ),
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: '_key',
+      ),
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: '-key',
+      ),
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: 'key one',
+      ),
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: 'key.one',
+      ),
+      transferLegData(
+        type: 'transfer-out',
+        quantityScaled: -1,
+        transferId: 'key/one',
+      ),
+      <String, Object?>{
+        ...transferLegData(type: 'transfer-in', quantityScaled: 1),
+        'transferId': 42,
+      },
+    ];
+    for (final Map<String, Object?> data in rejected) {
+      expect(_parse(data), isA<UnreadableMovement>(), reason: '$data');
+    }
+  });
+
+  test('requires the quantity sign to match the transfer direction', () {
+    expect(
+      _parse(transferLegData(type: 'transfer-out', quantityScaled: -250)),
+      isA<InventoryMovement>(),
+    );
+    expect(
+      _parse(transferLegData(type: 'transfer-in', quantityScaled: 250)),
+      isA<InventoryMovement>(),
+    );
+    final List<Map<String, Object?>> wrong = <Map<String, Object?>>[
+      transferLegData(type: 'transfer-out', quantityScaled: 250),
+      transferLegData(type: 'transfer-out', quantityScaled: 0),
+      transferLegData(type: 'transfer-in', quantityScaled: -250),
+      transferLegData(type: 'transfer-in', quantityScaled: 0),
+    ];
+    for (final Map<String, Object?> data in wrong) {
+      expect(_parse(data), isA<UnreadableMovement>(), reason: '$data');
+    }
+  });
+
+  test('keeps each transfer reference inside its own contract', () {
+    // A transfer leg carries `transferId` and nothing else.
+    for (final String key in <String>[
+      'entryId',
+      'saleId',
+      'returnId',
+      'replacementId',
+      'exchangeId',
+      'lineIndex',
+      'newLineIndex',
+    ]) {
+      expect(
+        _parse(
+          transferLegData(
+            type: 'transfer-out',
+            quantityScaled: -1,
+            references: <String, Object?>{key: 'ref-1'},
+          ),
+        ),
+        isA<UnreadableMovement>(),
+        reason: 'transfer leg with legacy $key',
+      );
+    }
+    // Legacy documents never get a transfer reference.
+    expect(
+      _parse(movementData(extra: <String, Object?>{'transferId': 'tr-key-1'})),
+      isA<UnreadableMovement>(),
+    );
+    expect(
+      _parse(
+        movementData(
+          type: 'stock-intake',
+          quantityScaled: 250,
+          extra: <String, Object?>{'entryId': 'e-1', 'transferId': 'tr-key-1'},
+        ),
+      ),
+      isA<UnreadableMovement>(),
+    );
+    // Existing legacy parsing stays backward compatible.
+    for (final String key in <String>[
+      'entryId',
+      'saleId',
+      'returnId',
+      'replacementId',
+      'exchangeId',
+    ]) {
+      expect(
+        _parse(movementData(extra: <String, Object?>{key: 'ref-1'})),
+        isA<InventoryMovement>(),
+        reason: 'legacy $key',
+      );
+    }
   });
 
   test('actor labels and display-name validation mirror the server', () {

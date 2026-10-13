@@ -19,7 +19,9 @@ enum MovementType {
     'exchange-return-defect',
     'Cambio (devolución, defecto)',
   ),
-  exchangeOut('exchange-out', 'Cambio (salida)');
+  exchangeOut('exchange-out', 'Cambio (salida)'),
+  transferOut('transfer-out', 'Traslado (salida)'),
+  transferIn('transfer-in', 'Traslado (entrada)');
 
   const MovementType(this.wireName, this.label);
 
@@ -32,6 +34,15 @@ enum MovementType {
     }
     return null;
   }
+
+  /// The two legs of one administrator transfer.
+  bool get isTransfer =>
+      this == MovementType.transferOut || this == MovementType.transferIn;
+
+  /// Types only an administrator can author. Their actor has no seller
+  /// profile, so the ledger shows a fixed label instead of resolving a name.
+  bool get isAdministratorOnly =>
+      this == MovementType.stockIntake || isTransfer;
 }
 
 /// One row of the movements query: either a parsed movement or a document
@@ -94,6 +105,16 @@ const Set<String> _referenceFields = <String>{
   'newLineIndex',
 };
 
+/// The only reference a transfer leg may carry. Legacy documents never get it
+/// and transfer legs never get a legacy reference, so the two contracts cannot
+/// borrow each other's fields.
+const Set<String> _transferReferenceFields = <String>{'transferId'};
+
+/// The server's transfer key: `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$` capped at
+/// 112 characters so `transfer-{key}-{index}-out` stays a valid 128-character
+/// leg identifier.
+final RegExp _transferIdPattern = RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,111}$');
+
 final RegExp _branchIdPattern = RegExp(r'^branch-[a-z0-9]+(?:-[a-z0-9]+)*$');
 final RegExp _productIdPattern = RegExp(r'^[A-Z][A-Z0-9-]{7,63}$');
 final RegExp _controlCharacters = RegExp(r'[\u0000-\u001f\u007f]');
@@ -114,21 +135,27 @@ MovementEntry parseMovementEntry(CatalogDocument document) {
 }
 
 InventoryMovement _parseMovement(String id, Map<String, Object?> data) {
-  if (!_requiredFields.every(data.containsKey) ||
-      data.keys.any(
-        (String key) =>
-            !_requiredFields.contains(key) && !_referenceFields.contains(key),
-      )) {
+  if (!_requiredFields.every(data.containsKey)) {
     throw const FormatException('movement fields are invalid');
   }
   final MovementType? type = MovementType.fromWire(data['type']);
+  if (type == null) {
+    throw const FormatException('movement type is invalid');
+  }
+  final Set<String> references = type.isTransfer
+      ? _transferReferenceFields
+      : _referenceFields;
+  if (data.keys.any(
+    (String key) => !_requiredFields.contains(key) && !references.contains(key),
+  )) {
+    throw const FormatException('movement fields are invalid');
+  }
   final Object? branchId = data['branchId'];
   final Object? productId = data['productId'];
   final Object? quantity = data['quantityScaled'];
   final Object? actorId = data['actorId'];
   final Object? occurredAt = data['occurredAt'];
-  if (type == null ||
-      branchId is! String ||
+  if (branchId is! String ||
       !isBranchId(branchId) ||
       productId is! String ||
       !_productIdPattern.hasMatch(productId) ||
@@ -136,6 +163,19 @@ InventoryMovement _parseMovement(String id, Map<String, Object?> data) {
       !isPathSafeUid(actorId) ||
       occurredAt is! Timestamp) {
     throw const FormatException('movement values are invalid');
+  }
+  if (type.isTransfer) {
+    final Object? transferId = data['transferId'];
+    final int signed = quantity;
+    // A leg only leaves or only enters; the pair is conserved by the backend.
+    final bool signMatches = type == MovementType.transferOut
+        ? signed < 0
+        : signed > 0;
+    if (transferId is! String ||
+        !_transferIdPattern.hasMatch(transferId) ||
+        !signMatches) {
+      throw const FormatException('transfer leg is invalid');
+    }
   }
   final QuantitySpec spec = QuantitySpec.fromFirestore(<String, Object?>{
     'unit': data['unit'],

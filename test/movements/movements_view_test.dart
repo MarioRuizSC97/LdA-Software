@@ -155,6 +155,114 @@ void main() {
     expect(find.textContaining('branch-north'), findsNothing);
   });
 
+  testWidgets('transfer legs show both directions with an admin actor', (
+    WidgetTester tester,
+  ) async {
+    backend.onLoad = (_) async => <MovementEntry>[
+      _entry(
+        'tr-1-out',
+        movementData(
+          type: 'transfer-out',
+          branchId: 'branch-north',
+          quantityScaled: -250,
+          actorId: 'administrator-1',
+          extra: const <String, Object?>{'transferId': 'tr-key-1'},
+        ),
+      ),
+      _entry(
+        'tr-1-in',
+        movementData(
+          type: 'transfer-in',
+          branchId: 'branch-south',
+          quantityScaled: 250,
+          actorId: 'administrator-1',
+          extra: const <String, Object?>{'transferId': 'tr-key-1'},
+        ),
+      ),
+      _entry('m-1', movementData()),
+    ];
+    await tester.pumpWidget(_view(backend));
+    await tester.pumpAndSettle();
+
+    final Finder out = _key('movement-tr-1-out');
+    expect(
+      find.descendant(of: out, matching: find.text('Traslado (salida)')),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: out, matching: find.textContaining('Café molido')),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: out, matching: find.textContaining('-2.50 kg')),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: out, matching: find.textContaining('Norte')),
+      findsOne,
+    );
+    expect(
+      tester.widget<Text>(_key('movement-actor-tr-1-out')).data,
+      'Administrador',
+    );
+
+    final Finder inLeg = _key('movement-tr-1-in');
+    expect(
+      find.descendant(of: inLeg, matching: find.text('Traslado (entrada)')),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: inLeg, matching: find.textContaining('+2.50 kg')),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: inLeg, matching: find.textContaining('Sur')),
+      findsOne,
+    );
+    expect(
+      tester.widget<Text>(_key('movement-actor-tr-1-in')).data,
+      'Administrador',
+    );
+
+    // Administrator rows never offer a seller-name action and never read a
+    // profile; the seller row on the same screen is unchanged.
+    expect(
+      find.descendant(of: out, matching: find.text('Editar nombre')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: out, matching: find.text('Asignar nombre')),
+      findsNothing,
+    );
+    expect(find.text('Editar nombre'), findsOne);
+    expect(tester.widget<Text>(_key('movement-actor-m-1')).data, 'Ana López');
+    expect(backend.profileReads, <String>[namedSellerId]);
+    // The transfer reference itself is never rendered as data.
+    expect(find.textContaining('tr-key-1'), findsNothing);
+  });
+
+  testWidgets('a transfer leg outside the contract stays unreadable', (
+    WidgetTester tester,
+  ) async {
+    backend.onLoad = (_) async => <MovementEntry>[
+      _entry(
+        'tr-bad',
+        movementData(
+          type: 'transfer-out',
+          quantityScaled: 250,
+          actorId: 'administrator-1',
+          extra: const <String, Object?>{'transferId': 'tr-key-1'},
+        ),
+      ),
+    ];
+    await tester.pumpWidget(_view(backend));
+    await tester.pumpAndSettle();
+    expect(find.text('Movimiento ilegible'), findsOne);
+    expect(find.textContaining('tr-bad'), findsOne);
+    expect(find.text('Administrador'), findsNothing);
+    expect(backend.profileReads, isEmpty);
+  });
+
   testWidgets('denied and failed lookups degrade without crashing', (
     WidgetTester tester,
   ) async {

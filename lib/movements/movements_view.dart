@@ -94,8 +94,7 @@ class _MovementsViewState extends State<MovementsView> {
 
   void _resolveNames(List<MovementEntry> entries) {
     for (final MovementEntry entry in entries) {
-      if (entry is! InventoryMovement ||
-          entry.type == MovementType.stockIntake) {
+      if (entry is! InventoryMovement || entry.type.isAdministratorOnly) {
         continue;
       }
       final String uid = entry.actorId;
@@ -273,9 +272,10 @@ class _MovementsViewState extends State<MovementsView> {
     );
   }
 
-  /// The actor label and the name action, if any.
+  /// The actor label and the name action, if any. Administrator-authored
+  /// rows (intake and both transfer legs) have no seller profile to read.
   (String, String?) _actor(InventoryMovement movement) {
-    if (movement.type == MovementType.stockIntake) {
+    if (movement.type.isAdministratorOnly) {
       return ('Administrador', null);
     }
     final String uid = movement.actorId;
