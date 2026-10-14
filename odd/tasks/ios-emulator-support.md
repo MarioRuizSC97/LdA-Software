@@ -16,7 +16,7 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
 - [x] IOS-EMU-02 — Run on the iPhone 18 Pro iOS 27.0 simulator with `LDA_LOCAL_EMULATORS=true`; confirm the login screen renders without a Firebase error. The user then signs in. Route: delegated verifier, then user acceptance.
 - [x] IOS-EMU-03 — Fix iOS native init crash (apiKey format), simulator-only guard and review advisories. Route: delegated writer (source, new conditional-import files and tests). Committed as `6a639cf`.
 - [x] IOS-EMU-04 — Detect the iOS simulator from the app executable path instead of `Platform.environment`. Route: delegated writer (source plus new test file, simulator validation). Committed as `b88b5d8` (assessed medium, under the review budget; no review due).
-- [x] IOS-EMU-05 — Optional review follow-ups: rename `DemoEmulatorBootstrap.options` to `sharedOptions`, a `currentPlatform` wiring test through the simulator probe, per-field trust-gate mutation tests, and a sanitized console diagnostic for the swallowed session gateway bootstrap error. Route: delegated writer (source, new helper and test files). Not committed yet.
+- [x] IOS-EMU-05 — Optional review follow-ups: rename `DemoEmulatorBootstrap.options` to `sharedOptions`, a `currentPlatform` wiring test through the simulator probe, per-field trust-gate mutation tests, and a sanitized console diagnostic for the swallowed session gateway bootstrap error. Route: delegated writer (source, new helper and test files). Committed as `bd5131d` (ancestor of the current branch head).
 
 ## Acceptance criteria
 - iOS resolves to `127.0.0.1`; Android and web behavior is unchanged; other platforms still fail closed.
@@ -59,4 +59,4 @@ Let the iOS simulator build run in local emulator mode (`--dart-define=LDA_LOCAL
   - Diagnostic: new `lib/auth/emulator_bootstrap_diagnostics.dart` mirrors the catalog diagnostics pattern and prints `[emulator-bootstrap] stage=gateway category=<unsupported-platform|firebase|state|other> code=<allowlisted|other|none>`; `lib/auth/emulator_login.dart` reports before setting `_SessionFailure.bootstrap`. RED: the new test file failed to compile (missing helper); with the helper but the call removed, the widget test `reports one sanitized diagnostic` failed. GREEN with the call in place; a throwing reporter keeps the same failure view.
 
 ## Next step
-Feature complete. IOS-EMU-05 follow-ups are implemented and verified in the working tree; next is a work-unit commit and its review assessment, at the user's discretion.
+Feature complete. The IOS-EMU-05 follow-ups described below were implemented and verified in the working tree, then committed as `bd5131d`. No native review receipt for IOS-EMU-05 is recorded; the historical checks below were observed at the time they were run and were not re-executed since.

@@ -7,7 +7,7 @@ Branch `feat/inventory-mvp-seller-profiles-v2`, baseline `32df94cd397ec58b013d41
 
 ## Tasks
 - [x] CD-01 — Safe diagnostics and tests; delegated writer `mv5metj3-5-3av6` (multi-file trigger). Five Dart surfaces: helper, repository, main loader, helper tests, repository tests. No commit.
-- [x] CD-02 — Independent verifier `mv5mw6n6-6-5jls` and native medium reliability review `review-d016f7914796bfad` passed. Approval acknowledged and authority burned for target `sha256:60c0112ebcb2afaeff726bf84e8cc34629ec1eb54fad8e1a2da395173738fd04`, revision `sha256:19baaaf2b8e95ca32ceed140771c4205b7c3dd29a5439f02aca2cd615de3204b`. Source uncommitted.
+- [x] CD-02 — Independent verifier `mv5mw6n6-6-5jls` and native medium reliability review `review-d016f7914796bfad` passed. Approval acknowledged and authority burned for target `sha256:60c0112ebcb2afaeff726bf84e8cc34629ec1eb54fad8e1a2da395173738fd04`, revision `sha256:19baaaf2b8e95ca32ceed140771c4205b7c3dd29a5439f02aca2cd615de3204b`. Diagnostics source committed as `ea4ef97` (ancestor of the current branch head).
 - [x] CD-03 — Frontend update and browser diagnostic acceptance. Runtime worker `mv5nb7hv-7-y012` completed frontend-only refresh; user screenshot confirmed two `[catalog-load] stage=repository category=parse code=none` lines in browser console. Diagnostic goal complete, catalog failure unresolved.
 
 ## Evidence and checks
@@ -27,4 +27,4 @@ Output `[catalog-load] stage=repository|bootstrap category=session|read|parse|un
 User screenshot `/Users/luismarioruiz/Desktop/Ca.png` confirms browser console delivery. Repository failure classified as parse (non-session-fence FormatException), not a Firebase code. This does not identify the invalid record/field or prove data corruption. Catalog remains unavailable; no fix claimed.
 
 ## Next step
-Read-only mapping of catalog format validators to derive a minimal diagnostic for the exact failing validation. Any further source/data changes require fresh scoped authorization. Diagnostics source remains uncommitted.
+Read-only mapping of catalog format validators to derive a minimal diagnostic for the exact failing validation. Any further source/data changes require fresh scoped authorization. Diagnostics source was later committed as `ea4ef97`.

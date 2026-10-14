@@ -116,8 +116,9 @@ void main() {
       };
 
       for (final String requiredField in completePricing.keys) {
-        final Map<String, Object?> incompletePricing =
-            Map<String, Object?>.of(completePricing)..remove(requiredField);
+        final Map<String, Object?> incompletePricing = Map<String, Object?>.of(
+          completePricing,
+        )..remove(requiredField);
         expect(
           () => CatalogProduct.fromFirestore(<String, Object?>{
             ...baseProduct,
