@@ -23,6 +23,8 @@ import '../sales/sale_draft.dart';
 import '../sales/sale_quote.dart';
 import '../transfers/administrator_transfer_form.dart';
 import '../transfers/transfer_draft.dart';
+import '../transfers/transfer_draft_persistence.dart';
+import '../transfers/transfer_draft_persistence_platform.dart';
 import 'emulator_bootstrap_diagnostics.dart';
 import 'emulator_session.dart';
 
@@ -52,6 +54,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.correctionGatewayLoader,
     this.administratorMovementsLoader,
     this.transferGatewayLoader,
+    this.transferDraftJournal,
     this.retryLoader,
     super.key,
   });
@@ -73,6 +76,9 @@ class EmulatorLoginShell extends StatefulWidget {
 
   /// Branch-less administrator transfer gateway loader; null hides transfers.
   final TransferGatewayLoader? transferGatewayLoader;
+
+  /// Durable unresolved-transfer journal; null uses the platform adapter.
+  final TransferDraftJournal? transferDraftJournal;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -126,15 +132,22 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // seller and branch, retried with the same key until it resolves.
   final CorrectionDraftStore _correctionDrafts = CorrectionDraftStore();
 
-  // Transfer retention is intentionally volatile and lives only in this live
-  // shell state. The store itself keeps many keys per owner and many owners,
-  // so the shell adds the one rule a store cannot know: an administrator may
-  // carry a single unresolved transfer flow at a time. A retained payload is
-  // therefore never forgotten or silently replaced by a second key, and it
-  // survives closing the form, logout, role replacement, and same-UID re-entry
-  // on this shell. Nothing is persisted, so nothing survives shell disposal,
-  // a browser reload, or an app restart.
-  final TransferDraftStore _transferDrafts = TransferDraftStore();
+  // Transfer retention is durable, unlike the stores above: the unresolved
+  // payload and its frozen key are journaled per owner before anything leaves
+  // the device, so they survive closing the form, logout, role replacement,
+  // same-UID re-entry, a browser reload, and an app restart. An administrator
+  // carries at most one unresolved flow; it is hydrated before the form is
+  // offered or a key is minted, never sent automatically, and only cleared by
+  // a confirmed settlement of that same key. Unavailable or corrupt storage
+  // blocks transfers instead of dropping or recreating the record.
+  late final TransferDraftStore _transferDrafts = TransferDraftStore(
+    journal:
+        widget.transferDraftJournal ?? createPlatformTransferDraftJournal(),
+  );
+
+  // Owner whose last confirmed transfer could not be journaled and therefore
+  // was never sent; cleared once the journal is trusted again.
+  String? _unsentTransferOwner;
 
   // One movements backend per exact administrator, so the seller-profile
   // gateway's stale generation spans the screen. A failed load is retried.
@@ -860,12 +873,24 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     if (retained.isNotEmpty && retained.last != draft) {
       throw const TransferUnresolvedException();
     }
-    final TransferAttempt attempt = _transferDrafts.begin(
-      ownerUserId: session.userId,
-      draft: draft,
-    );
+    // The frozen record is durable before the loader or the callable runs; a
+    // storage failure means nothing is sent and transfers stay blocked.
+    final TransferAttempt attempt;
+    try {
+      attempt = await _transferDrafts.begin(
+        ownerUserId: session.userId,
+        draft: draft,
+      );
+    } on TransferJournalException {
+      _unsentTransferOwner = session.userId;
+      _transferJournalChanged();
+      rethrow;
+    }
 
     try {
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const TransferUncertainException();
+      }
       // Every attempt builds a gateway bound to the current validated session.
       final EmulatorTransferGateway gateway = await loader(session);
       if (!_isSameCurrentAdministrator(session)) {
@@ -875,9 +900,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       if (!_isSameCurrentAdministrator(session)) {
         throw const TransferUncertainException();
       }
-      if (!_transferDrafts.resolve(attempt)) {
-        throw const TransferStaleException();
-      }
+      await _settleTransfer(attempt);
       return result;
     } on TransferRejectedException {
       // The server settled the key, but only for the owner that sent it.
@@ -885,15 +908,57 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         _transferDrafts.retain(attempt);
         throw const TransferUncertainException();
       }
-      if (!_transferDrafts.resolve(attempt)) {
-        throw const TransferStaleException();
-      }
+      await _settleTransfer(attempt);
       rethrow;
     } catch (_) {
-      // Unknown, session-changed, or superseded: retain, never reset.
+      // Unknown, session-changed, superseded, or an uncleared journal: retain,
+      // never reset.
       _transferDrafts.retain(attempt);
       rethrow;
     }
+  }
+
+  /// Clears the durable record of a settled attempt. A superseded attempt is
+  /// stale; a journal that cannot be cleared keeps the record and blocks.
+  Future<void> _settleTransfer(TransferAttempt attempt) async {
+    final bool resolved;
+    try {
+      resolved = await _transferDrafts.resolve(attempt);
+    } on TransferJournalException {
+      _transferJournalChanged();
+      rethrow;
+    }
+    if (!resolved) throw const TransferStaleException();
+  }
+
+  /// The owner's journal status, hydrating it on first sight. Null when the
+  /// session can never transfer.
+  TransferJournalStatus? _transferJournalFor(EmulatorSession session) {
+    if (!_isExactAdministrator(session) ||
+        widget.transferGatewayLoader == null ||
+        session.userId.isEmpty) {
+      return null;
+    }
+    if (_transferDrafts.statusFor(session.userId) ==
+        TransferJournalStatus.unknown) {
+      _hydrateTransferJournal(session.userId);
+    }
+    return _transferDrafts.statusFor(session.userId);
+  }
+
+  /// Reads the durable journal; never sends anything to the server.
+  void _hydrateTransferJournal(String ownerUserId) {
+    _transferDrafts.hydrate(ownerUserId).then((TransferJournalStatus status) {
+      if (status == TransferJournalStatus.ready &&
+          _unsentTransferOwner == ownerUserId) {
+        _unsentTransferOwner = null;
+      }
+      _transferJournalChanged();
+    });
+  }
+
+  void _transferJournalChanged() {
+    if (mounted) setState(() {});
   }
 
   /// Exact transfer lookup API the authenticated page calls for the current
@@ -914,15 +979,19 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
 
   /// Both seams or neither: the page needs the submit API and the retained
   /// lookup together, and only for the exact branch-less administrator.
+  /// The seams also require a trusted, hydrated journal for this owner.
   TransferSubmit? _transferSubmitFor(EmulatorSession session) =>
-      _isExactAdministrator(session) && widget.transferGatewayLoader != null
+      _isExactAdministrator(session) &&
+          widget.transferGatewayLoader != null &&
+          _transferDrafts.statusFor(session.userId) ==
+              TransferJournalStatus.ready
       ? submitTransfer
       : null;
 
   TransferDraftLookup? _transferLookupFor(EmulatorSession session) =>
-      _isExactAdministrator(session) && widget.transferGatewayLoader != null
-      ? () => unresolvedTransferDraftFor(session)
-      : null;
+      _transferSubmitFor(session) == null
+      ? null
+      : () => unresolvedTransferDraftFor(session);
 
   ProductPricingDraft? _unresolvedPricingDraftFor(
     EmulatorSession originatingSession,
@@ -962,7 +1031,10 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         break;
     }
     if (_session case final EmulatorSession session) {
-      return AuthenticatedCatalogPage(
+      final TransferJournalStatus? transferJournal = _transferJournalFor(
+        session,
+      );
+      final Widget page = AuthenticatedCatalogPage(
         key: ValueKey<String>(
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),
@@ -1004,6 +1076,31 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         administratorMovements: _administratorMovementsFor(session),
         onLogout: _logout,
       );
+      if (transferJournal == null) return page;
+      final bool blocked =
+          transferJournal == TransferJournalStatus.unavailable ||
+          transferJournal == TransferJournalStatus.corrupt;
+      // One stable tree for every journal status, so the page keeps its state
+      // while the notice appears or disappears above it.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (blocked)
+            _TransferJournalNotice(
+              corrupt: transferJournal == TransferJournalStatus.corrupt,
+              unsent: _unsentTransferOwner == session.userId,
+              onRetry: () => _hydrateTransferJournal(session.userId),
+            ),
+          Expanded(
+            key: const ValueKey<String>('transfer-journal-page'),
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: blocked,
+              child: page,
+            ),
+          ),
+        ],
+      );
     }
     return _LoginView(
       gateway: _gateway!,
@@ -1011,6 +1108,79 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       onLoginStarted: _startLoginAttempt,
       onAuthenticated: _completeLoginAttempt,
       mayShowLoginFailure: _mayShowLoginFailure,
+    );
+  }
+}
+
+const String _transferJournalUnavailableText =
+    'No se pudo usar el almacenamiento local de traslados. Los traslados '
+    'quedan bloqueados para no duplicar un envío pendiente.';
+const String _transferJournalCorruptText =
+    'El traslado pendiente guardado en este dispositivo no se puede leer. '
+    'Los traslados quedan bloqueados para no duplicar un envío; contacta a '
+    'soporte.';
+const String _transferJournalUnsentText = 'El último traslado no se envió.';
+
+/// Fail-closed notice shown while the durable transfer journal is untrusted.
+class _TransferJournalNotice extends StatelessWidget {
+  const _TransferJournalNotice({
+    required this.corrupt,
+    required this.unsent,
+    required this.onRetry,
+  });
+
+  final bool corrupt;
+  final bool unsent;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Material(
+      key: const ValueKey<String>('transfer-journal-blocked'),
+      color: colors.errorContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.lock_outline, color: colors.onErrorContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Semantics(
+                  liveRegion: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        corrupt
+                            ? _transferJournalCorruptText
+                            : _transferJournalUnavailableText,
+                        style: TextStyle(color: colors.onErrorContainer),
+                      ),
+                      if (unsent)
+                        Text(
+                          _transferJournalUnsentText,
+                          key: const ValueKey<String>(
+                            'transfer-journal-unsent',
+                          ),
+                          style: TextStyle(color: colors.onErrorContainer),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              TextButton(
+                key: const ValueKey<String>('transfer-journal-retry'),
+                onPressed: onRetry,
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

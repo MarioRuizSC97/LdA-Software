@@ -10,6 +10,7 @@ import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/catalog_stock.dart';
 import 'package:lda_inventory/firebase/emulator_transfer_gateway.dart';
 import 'package:lda_inventory/transfers/transfer_draft.dart';
+import 'package:lda_inventory/transfers/transfer_draft_persistence.dart';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -198,10 +199,20 @@ class _SessionGateway implements EmulatorSessionGateway {
 }
 
 class _Harness {
-  _Harness({this.session = _admin, this.withLoader = true});
+  _Harness({
+    this.session = _admin,
+    this.withLoader = true,
+    InMemoryTransferDraftJournal? journal,
+  }) : journal = journal ?? InMemoryTransferDraftJournal();
 
   final EmulatorSession? session;
   final bool withLoader;
+
+  /// Durable journal shared across shells to simulate a reload or restart.
+  final InMemoryTransferDraftJournal journal;
+
+  /// Raw journal text seen when the gateway loader ran, before any invoke.
+  final List<String?> journalAtLoader = <String?>[];
   final _Transport transport = _Transport();
   final List<EmulatorSession> loaderSessions = <EmulatorSession>[];
   final List<String> minted = <String>[];
@@ -216,6 +227,7 @@ class _Harness {
   TransferGatewayLoader get loader => (EmulatorSession session) async {
     loaderCalls += 1;
     loaderSessions.add(session);
+    journalAtLoader.add(journal.rawRecords[session.userId]);
     if (loaderGate case final Completer<void> gate) await gate.future;
     return EmulatorTransferGateway(
       expectedSession: session,
@@ -229,6 +241,7 @@ class _Harness {
       sessionGateway: Future<EmulatorSessionGateway>.value(gateway),
       catalogLoader: (EmulatorSession session) async => _snapshot(),
       transferGatewayLoader: withLoader ? loader : null,
+      transferDraftJournal: journal,
     ),
   );
 
@@ -635,6 +648,223 @@ void main() {
       );
       await harness.openForm(tester);
       expect(find.text('Reintentar mismo envío'), findsOneWidget);
+    });
+  });
+  group('durable unresolved journal', () {
+    const String blockedUnavailable =
+        'No se pudo usar el almacenamiento local de traslados. Los traslados '
+        'quedan bloqueados para no duplicar un envío pendiente.';
+    const String unsent = 'El último traslado no se envió.';
+    const String blockedCorrupt =
+        'El traslado pendiente guardado en este dispositivo no se puede leer. '
+        'Los traslados quedan bloqueados para no duplicar un envío; contacta '
+        'a soporte.';
+
+    testWidgets('a reload hydrates the retained flow without any RPC', (
+      WidgetTester tester,
+    ) async {
+      await harness.journal.save(
+        TransferJournalRecord(
+          ownerUserId: _admin.userId,
+          draft: _draft(idempotencyKey: 'key-reload'),
+        ),
+      );
+      await harness.pump(tester);
+
+      expect(harness.loaderCalls, 0);
+      expect(harness.transport.invocations, 0);
+      expect(
+        harness.state(tester).unresolvedTransferDraftFor(_admin),
+        _draft(idempotencyKey: 'key-reload'),
+      );
+      await harness.openForm(tester);
+      expect(find.text('Reintentar mismo envío'), findsOneWidget);
+      expect(harness.transport.invocations, 0);
+
+      await tester.ensureVisible(_key('transfer-submit'));
+      await tester.pumpAndSettle();
+      await tester.tap(_key('transfer-submit'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(harness.transport.invocations, 1);
+      expect(
+        harness.transport.payloads.single,
+        _draft(idempotencyKey: 'key-reload').toRequest(),
+      );
+      harness.transport.succeed(replayed: true);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('ya estaba registrado'), findsOneWidget);
+      expect(harness.journal.rawRecords, isEmpty);
+    });
+
+    testWidgets('another administrator never sees the retained flow', (
+      WidgetTester tester,
+    ) async {
+      await harness.journal.save(
+        TransferJournalRecord(
+          ownerUserId: _admin.userId,
+          draft: _draft(idempotencyKey: 'key-owned'),
+        ),
+      );
+      final _Harness other = _Harness(
+        session: _otherAdmin,
+        journal: harness.journal,
+      );
+      await other.pump(tester);
+
+      expect(
+        other.state(tester).unresolvedTransferDraftFor(_otherAdmin),
+        isNull,
+      );
+      await other.openForm(tester);
+      expect(find.text('Reintentar mismo envío'), findsNothing);
+      expect(other.journal.rawRecords.keys, <String>[_admin.userId]);
+    });
+
+    testWidgets('the record is saved before the gateway or the RPC', (
+      WidgetTester tester,
+    ) async {
+      await harness.pump(tester);
+      final EmulatorLoginShellState state = harness.state(tester);
+      final Future<TransferResult> pending = state.submitTransfer(
+        _draft(idempotencyKey: 'key-saved'),
+      );
+      await harness.flush(tester);
+
+      expect(harness.journalAtLoader, <String?>[
+        TransferJournalCodec.encode(
+          TransferJournalRecord(
+            ownerUserId: _admin.userId,
+            draft: _draft(idempotencyKey: 'key-saved'),
+          ),
+        ),
+      ]);
+      expect(harness.transport.invocations, 1);
+      harness.transport.succeed();
+      await expectLater(pending, completes);
+      expect(harness.journal.rawRecords, isEmpty);
+    });
+
+    testWidgets('a save failure never reaches the RPC and blocks transfers', (
+      WidgetTester tester,
+    ) async {
+      await harness.pump(tester);
+      final EmulatorLoginShellState state = harness.state(tester);
+      harness.journal.unavailable = true;
+
+      await expectLater(
+        state.submitTransfer(_draft(idempotencyKey: 'key-unsaved')),
+        throwsA(isA<TransferJournalException>()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(harness.loaderCalls, 0);
+      expect(harness.transport.invocations, 0);
+      expect(_key('transfer-open'), findsNothing);
+      expect(find.text(blockedUnavailable), findsOneWidget);
+      expect(find.text(unsent), findsOneWidget);
+
+      // Once storage recovers the administrator may retry hydration.
+      harness.journal.unavailable = false;
+      await tester.tap(_key('transfer-journal-retry'));
+      await tester.pumpAndSettle();
+      expect(find.text(blockedUnavailable), findsNothing);
+      expect(find.text(unsent), findsNothing);
+      expect(_key('transfer-open'), findsOneWidget);
+    });
+
+    testWidgets('an unknown outcome survives a restart with the same key', (
+      WidgetTester tester,
+    ) async {
+      await harness.pump(tester);
+      final Future<TransferResult> first = harness
+          .state(tester)
+          .submitTransfer(_draft(idempotencyKey: 'key-restart'));
+      await harness.flush(tester);
+      harness.transport.fail(StateError('transport died after sending'));
+      await expectLater(first, throwsA(isA<TransferUncertainException>()));
+
+      // App restart: a brand-new shell over the same durable journal.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      final _Harness restarted = _Harness(journal: harness.journal);
+      await restarted.pump(tester);
+      expect(restarted.transport.invocations, 0);
+
+      final EmulatorLoginShellState state = restarted.state(tester);
+      expect(
+        state.unresolvedTransferDraftFor(_admin)?.idempotencyKey,
+        'key-restart',
+      );
+      await expectLater(
+        state.submitTransfer(_draft(idempotencyKey: 'key-new')),
+        throwsA(isA<TransferUnresolvedException>()),
+      );
+      final Future<TransferResult> retry = state.submitTransfer(
+        _draft(idempotencyKey: 'key-restart'),
+      );
+      await restarted.flush(tester);
+      expect(
+        restarted.transport.payloads.single,
+        harness.transport.payloads.single,
+      );
+      restarted.transport.succeed(replayed: true);
+      await expectLater(retry, completes);
+      expect(restarted.journal.rawRecords, isEmpty);
+    });
+
+    testWidgets('only a current definitive settlement clears the record', (
+      WidgetTester tester,
+    ) async {
+      await harness.pump(tester);
+      final EmulatorLoginShellState state = harness.state(tester);
+      final TransferDraft draft = _draft(idempotencyKey: 'key-clear');
+
+      final Future<TransferResult> first = state.submitTransfer(draft);
+      await harness.flush(tester);
+      final Future<TransferResult> second = state.submitTransfer(draft);
+      await harness.flush(tester);
+
+      harness.transport.succeedAt(0);
+      await expectLater(first, throwsA(isA<TransferStaleException>()));
+      expect(harness.journal.rawRecords, contains(_admin.userId));
+
+      harness.transport.failAt(
+        1,
+        _FunctionsException(code: 'failed-precondition'),
+      );
+      await expectLater(second, throwsA(isA<TransferRejectedException>()));
+      expect(harness.journal.rawRecords, isEmpty);
+    });
+
+    testWidgets('unavailable storage gates the form before any key exists', (
+      WidgetTester tester,
+    ) async {
+      harness.journal.unavailable = true;
+      await harness.pump(tester);
+
+      expect(_key('transfer-open'), findsNothing);
+      expect(find.text(blockedUnavailable), findsOneWidget);
+      expect(find.text(unsent), findsNothing);
+      await expectLater(
+        harness.state(tester).submitTransfer(_draft(idempotencyKey: 'key-x')),
+        throwsA(isA<TransferJournalException>()),
+      );
+      expect(harness.loaderCalls, 0);
+      expect(harness.transport.invocations, 0);
+    });
+
+    testWidgets('a corrupt record blocks transfers and is never dropped', (
+      WidgetTester tester,
+    ) async {
+      harness.journal.rawRecords[_admin.userId] = '{"version":99}';
+      await harness.pump(tester);
+
+      expect(_key('transfer-open'), findsNothing);
+      expect(find.text(blockedCorrupt), findsOneWidget);
+      expect(harness.journal.rawRecords[_admin.userId], '{"version":99}');
+      expect(harness.transport.invocations, 0);
     });
   });
 }

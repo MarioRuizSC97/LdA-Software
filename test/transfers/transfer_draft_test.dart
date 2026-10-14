@@ -592,12 +592,12 @@ void main() {
   });
 
   group('TransferDraftStore', () {
-    test('freezes the payload per exact owner and stable key', () {
+    test('freezes the payload per exact owner and stable key', () async {
       final TransferDraftStore store = TransferDraftStore();
       final TransferDraft draft = _draft();
       final List<TransferLine> lines = <TransferLine>[...draft.lines];
 
-      final TransferAttempt first = store.begin(
+      final TransferAttempt first = await store.begin(
         ownerUserId: 'administrator-1',
         draft: draft,
       );
@@ -611,7 +611,7 @@ void main() {
       expect(store.unresolvedByOwner('administrator-2'), isEmpty);
       expect(store.unresolvedFor('administrator-2', _key), isNull);
 
-      final TransferAttempt second = store.begin(
+      final TransferAttempt second = await store.begin(
         ownerUserId: 'administrator-1',
         draft: _draft(),
       );
@@ -620,13 +620,13 @@ void main() {
       expect(store.isCurrent(second), isTrue);
     });
 
-    test('refuses to overwrite a different unresolved payload', () {
+    test('refuses to overwrite a different unresolved payload', () async {
       final TransferDraftStore store = TransferDraftStore();
       final TransferDraft frozen = _draft();
-      store.begin(ownerUserId: 'administrator-1', draft: frozen);
+      await store.begin(ownerUserId: 'administrator-1', draft: frozen);
 
-      expect(
-        () => store.begin(
+      await expectLater(
+        store.begin(
           ownerUserId: 'administrator-1',
           draft: _draft(
             lines: <TransferLine>[
@@ -641,9 +641,9 @@ void main() {
       expect(store.unresolvedFor('administrator-1', _key)!.lines, hasLength(1));
     });
 
-    test('retains unresolved payloads and resolves settled ones', () {
+    test('retains unresolved payloads and resolves settled ones', () async {
       final TransferDraftStore store = TransferDraftStore();
-      final TransferAttempt attempt = store.begin(
+      final TransferAttempt attempt = await store.begin(
         ownerUserId: 'administrator-1',
         draft: _draft(),
       );
@@ -660,51 +660,57 @@ void main() {
         throwsUnsupportedError,
       );
 
-      expect(store.resolve(attempt), isTrue);
+      expect(await store.resolve(attempt), isTrue);
       expect(store.unresolvedFor('administrator-1', _key), isNull);
       expect(store.unresolvedByOwner('administrator-1'), isEmpty);
-      expect(store.resolve(attempt), isFalse);
+      expect(await store.resolve(attempt), isFalse);
     });
 
-    test('stale attempts cannot discard the current unresolved payload', () {
-      final TransferDraftStore store = TransferDraftStore();
-      final TransferAttempt old = store.begin(
-        ownerUserId: 'administrator-1',
-        draft: _draft(),
-      );
-      final TransferAttempt current = store.begin(
-        ownerUserId: 'administrator-1',
-        draft: _draft(),
-      );
-
-      expect(store.resolve(old), isFalse);
-      expect(store.unresolvedFor('administrator-1', _key), current.draft);
-
-      final TransferDraftStore other = TransferDraftStore();
-      other.begin(ownerUserId: 'administrator-1', draft: _draft());
-      final TransferAttempt foreign = other.begin(
-        ownerUserId: 'administrator-2',
-        draft: _draft(sourceBranchId: 'branch-east'),
-      );
-      expect(store.isCurrent(foreign), isFalse);
-      expect(store.resolve(foreign), isFalse);
-    });
-
-    test('rejects empty owners and invalid drafts before storing anything', () {
-      final TransferDraftStore store = TransferDraftStore();
-      expect(
-        () => store.begin(ownerUserId: '', draft: _draft()),
-        throwsA(isA<TransferSessionException>()),
-      );
-      expect(
-        () => store.begin(
+    test(
+      'stale attempts cannot discard the current unresolved payload',
+      () async {
+        final TransferDraftStore store = TransferDraftStore();
+        final TransferAttempt old = await store.begin(
           ownerUserId: 'administrator-1',
-          draft: _draft(destinationBranchId: 'branch-north'),
-        ),
-        throwsA(isA<TransferValidationException>()),
-      );
-      expect(store.unresolvedByOwner('administrator-1'), isEmpty);
-    });
+          draft: _draft(),
+        );
+        final TransferAttempt current = await store.begin(
+          ownerUserId: 'administrator-1',
+          draft: _draft(),
+        );
+
+        expect(await store.resolve(old), isFalse);
+        expect(store.unresolvedFor('administrator-1', _key), current.draft);
+
+        final TransferDraftStore other = TransferDraftStore();
+        await other.begin(ownerUserId: 'administrator-1', draft: _draft());
+        final TransferAttempt foreign = await other.begin(
+          ownerUserId: 'administrator-2',
+          draft: _draft(sourceBranchId: 'branch-east'),
+        );
+        expect(store.isCurrent(foreign), isFalse);
+        expect(await store.resolve(foreign), isFalse);
+      },
+    );
+
+    test(
+      'rejects empty owners and invalid drafts before storing anything',
+      () async {
+        final TransferDraftStore store = TransferDraftStore();
+        await expectLater(
+          store.begin(ownerUserId: '', draft: _draft()),
+          throwsA(isA<TransferSessionException>()),
+        );
+        await expectLater(
+          store.begin(
+            ownerUserId: 'administrator-1',
+            draft: _draft(destinationBranchId: 'branch-north'),
+          ),
+          throwsA(isA<TransferValidationException>()),
+        );
+        expect(store.unresolvedByOwner('administrator-1'), isEmpty);
+      },
+    );
   });
 
   group('createTransferUuidV4', () {

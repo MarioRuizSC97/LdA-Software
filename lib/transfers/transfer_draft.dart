@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../catalog/catalog_product.dart';
+import 'transfer_draft_persistence.dart';
 
 /// Exact server contract for administrator inventory transfers.
 ///
@@ -510,14 +511,36 @@ class _StoredTransferDraft {
   final int revision;
 }
 
-/// Volatile, in-memory-only store of unresolved transfer payloads, bound to the
-/// exact owner uid and the draft's stable idempotency key.
+/// Whether an owner's durable unresolved-transfer journal can be trusted.
+enum TransferJournalStatus {
+  /// Not read yet for this owner; nothing may be offered or minted.
+  unknown,
+
+  /// The journal is being read.
+  loading,
+
+  /// The journal was read and the in-memory view matches it.
+  ready,
+
+  /// Storage could not be opened, read, or written: fail closed.
+  unavailable,
+
+  /// A stored record is unreadable: fail closed and never drop it.
+  corrupt,
+}
+
+/// Owner-bound store of the single unresolved transfer per administrator,
+/// backed by a durable [TransferDraftJournal].
 ///
 /// Lifecycle a caller must follow:
-/// * `begin` freezes the payload and returns the current revision.
+/// * [hydrate] reads the owner's durable record before any form is shown or
+///   any key is minted. It never calls the server.
+/// * [begin] persists the frozen payload before answering the attempt, so the
+///   caller only sends after the key survives a reload or an app restart. A
+///   storage failure throws [TransferJournalException] and nothing is sent.
 /// * A confirmed success or a deterministic [TransferRejectedException] means
-///   the server settled the key, so the caller resolves the attempt and drops
-///   the payload.
+///   the server settled the key, so the caller resolves the attempt; only the
+///   current attempt clears the durable record, conditionally on its key.
 /// * A transport failure, an unavailable function, a malformed response, or a
 ///   session change after the request was sent leaves the outcome unknown, so
 ///   the caller retains the attempt. The key must never be discarded, because
@@ -525,76 +548,178 @@ class _StoredTransferDraft {
 ///   the same payload can turn that into a replay instead of a second
 ///   transfer.
 ///
-/// A retained payload survives navigation as long as this store lives, and a
-/// `begin` for the same key with a different payload throws
-/// [TransferUnresolvedException] instead of silently replacing it. Nothing is
-/// persisted and nothing is wired to a live form here.
+/// At most one unresolved record exists per owner: a `begin` with a different
+/// key or payload throws [TransferUnresolvedException] instead of replacing
+/// it. Unavailable or corrupt storage blocks the owner instead of silently
+/// dropping or recreating the record, and records never expire.
 class TransferDraftStore {
-  final Map<String, Map<String, _StoredTransferDraft>> _drafts =
-      <String, Map<String, _StoredTransferDraft>>{};
+  TransferDraftStore({TransferDraftJournal? journal})
+    : journal = journal ?? InMemoryTransferDraftJournal();
+
+  /// Durable backing port; in-memory only on unsupported platforms and tests.
+  final TransferDraftJournal journal;
+
+  final Map<String, _StoredTransferDraft> _drafts =
+      <String, _StoredTransferDraft>{};
+  final Map<String, TransferJournalStatus> _status =
+      <String, TransferJournalStatus>{};
+  final Map<String, Future<TransferJournalStatus>> _hydrations =
+      <String, Future<TransferJournalStatus>>{};
+
+  // Journal operations run one at a time, so a begin and a resolve can never
+  // interleave their read-check-write steps.
+  Future<void> _tail = Future<void>.value();
+
+  /// Current journal status for [ownerUserId].
+  TransferJournalStatus statusFor(String ownerUserId) =>
+      _status[ownerUserId] ?? TransferJournalStatus.unknown;
 
   /// The frozen unresolved payload for this exact owner and key, if any.
-  TransferDraft? unresolvedFor(String ownerUserId, String idempotencyKey) =>
-      _drafts[ownerUserId]?[idempotencyKey]?.draft;
-
-  /// Unmodifiable snapshot of this owner's unresolved payloads.
-  List<TransferDraft> unresolvedByOwner(String ownerUserId) {
-    final Map<String, _StoredTransferDraft>? byKey = _drafts[ownerUserId];
-    if (byKey == null) return const <TransferDraft>[];
-    return List<TransferDraft>.unmodifiable(
-      byKey.values.map((_StoredTransferDraft stored) => stored.draft),
-    );
+  TransferDraft? unresolvedFor(String ownerUserId, String idempotencyKey) {
+    final _StoredTransferDraft? stored = _drafts[ownerUserId];
+    return stored?.draft.idempotencyKey == idempotencyKey
+        ? stored!.draft
+        : null;
   }
 
-  /// Freezes [draft] under its own key for [ownerUserId].
-  TransferAttempt begin({
+  /// Unmodifiable snapshot of this owner's unresolved payload, if any.
+  List<TransferDraft> unresolvedByOwner(String ownerUserId) {
+    final _StoredTransferDraft? stored = _drafts[ownerUserId];
+    if (stored == null) return const <TransferDraft>[];
+    return List<TransferDraft>.unmodifiable(<TransferDraft>[stored.draft]);
+  }
+
+  /// Reads [ownerUserId]'s durable record once; a failed read may be retried.
+  Future<TransferJournalStatus> hydrate(String ownerUserId) {
+    if (ownerUserId.isEmpty) throw const TransferSessionException();
+    if (statusFor(ownerUserId) == TransferJournalStatus.ready) {
+      return Future<TransferJournalStatus>.value(TransferJournalStatus.ready);
+    }
+    final Future<TransferJournalStatus>? running = _hydrations[ownerUserId];
+    if (running != null) return running;
+    _status[ownerUserId] = TransferJournalStatus.loading;
+    // The callback must not return the removed future: whenComplete would
+    // await it and the hydration would wait on itself.
+    final Future<TransferJournalStatus> hydration =
+        _serial(() => _load(ownerUserId)).whenComplete(() {
+          _hydrations.remove(ownerUserId);
+        });
+    _hydrations[ownerUserId] = hydration;
+    return hydration;
+  }
+
+  Future<TransferJournalStatus> _load(String ownerUserId) async {
+    try {
+      final TransferJournalRecord? record = await journal.load(ownerUserId);
+      final _StoredTransferDraft? memory = _drafts[ownerUserId];
+      if (record != null && record.ownerUserId != ownerUserId) {
+        throw const TransferJournalException(TransferJournalFailure.corrupt);
+      }
+      // The in-memory view is only ever written after a durable save, so any
+      // divergence means the journal can no longer be trusted.
+      if (memory != null && memory.draft != record?.draft) {
+        throw const TransferJournalException(TransferJournalFailure.corrupt);
+      }
+      if (record != null && memory == null) {
+        _drafts[ownerUserId] = _StoredTransferDraft(record.draft, 0);
+      }
+      return _status[ownerUserId] = TransferJournalStatus.ready;
+    } catch (error) {
+      return _status[ownerUserId] = _statusForFailure(error);
+    }
+  }
+
+  /// Freezes and durably saves [draft] for [ownerUserId] before answering.
+  Future<TransferAttempt> begin({
     required String ownerUserId,
     required TransferDraft draft,
-  }) {
+  }) async {
     if (ownerUserId.isEmpty) throw const TransferSessionException();
     draft.validate();
+    final TransferJournalStatus status = await hydrate(ownerUserId);
+    if (status != TransferJournalStatus.ready) throw _exceptionFor(status);
 
-    final Map<String, _StoredTransferDraft> byKey = _drafts.putIfAbsent(
-      ownerUserId,
-      () => <String, _StoredTransferDraft>{},
-    );
-    final _StoredTransferDraft? current = byKey[draft.idempotencyKey];
-    if (current != null && current.draft != draft) {
-      throw const TransferUnresolvedException();
-    }
-    final int revision = (current?.revision ?? 0) + 1;
-    byKey[draft.idempotencyKey] = _StoredTransferDraft(draft, revision);
-    return TransferAttempt._(
-      ownerUserId: ownerUserId,
-      draft: draft,
-      revision: revision,
-    );
+    return _serial(() async {
+      _requireReady(ownerUserId);
+      final _StoredTransferDraft? current = _drafts[ownerUserId];
+      if (current != null && current.draft != draft) {
+        throw const TransferUnresolvedException();
+      }
+      try {
+        await journal.save(
+          TransferJournalRecord(ownerUserId: ownerUserId, draft: draft),
+        );
+      } on TransferUnresolvedException {
+        // The journal holds a record the in-memory view never saw.
+        _status[ownerUserId] = TransferJournalStatus.corrupt;
+        throw const TransferJournalException(TransferJournalFailure.corrupt);
+      } catch (error) {
+        throw _exceptionFor(_status[ownerUserId] = _statusForFailure(error));
+      }
+      final int revision = (current?.revision ?? 0) + 1;
+      _drafts[ownerUserId] = _StoredTransferDraft(draft, revision);
+      return TransferAttempt._(
+        ownerUserId: ownerUserId,
+        draft: draft,
+        revision: revision,
+      );
+    });
   }
 
   bool isCurrent(TransferAttempt attempt) {
-    final _StoredTransferDraft? stored =
-        _drafts[attempt.ownerUserId]?[attempt.idempotencyKey];
+    final _StoredTransferDraft? stored = _drafts[attempt.ownerUserId];
     return stored != null &&
         stored.revision == attempt.revision &&
         stored.draft == attempt.draft;
   }
 
-  /// Drops the payload once the server settled the key. Stale attempts cannot
-  /// discard the current unresolved payload.
-  bool resolve(TransferAttempt attempt) {
+  /// Drops the payload once the server settled the key, clearing the durable
+  /// record only when it still holds this attempt's key. Stale attempts cannot
+  /// discard the current unresolved payload. A failed clear keeps everything
+  /// and throws [TransferJournalException].
+  Future<bool> resolve(TransferAttempt attempt) => _serial(() async {
     if (!isCurrent(attempt)) return false;
-    final Map<String, _StoredTransferDraft> byKey =
-        _drafts[attempt.ownerUserId]!;
-    byKey.remove(attempt.idempotencyKey);
-    if (byKey.isEmpty) _drafts.remove(attempt.ownerUserId);
+    try {
+      await journal.clear(attempt.ownerUserId, attempt.idempotencyKey);
+    } catch (error) {
+      throw _exceptionFor(
+        _status[attempt.ownerUserId] = _statusForFailure(error),
+      );
+    }
+    _drafts.remove(attempt.ownerUserId);
     return true;
-  }
+  });
 
   /// Keeps the unresolved payload for a retry with the same key.
   void retain(TransferAttempt attempt) {
-    // begin() froze the payload; nothing here may replace or forget it.
+    // begin() already froze and durably saved the payload; nothing here may
+    // replace, expire, or forget it.
+  }
+
+  void _requireReady(String ownerUserId) {
+    final TransferJournalStatus status = statusFor(ownerUserId);
+    if (status != TransferJournalStatus.ready) throw _exceptionFor(status);
+  }
+
+  Future<T> _serial<T>(Future<T> Function() action) {
+    final Future<T> result = _tail.then((_) => action());
+    _tail = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
   }
 }
+
+TransferJournalStatus _statusForFailure(Object error) =>
+    error is TransferJournalException &&
+        error.failure == TransferJournalFailure.corrupt
+    ? TransferJournalStatus.corrupt
+    : TransferJournalStatus.unavailable;
+
+TransferJournalException _exceptionFor(TransferJournalStatus status) =>
+    TransferJournalException(
+      status == TransferJournalStatus.corrupt
+          ? TransferJournalFailure.corrupt
+          : TransferJournalFailure.unavailable,
+    );
 
 /// Canonical UUID v4 for a fresh, stable transfer idempotency key.
 String createTransferUuidV4() {
