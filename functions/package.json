@@ -8,8 +8,9 @@
   },
   "scripts": {
     "provision:demo": "node scripts/provision-demo-identities.mjs",
-    "test": "node --test test/quantity.test.mjs test/inventory.test.mjs test/catalog.test.mjs test/pricing.test.mjs test/provision-demo-identities.test.mjs",
-    "test:emulator": "node --test test/inventory.emulator.test.mjs test/catalog.emulator.test.mjs test/pricing.emulator.test.mjs test/provision-demo-identities.emulator.test.mjs"
+    "test": "node --test test/quantity.test.mjs test/inventory.test.mjs test/catalog.test.mjs test/pricing.test.mjs test/provision-demo-identities.test.mjs test/transfers-isolated-runner.test.mjs test/package-scripts.test.mjs test/transfers.test.mjs",
+    "test:emulator": "node --test test/inventory.emulator.test.mjs test/catalog.emulator.test.mjs test/pricing.emulator.test.mjs test/provision-demo-identities.emulator.test.mjs",
+    "test:emulator:transfers:isolated": "node scripts/test-transfers-isolated.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",
