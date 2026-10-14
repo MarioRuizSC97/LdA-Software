@@ -21,6 +21,7 @@ import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
 import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
+import 'emulator_transfer_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
 enum EmulatorClientPlatform { android, ios, web, unsupported }
@@ -510,6 +511,22 @@ class DemoEmulatorBootstrap {
             expectedSession: session,
             sessionChecker: _firebaseActiveSessionChecker(auth),
             invoke: firebaseStockIntakeCallable(functions),
+          ),
+    );
+  }
+
+  /// Branch-less administrator transfer gateway over the `transferInventory`
+  /// callable, wired exactly like stock intake. It is created lazily on submit
+  /// only: no startup read, no extra service, and no new Firebase app.
+  static Future<EmulatorTransferGateway> initializeTransferGateway(
+    EmulatorSession session,
+  ) {
+    return _initializeLiveFunctionsGateway<EmulatorTransferGateway>(
+      (FirebaseAuth auth, FirebaseFunctions functions) =>
+          EmulatorTransferGateway(
+            expectedSession: session,
+            sessionChecker: _firebaseActiveSessionChecker(auth),
+            invoke: firebaseTransferCallable(functions),
           ),
     );
   }

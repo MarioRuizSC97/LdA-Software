@@ -35,6 +35,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorSaleLoader,
     this.emulatorCorrectionLoader,
     this.emulatorMovementsLoader,
+    this.emulatorTransferLoader,
     super.key,
   });
 
@@ -48,6 +49,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final SaleGatewayLoader? emulatorSaleLoader;
   final CorrectionGatewayLoader? emulatorCorrectionLoader;
   final AdministratorMovementsLoader? emulatorMovementsLoader;
+  final TransferGatewayLoader? emulatorTransferLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -78,6 +80,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         administratorMovementsLoader:
             emulatorMovementsLoader ??
             DemoEmulatorBootstrap.initializeAdministratorMovements,
+        transferGatewayLoader:
+            emulatorTransferLoader ??
+            DemoEmulatorBootstrap.initializeTransferGateway,
       );
     }
     return const CatalogSetupApp();
@@ -96,6 +101,8 @@ class LocalEmulatorAuthApp extends StatefulWidget {
         DemoEmulatorBootstrap.initializeCorrectionGateway,
     this.administratorMovementsLoader =
         DemoEmulatorBootstrap.initializeAdministratorMovements,
+    this.transferGatewayLoader =
+        DemoEmulatorBootstrap.initializeTransferGateway,
     super.key,
   });
 
@@ -108,6 +115,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final SaleGatewayLoader saleGatewayLoader;
   final CorrectionGatewayLoader correctionGatewayLoader;
   final AdministratorMovementsLoader administratorMovementsLoader;
+  final TransferGatewayLoader transferGatewayLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -142,6 +150,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       saleGatewayLoader: widget.saleGatewayLoader,
       correctionGatewayLoader: widget.correctionGatewayLoader,
       administratorMovementsLoader: widget.administratorMovementsLoader,
+      transferGatewayLoader: widget.transferGatewayLoader,
     ),
   );
 }
