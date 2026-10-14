@@ -26,12 +26,17 @@ String formatCentavos(int centavos) {
 /// example `250` at precision 2 → `2.50`.
 String formatScaledQuantity(int scaled, int precision) {
   if (precision == 0) return scaled.toString();
+  final int absolute = scaled.abs();
+  final String sign = scaled < 0 ? '-' : '';
   var divisor = 1;
   for (var index = 0; index < precision; index += 1) {
     divisor *= 10;
   }
-  final String fraction = (scaled % divisor).toString().padLeft(precision, '0');
-  return '${scaled ~/ divisor}.$fraction';
+  final String fraction = (absolute % divisor).toString().padLeft(
+    precision,
+    '0',
+  );
+  return '$sign${absolute ~/ divisor}.$fraction';
 }
 
 const List<String> _spanishMonths = <String>[
