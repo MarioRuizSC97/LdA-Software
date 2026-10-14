@@ -352,7 +352,7 @@ void main() {
   test('unresolved retry keeps the frozen payload and the same key', () async {
     final TransferDraft draft = _draft();
     final TransferDraftStore store = TransferDraftStore();
-    final TransferAttempt attempt = store.begin(
+    final TransferAttempt attempt = await store.begin(
       ownerUserId: _administrator.userId,
       draft: draft,
     );
@@ -374,10 +374,10 @@ void main() {
         final TransferResult result = await gateway.submitTransfer(
           target.draft,
         );
-        store.resolve(target);
+        await store.resolve(target);
         return result;
       } on TransferRejectedException {
-        store.resolve(target);
+        await store.resolve(target);
         rethrow;
       } on TransferUncertainException {
         store.retain(target);
@@ -396,7 +396,7 @@ void main() {
 
     // Navigation away and back resolves the same frozen payload under the same
     // key, so the retry can never fork a second transfer.
-    final TransferAttempt retry = store.begin(
+    final TransferAttempt retry = await store.begin(
       ownerUserId: _administrator.userId,
       draft: store.unresolvedFor(_administrator.userId, draft.idempotencyKey)!,
     );
@@ -415,7 +415,7 @@ void main() {
   test('deterministic rejection clears the stored payload', () async {
     final TransferDraft draft = _draft();
     final TransferDraftStore store = TransferDraftStore();
-    final TransferAttempt attempt = store.begin(
+    final TransferAttempt attempt = await store.begin(
       ownerUserId: _administrator.userId,
       draft: draft,
     );
@@ -430,7 +430,7 @@ void main() {
       gateway.submitTransfer(attempt.draft),
       throwsA(isA<TransferRejectedException>()),
     );
-    expect(store.resolve(attempt), isTrue);
+    expect(await store.resolve(attempt), isTrue);
     expect(store.unresolvedByOwner(_administrator.userId), isEmpty);
   });
 
