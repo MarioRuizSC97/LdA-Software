@@ -13,6 +13,8 @@ import '../sales/sale_cart_panel.dart';
 import '../sales/sale_draft.dart';
 import '../sales/sale_format.dart';
 import '../sales/sale_receipt_view.dart';
+import '../transfers/administrator_transfer_form.dart';
+import '../transfers/transfer_draft.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
@@ -134,6 +136,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.onSaleCompleted,
     this.saleCorrections,
     this.administratorMovements,
+    this.submitTransfer,
+    this.unresolvedTransferDraft,
+    this.createTransferId,
     super.key,
   });
 
@@ -163,6 +168,15 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 
   /// Administrator-only movements; null hides the "Movimientos" action.
   final AdministratorMovements? administratorMovements;
+
+  /// Branch-less administrator transfer submit seam; null hides transfers.
+  final TransferSubmit? submitTransfer;
+
+  /// Resumes the shell-retained transfer draft; required with [submitTransfer].
+  final TransferDraftLookup? unresolvedTransferDraft;
+
+  /// Mints the stable key for a fresh transfer.
+  final TransferIdFactory? createTransferId;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -224,6 +238,15 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _cartVisible = false;
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
+  bool _transferVisible = false;
+  int _transferGeneration = 0;
+
+  /// The global admin snapshot captured when the transfer view opened, the
+  /// same way the intake form captures its branch choices. A page refresh
+  /// briefly has no snapshot at all, and an authorized flow must never be
+  /// made to look like an empty catalog while the administrator is reading its
+  /// own receipt banner.
+  CatalogSnapshot? _transferSnapshot;
 
   @override
   void initState() {
@@ -305,6 +328,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             (oldWidget.administratorMovements == null)) {
       _movementsVisible = false;
     }
+    // A replaced session or a removed seam cannot keep an open transfer view:
+    // the retained draft belongs to the shell, not to this presentation.
+    if (sessionChanged ||
+        (widget.submitTransfer == null) != (oldWidget.submitTransfer == null) ||
+        (widget.unresolvedTransferDraft == null) !=
+            (oldWidget.unresolvedTransferDraft == null)) {
+      _transferGeneration += 1;
+      _transferVisible = false;
+      _transferSnapshot = null;
+    }
     if (sessionChanged) _requestCatalog();
   }
 
@@ -335,6 +368,73 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   void _closeMovements() {
     _presentationRevision += 1;
     setState(() => _movementsVisible = false);
+  }
+
+  /// Transfers need both seams and the exact branch-less administrator: a
+  /// seller, a branch-bound account, or an unwired shell gets no entry.
+  TransferSubmit? get _transfer =>
+      widget.session.role == InventoryRole.administrator &&
+          widget.session.branchId == null &&
+          widget.submitTransfer != null &&
+          widget.unresolvedTransferDraft != null
+      ? widget.submitTransfer
+      : null;
+
+  void _showTransfer() {
+    _presentationRevision += 1;
+    setState(() {
+      _transferSnapshot = _snapshot;
+      // The transfer form takes over the whole body, so any other open admin
+      // view must close here or the body priority would keep it on screen and
+      // the entry would look like a dead end. Nothing else is reset.
+      _movementsVisible = false;
+      _correctionsVisible = false;
+      _transferVisible = true;
+    });
+  }
+
+  void _closeTransfer() {
+    _presentationRevision += 1;
+    setState(() {
+      _transferVisible = false;
+      _transferSnapshot = null;
+    });
+  }
+
+  /// A settled transfer moved stock in two branches, so the page re-runs the
+  /// catalog load it is already authorized to perform and keeps its current
+  /// view: no new query path, no extra read, and the ledger parser untouched.
+  /// A late answer from a replaced session is dropped instead of completing
+  /// into the new one.
+  void _onTransferCompleted(int generation) {
+    if (!mounted || generation != _transferGeneration) return;
+    _requestCatalog();
+  }
+
+  /// The form gets the whole authorized admin snapshot — every branch choice
+  /// and every product — never the currently visible rows, and it owns its own
+  /// pending, confirmation, and frozen state. This page only supplies the
+  /// seams, the snapshot, and the navigation handoff.
+  Widget _transferForm(TransferSubmit submit) {
+    final CatalogSnapshot? source = _transferSnapshot;
+    // Captured at build time, so a completion that somehow arrives after this
+    // presentation was already replaced cannot refresh the new session.
+    final int generation = _transferGeneration;
+    return AdministratorTransferForm(
+      ownerUserId: widget.session.userId,
+      branches: source?.branchChoices ?? const <CatalogBranchChoice>[],
+      products: <CatalogProduct>[
+        for (final CatalogItem item in source?.items ?? const <CatalogItem>[])
+          item.product,
+      ],
+      submitTransfer: submit,
+      unresolvedDraft: widget.unresolvedTransferDraft!,
+      onClose: _closeTransfer,
+      // The receipt and its Spanish banner belong to the form; the page only
+      // needs the settled signal to re-run the catalog load it already owns.
+      onCompleted: (TransferResult result) => _onTransferCompleted(generation),
+      createTransferId: widget.createTransferId ?? createTransferUuidV4,
+    );
   }
 
   void _closeCorrections() {
@@ -421,6 +521,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _creationGeneration += 1;
     _pricingGeneration += 1;
     _intakeGeneration += 1;
+    _transferGeneration += 1;
+    _transferSnapshot = null;
     _sale?.dispose();
     _name.dispose();
     _unit.dispose();
@@ -606,6 +708,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool showCorrections = corrections != null && _correctionsVisible;
     final AdministratorMovements? movements = _movements;
     final bool showMovements = movements != null && _movementsVisible;
+    final TransferSubmit? transfer = _transfer;
+    final bool showTransfer = transfer != null && _transferVisible;
     return Scaffold(
       bottomNavigationBar:
           sale != null && receipt == null && !_cartVisible && !showCorrections
@@ -617,14 +721,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           if (corrections != null)
             TextButton.icon(
               key: const ValueKey<String>('corrections-open'),
-              onPressed: showCorrections ? null : _showCorrections,
+              onPressed: showCorrections || showTransfer
+                  ? null
+                  : _showCorrections,
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
             ),
           if (movements != null)
             TextButton.icon(
               key: const ValueKey<String>('movements-open'),
-              onPressed: showMovements ? null : _showMovements,
+              onPressed: showMovements || showTransfer ? null : _showMovements,
               icon: const Icon(Icons.swap_vert),
               label: const Text('Movimientos'),
             ),
@@ -650,7 +756,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _PricingSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
-            if (_creationCoordinator != null && !showMovements)
+            if (transfer != null)
+              _TransferToolbar(
+                enabled: !showTransfer,
+                onPressed: _showTransfer,
+              ),
+            if (_creationCoordinator != null && !showMovements && !showTransfer)
               _CreationToolbar(
                 onPressed: _creationPending ? null : _showCreation,
               ),
@@ -671,6 +782,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       products: _catalogProducts(),
                       onClose: _closeCorrections,
                     )
+                  : transfer != null && _transferVisible
+                  ? _transferForm(transfer)
                   : receipt != null
                   ? SaleReceiptView(
                       receipt: receipt,
@@ -2069,6 +2182,35 @@ class _CreationToolbar extends StatelessWidget {
         onPressed: onPressed,
         icon: const Icon(Icons.add),
         label: const Text('Create product'),
+      ),
+    ),
+  );
+}
+
+/// The transfer entry lives in a labelled body toolbar at every width, so the
+/// legacy AppBar action row gains no width from it. The Spanish label, icon,
+/// key, and tooltip semantics stay the same. The form disables it while it
+/// owns the body, and it stays reachable while Movimientos or Correcciones is
+/// open because pressing it hands the body to the transfer form.
+class _TransferToolbar extends StatelessWidget {
+  const _TransferToolbar({required this.enabled, required this.onPressed});
+
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Tooltip(
+        message: 'Traslados',
+        child: TextButton.icon(
+          key: const ValueKey<String>('transfer-open'),
+          onPressed: enabled ? onPressed : null,
+          icon: const Icon(Icons.swap_horiz),
+          label: const Text('Traslados'),
+        ),
       ),
     ),
   );
