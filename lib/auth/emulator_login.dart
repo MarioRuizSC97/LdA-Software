@@ -13,6 +13,7 @@ import '../corrections/sale_corrections.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
+import '../firebase/emulator_transfer_gateway.dart';
 import '../movements/administrator_movements.dart';
 import '../movements/inventory_movement.dart';
 import '../movements/seller_profiles.dart';
@@ -20,6 +21,8 @@ import '../sales/sale_cart.dart';
 import '../sales/sale_cart_controller.dart';
 import '../sales/sale_draft.dart';
 import '../sales/sale_quote.dart';
+import '../transfers/administrator_transfer_form.dart';
+import '../transfers/transfer_draft.dart';
 import 'emulator_bootstrap_diagnostics.dart';
 import 'emulator_session.dart';
 
@@ -34,6 +37,9 @@ typedef ProductPricingGatewayLoader = Future<ProductPricingGateway> Function(
 typedef StockIntakeGatewayLoader = Future<EmulatorStockIntakeGateway> Function(
   EmulatorSession session,
 );
+typedef TransferGatewayLoader = Future<EmulatorTransferGateway> Function(
+  EmulatorSession session,
+);
 
 class EmulatorLoginShell extends StatefulWidget {
   const EmulatorLoginShell({
@@ -45,6 +51,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.saleGatewayLoader,
     this.correctionGatewayLoader,
     this.administratorMovementsLoader,
+    this.transferGatewayLoader,
     this.retryLoader,
     super.key,
   });
@@ -63,6 +70,9 @@ class EmulatorLoginShell extends StatefulWidget {
 
   /// Administrator movements backend loader; null hides movements.
   final AdministratorMovementsLoader? administratorMovementsLoader;
+
+  /// Branch-less administrator transfer gateway loader; null hides transfers.
+  final TransferGatewayLoader? transferGatewayLoader;
   final EmulatorSessionGatewayLoader? retryLoader;
 
   @override
@@ -115,6 +125,16 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
   // Volatile retry storage: at most one unresolved correction per exact
   // seller and branch, retried with the same key until it resolves.
   final CorrectionDraftStore _correctionDrafts = CorrectionDraftStore();
+
+  // Transfer retention is intentionally volatile and lives only in this live
+  // shell state. The store itself keeps many keys per owner and many owners,
+  // so the shell adds the one rule a store cannot know: an administrator may
+  // carry a single unresolved transfer flow at a time. A retained payload is
+  // therefore never forgotten or silently replaced by a second key, and it
+  // survives closing the form, logout, role replacement, and same-UID re-entry
+  // on this shell. Nothing is persisted, so nothing survives shell disposal,
+  // a browser reload, or an app restart.
+  final TransferDraftStore _transferDrafts = TransferDraftStore();
 
   // One movements backend per exact administrator, so the seller-profile
   // gateway's stale generation spans the screen. A failed load is retried.
@@ -815,6 +835,95 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     );
   }
 
+  /// Exact transfer submit API consumed by the authenticated page.
+  ///
+  /// The owner and the immutable payload are frozen before the lazy gateway is
+  /// built, and the exact branch-less administrator is required again after
+  /// that await and before anything leaves the device: a loader that resolves
+  /// after a logout must never reach the callable. Only the current attempt's
+  /// proven success or deterministic rejection settles the key. A session
+  /// change after the request was sent, an unknown transport outcome, a
+  /// malformed answer, or a superseded revision keeps the frozen payload under
+  /// its own key, because only that key can turn a second send into a replay.
+  Future<TransferResult> submitTransfer(TransferDraft draft) async {
+    final EmulatorSession? session = _session;
+    final TransferGatewayLoader? loader = widget.transferGatewayLoader;
+    if (!_isExactAdministrator(session) || loader == null) {
+      throw const TransferSessionException();
+    }
+
+    // One unresolved flow per owner: a different payload is refused instead of
+    // discarding the retained key, while the identical retry stays allowed.
+    final List<TransferDraft> retained = _transferDrafts.unresolvedByOwner(
+      session!.userId,
+    );
+    if (retained.isNotEmpty && retained.last != draft) {
+      throw const TransferUnresolvedException();
+    }
+    final TransferAttempt attempt = _transferDrafts.begin(
+      ownerUserId: session.userId,
+      draft: draft,
+    );
+
+    try {
+      // Every attempt builds a gateway bound to the current validated session.
+      final EmulatorTransferGateway gateway = await loader(session);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const TransferUncertainException();
+      }
+      final TransferResult result = await gateway.submitTransfer(draft);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const TransferUncertainException();
+      }
+      if (!_transferDrafts.resolve(attempt)) {
+        throw const TransferStaleException();
+      }
+      return result;
+    } on TransferRejectedException {
+      // The server settled the key, but only for the owner that sent it.
+      if (!_isSameCurrentAdministrator(session)) {
+        _transferDrafts.retain(attempt);
+        throw const TransferUncertainException();
+      }
+      if (!_transferDrafts.resolve(attempt)) {
+        throw const TransferStaleException();
+      }
+      rethrow;
+    } catch (_) {
+      // Unknown, session-changed, or superseded: retain, never reset.
+      _transferDrafts.retain(attempt);
+      rethrow;
+    }
+  }
+
+  /// Exact transfer lookup API the authenticated page calls for the current
+  /// session. A retained payload is answered only while the same branch-less
+  /// administrator UID is signed in, so a seller, another administrator, or a
+  /// replaced session receives neither fields nor retry authority. The most
+  /// recent owned request is returned; other keys and owners are never
+  /// dropped, and a new key is never minted over a retained flow.
+  TransferDraft? unresolvedTransferDraftFor(
+    EmulatorSession originatingSession,
+  ) {
+    if (!_isSameCurrentAdministrator(originatingSession)) return null;
+    final List<TransferDraft> retained = _transferDrafts.unresolvedByOwner(
+      originatingSession.userId,
+    );
+    return retained.isEmpty ? null : retained.last;
+  }
+
+  /// Both seams or neither: the page needs the submit API and the retained
+  /// lookup together, and only for the exact branch-less administrator.
+  TransferSubmit? _transferSubmitFor(EmulatorSession session) =>
+      _isExactAdministrator(session) && widget.transferGatewayLoader != null
+      ? submitTransfer
+      : null;
+
+  TransferDraftLookup? _transferLookupFor(EmulatorSession session) =>
+      _isExactAdministrator(session) && widget.transferGatewayLoader != null
+      ? () => unresolvedTransferDraftFor(session)
+      : null;
+
   ProductPricingDraft? _unresolvedPricingDraftFor(
     EmulatorSession originatingSession,
     String productId,
@@ -885,6 +994,11 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             ? (String productId, String branchId) =>
                   _unresolvedIntakeDraftFor(session, productId, branchId)
             : null,
+        submitTransfer: _transferSubmitFor(session),
+        unresolvedTransferDraft: _transferLookupFor(session),
+        createTransferId: _transferSubmitFor(session) == null
+            ? null
+            : createTransferUuidV4,
         saleCheckout: _saleCheckoutFor(session),
         saleCorrections: _saleCorrectionsFor(session),
         administratorMovements: _administratorMovementsFor(session),
