@@ -59,6 +59,11 @@ test('keeps the default unit lane pure and appends both mocked unit targets', ()
     true,
     'the committed atomic transfer unit must ride the default pure unit lane',
   );
+  assert.equal(
+    unitFiles.includes('test/transfer-notices.test.mjs'),
+    true,
+    'the destination notice acknowledgement unit must ride the default pure unit lane',
+  );
   assert.deepEqual(
     unitFiles.filter((file) => file.includes('emulator')),
     [],

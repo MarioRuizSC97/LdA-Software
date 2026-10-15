@@ -18,6 +18,7 @@ import {
   createProductPricingService,
 } from './pricing.js';
 import { createTransferService } from './transfers.js';
+import { createTransferNoticeReadService } from './transfer-notices.js';
 
 import { createSaleExchangePreviewService, createSaleExchangeService } from './sale-exchanges.js';
 import { createSaleLookupService } from './sale-lookup.js';
@@ -211,6 +212,43 @@ export const transferInventory = onCall(
       throw new HttpsError(
         'internal',
         'inventory transfer is temporarily unavailable',
+      );
+    }
+  },
+);
+
+/**
+ * Emulator-only seller callable for destination transfer notice acknowledgements
+ * (DN-01). The inventory guard runs before Admin SDK initialization, so a
+ * copied or deployed function can never write cloud markers. Identity and
+ * branch come from the verified token only; the service validates the private
+ * transfer audit server-side before writing the per-seller marker.
+ */
+export const markTransferNoticeRead = onCall(
+  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  async (request) => {
+    try {
+      assertLocalInventoryEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'transfer notices are restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      if (getApps().length === 0) {
+        initializeApp();
+      }
+      const markRead = createTransferNoticeReadService({ firestore: getFirestore() });
+      return await markRead(request);
+    } catch (error) {
+      if (error instanceof InventoryError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      throw new HttpsError(
+        'internal',
+        'transfer notice acknowledgement is temporarily unavailable',
       );
     }
   },

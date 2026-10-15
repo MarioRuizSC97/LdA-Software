@@ -243,6 +243,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Destination transfer notice read markers (DN-01) are per-seller,
+    // per-branch, per-transfer leaves. The trusted markTransferNoticeRead
+    // callable owns every write; a seller may only read/list markers inside
+    // their own user subtree for their assigned branch, never another
+    // seller's markers or another branch's subtree.
+    match /transferNoticeReads/{uid}/branches/{branchId}/transfers/{transferId} {
+      allow get, list: if isSellerFor(branchId) && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // The full transfer pair record is the private administrator audit. It is
+    // written only by the transferInventory callable and stays closed to every
+    // client SDK, including administrators, so destination and source
+    // branches are invisible outside trusted server code.
+    match /transfers/{transferId} {
+      allow read, write: if false;
+    }
+
     // New paths remain closed until their access contract has tests.
     match /{document=**} {
       allow read, write: if false;
