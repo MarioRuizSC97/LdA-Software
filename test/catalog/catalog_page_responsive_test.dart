@@ -15,6 +15,7 @@ import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 import '../corrections/correction_fixtures.dart';
 import '../sales/sale_fixtures.dart';
 import '../sales/sale_ui_fixtures.dart';
+import '../support/viewport.dart';
 
 const EmulatorSession _seller = EmulatorSession(
   userId: 'seller-1',
@@ -92,15 +93,6 @@ Finder _key(String value) => find.byKey(ValueKey<String>(value));
 Finder _inAppBar(Finder finder) =>
     find.descendant(of: find.byType(AppBar), matching: finder);
 
-void _setViewport(WidgetTester tester, Size size, {double textScale = 1}) {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1;
-  tester.platformDispatcher.textScaleFactorTestValue = textScale;
-  addTearDown(tester.view.resetPhysicalSize);
-  addTearDown(tester.view.resetDevicePixelRatio);
-  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-}
-
 Future<void> _openMore(WidgetTester tester) async {
   await tester.tap(_key('shell-more'));
   await tester.pumpAndSettle();
@@ -112,7 +104,7 @@ void main() {
       testWidgets('seller shell fits 320px and keeps every action reachable', (
         WidgetTester tester,
       ) async {
-        _setViewport(tester, const Size(320, 700), textScale: scale);
+        useViewport(tester, const Size(320, 700), scale);
         final _Shell shell = _Shell();
         await tester.pumpWidget(shell.seller());
         await tester.pumpAndSettle();
@@ -133,7 +125,15 @@ void main() {
         // is proven by its close action.
         expect(_key('corrections-close'), findsOneWidget);
 
+        // While corrections is open its menu entry is disabled, like the
+        // inline button.
         await _openMore(tester);
+        expect(
+          tester
+              .widget<PopupMenuItem<VoidCallback>>(_key('corrections-open'))
+              .enabled,
+          isFalse,
+        );
         await tester.tap(find.text('Log out'));
         await tester.pumpAndSettle();
         expect(shell.logouts, 1);
@@ -142,7 +142,7 @@ void main() {
       testWidgets(
         'administrator shell fits 320px and keeps every action reachable',
         (WidgetTester tester) async {
-          _setViewport(tester, const Size(320, 700), textScale: scale);
+          useViewport(tester, const Size(320, 700), scale);
           final _Shell shell = _Shell();
           await tester.pumpWidget(shell.administrator());
           await tester.pumpAndSettle();
@@ -157,6 +157,12 @@ void main() {
           expect(tester.takeException(), isNull);
 
           await _openMore(tester);
+          expect(
+            tester
+                .widget<PopupMenuItem<VoidCallback>>(_key('movements-open'))
+                .enabled,
+            isFalse,
+          );
           await tester.tap(find.text('Log out'));
           await tester.pumpAndSettle();
           expect(shell.logouts, 1);
@@ -168,7 +174,7 @@ void main() {
   testWidgets(
     'a tablet width at text scale 2 collapses instead of overflowing',
     (WidgetTester tester) async {
-      _setViewport(tester, const Size(700, 900), textScale: 2);
+      useViewport(tester, const Size(700, 900), 2);
       await tester.pumpWidget(_Shell().seller());
       await tester.pumpAndSettle();
 
@@ -180,7 +186,7 @@ void main() {
   testWidgets('wide shell keeps every action inline without a menu', (
     WidgetTester tester,
   ) async {
-    _setViewport(tester, const Size(1000, 800));
+    useViewport(tester, const Size(1000, 800));
     await tester.pumpWidget(_Shell().seller());
     await tester.pumpAndSettle();
 
@@ -195,7 +201,7 @@ void main() {
     WidgetTester tester,
   ) async {
     final SemanticsHandle semantics = tester.ensureSemantics();
-    _setViewport(tester, const Size(1000, 800));
+    useViewport(tester, const Size(1000, 800));
     await tester.pumpWidget(_Shell().seller());
     await tester.pumpAndSettle();
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
@@ -207,7 +213,7 @@ void main() {
     WidgetTester tester,
   ) async {
     final SemanticsHandle semantics = tester.ensureSemantics();
-    _setViewport(tester, const Size(320, 700));
+    useViewport(tester, const Size(320, 700));
     await tester.pumpWidget(_Shell().administrator());
     await tester.pumpAndSettle();
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));

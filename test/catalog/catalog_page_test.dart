@@ -5167,6 +5167,12 @@ void main() {
       await flush(tester);
       expect(entry().tooltip, 'Avisos de traslados');
       expect(entry().label, '1 sin leer');
+
+      // Confirmed zero announces no unread state at all.
+      streams.emitMarkers(<CatalogDocument>[streams.marker('t-a')]);
+      await flush(tester);
+      expect(entry().tooltip, 'Avisos de traslados');
+      expect(entry().label, isEmpty);
       semantics.dispose();
     });
 

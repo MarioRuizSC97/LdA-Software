@@ -11,6 +11,7 @@ import 'package:lda_inventory/movements/inventory_movement.dart';
 import 'package:lda_inventory/movements/movements_view.dart';
 import 'package:lda_inventory/movements/seller_profiles.dart';
 
+import '../support/viewport.dart';
 import 'movement_fixtures.dart';
 
 MovementEntry _entry(String id, Map<String, Object?> data) =>
@@ -526,20 +527,11 @@ void main() {
   });
 
   group('responsive and accessible layout', () {
-    void setViewport(WidgetTester tester, Size size, {double textScale = 1}) {
-      tester.view.physicalSize = size;
-      tester.view.devicePixelRatio = 1;
-      tester.platformDispatcher.textScaleFactorTestValue = textScale;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    }
-
     for (final double scale in <double>[1, 2]) {
       testWidgets('fits 320px at text scale $scale', (
         WidgetTester tester,
       ) async {
-        setViewport(tester, const Size(320, 900), textScale: scale);
+        useViewport(tester, const Size(320, 900), scale);
         await tester.pumpWidget(_view(backend));
         await tester.pumpAndSettle();
 
@@ -552,7 +544,7 @@ void main() {
     testWidgets('rows stay readable width on wide screens', (
       WidgetTester tester,
     ) async {
-      setViewport(tester, const Size(1600, 900));
+      useViewport(tester, const Size(1600, 900));
       await tester.pumpWidget(_view(backend));
       await tester.pumpAndSettle();
 

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart' show Size;
-import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/corrections/correction_draft.dart';
 import 'package:lda_inventory/corrections/correction_receipt.dart';
@@ -13,6 +12,8 @@ import 'package:lda_inventory/sales/sale_cart.dart';
 import '../sales/sale_fixtures.dart';
 import '../sales/sale_ui_fixtures.dart' show pinProduct, ribbonProduct;
 import 'correction_fixtures.dart';
+
+export '../support/viewport.dart' show useViewport;
 
 /// Answers a preview or submit with the generic server-shaped amounts.
 const Object answerNormally = Object();
@@ -451,13 +452,3 @@ const List<(Size, double)> responsiveViewports = <(Size, double)>[
   (Size(320, 800), 2),
   (Size(1600, 900), 1),
 ];
-
-/// Applies [size] at device pixel ratio 1 and [textScale], reset on teardown.
-void useViewport(WidgetTester tester, Size size, double textScale) {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1;
-  tester.platformDispatcher.textScaleFactorTestValue = textScale;
-  addTearDown(tester.view.resetPhysicalSize);
-  addTearDown(tester.view.resetDevicePixelRatio);
-  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-}
