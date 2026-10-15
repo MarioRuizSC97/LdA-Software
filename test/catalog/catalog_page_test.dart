@@ -236,13 +236,13 @@ void main() {
             submitStockIntake: submit<StockIntakeResult>,
           );
       Finder banner() => find.textContaining(switch (category) {
-        'creation' => 'Created product',
+        'creation' => 'Producto creado',
         'pricing' => 'Pricing saved. Audit',
         _ => 'Intake recorded. Entry',
       });
       Future<void> begin(WidgetTester tester) async {
         final Finder open = category == 'creation'
-            ? find.text('Create product')
+            ? find.text('Crear producto')
             : find.byKey(
                 ValueKey<String>(
                   '${category == 'pricing' ? 'configure-price' : 'intake'}-PRD-COFFEE-001',
@@ -279,7 +279,7 @@ void main() {
         final Finder button = find.widgetWithText(
           FilledButton,
           switch (category) {
-            'creation' => 'Create',
+            'creation' => 'Crear',
             'pricing' => 'Save price / IVA',
             _ => 'Record intake',
           },
@@ -365,7 +365,7 @@ void main() {
           await tester.pump(const Duration(seconds: 1));
           expect(banner(), findsNothing);
           expect(requests, hasLength(2));
-          expect(find.textContaining('outcome is unknown'), findsNothing);
+          expect(find.textContaining('resultado es incierto'), findsNothing);
           if (category != 'creation') {
             expect(find.text('Coffee'), findsOneWidget);
             expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
@@ -434,15 +434,17 @@ void main() {
             );
             await tester.pumpAndSettle();
             final Finder error = find.textContaining(
-              unknown ? 'outcome is unknown' : 'rejected',
+              unknown ? 'resultado es incierto' : RegExp('rejected|Se rechazó'),
             );
             expect(error, findsOneWidget);
             await tester.pump(const Duration(seconds: 20));
             expect(error, findsOneWidget);
             expect(requests, hasLength(1));
             if (unknown) {
-              await tester.ensureVisible(find.text('Retry same request'));
-              await tester.tap(find.text('Retry same request'));
+              await tester.ensureVisible(
+                find.text('Reintentar misma solicitud'),
+              );
+              await tester.tap(find.text('Reintentar misma solicitud'));
               await tester.pump();
               expect(requests, hasLength(2));
               expect(requests.last, requests.first);
@@ -776,7 +778,7 @@ void main() {
         await tester.pumpAndSettle();
         final Finder retry = find.widgetWithText(
           FilledButton,
-          'Retry same request',
+          'Reintentar misma solicitud',
         );
         await tester.ensureVisible(retry);
         await tester.tap(retry);
@@ -785,7 +787,7 @@ void main() {
         expect(identical(own, same), isFalse);
         await tester.pumpWidget(page(draft: same));
         await tester.pump();
-        expect(find.textContaining('outcome is unknown'), findsNothing);
+        expect(find.textContaining('resultado es incierto'), findsNothing);
         expect(find.byType(CircularProgressIndicator), findsOneWidget);
         ProductCreationDraft? next = own;
         EmulatorSession session = _administrator;
@@ -844,10 +846,10 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Created product PRD-STALE-001'), findsNothing);
+        expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
         expect(calls, 1);
         if (change.startsWith('foreign')) {
-          expect(find.textContaining('outcome is unknown'), findsOneWidget);
+          expect(find.textContaining('resultado es incierto'), findsOneWidget);
           expect(
             tester
                 .widget<TextFormField>(
@@ -1625,7 +1627,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Create product'), findsNothing);
+    expect(find.text('Crear producto'), findsNothing);
     expect(
       find.byKey(const ValueKey<String>('create-product-name')),
       findsNothing,
@@ -1656,14 +1658,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
 
-      expect(find.bySemanticsLabel('Product name'), findsOneWidget);
-      expect(find.bySemanticsLabel('Unit identifier'), findsOneWidget);
+      expect(find.bySemanticsLabel('Nombre del producto'), findsOneWidget);
+      expect(find.bySemanticsLabel('Identificador de unidad'), findsOneWidget);
       // The collapsed precision dropdown announces through its hint until a
       // value is selected, so assert the hint and the decoration label.
-      expect(find.text('Select 0–6'), findsOneWidget);
+      expect(find.text('Selecciona 0–6'), findsOneWidget);
       expect(
         tester
             .widget<DropdownButtonFormField<int>>(
@@ -1671,7 +1673,7 @@ void main() {
             )
             .decoration
             .labelText,
-        'Quantity precision',
+        'Precisión de cantidad',
       );
       final Finder nameField = find.byKey(
         const ValueKey<String>('create-product-name'),
@@ -1739,53 +1741,53 @@ void main() {
         );
       }
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pump();
 
       expect(requests, isEmpty);
-      expect(find.bySemanticsLabel('Product creation error'), findsNothing);
+      expect(find.bySemanticsLabel('Error al crear el producto'), findsNothing);
       expectFieldFeedback(
         nameField,
-        'Product name is required.',
-        RegExp('^Product name error: '),
+        'El nombre del producto es obligatorio.',
+        RegExp('^Error en el nombre del producto: '),
       );
       expectFieldFeedback(
         unitField,
-        'Unit is required.',
-        RegExp('^Unit error: '),
+        'La unidad es obligatoria.',
+        RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'Precision is required.',
-        RegExp('^Precision error: '),
+        'La precisión es obligatoria.',
+        RegExp('^Error en la precisión: '),
       );
 
       // Invalid non-empty values report their own field, not the banner.
       await tester.enterText(nameField, ' Coffee ');
       await tester.enterText(unitField, 'Piece');
       await tester.pump();
-      expect(find.text('Product name is required.'), findsNothing);
-      expect(find.text('Unit is required.'), findsNothing);
-      expect(find.text('Precision is required.'), findsOneWidget);
+      expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
+      expect(find.text('La unidad es obligatoria.'), findsNothing);
+      expect(find.text('La precisión es obligatoria.'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pump();
 
       expect(requests, isEmpty);
       expectFieldFeedback(
         nameField,
-        'Name must be canonical text of 1 to 120 characters with no leading, '
-        'trailing, or control characters.',
-        RegExp('^Product name error: '),
+        'El nombre debe tener de 1 a 120 caracteres, sin espacios al inicio '
+        'o al final ni caracteres de control.',
+        RegExp('^Error en el nombre del producto: '),
       );
       expectFieldFeedback(
         unitField,
-        'Unit must start with a lowercase letter and use only lowercase '
-        'letters, numbers, underscores, or hyphens (1 to 32 characters).',
-        RegExp('^Unit error: '),
+        'La unidad debe empezar con una letra minúscula y usar solo minúsculas, '
+        'números, guiones bajos o guiones (de 1 a 32 caracteres).',
+        RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'Precision is required.',
-        RegExp('^Precision error: '),
+        'La precisión es obligatoria.',
+        RegExp('^Error en la precisión: '),
       );
       expect(
         tester
@@ -1820,37 +1822,37 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create product'));
+    await tester.tap(find.text('Crear producto'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pump();
 
     expect(requests, isEmpty);
-    expect(find.text('Product name is required.'), findsOneWidget);
+    expect(find.text('El nombre del producto es obligatorio.'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-name')),
       'Coffee',
     );
     await tester.pump();
-    expect(find.text('Product name is required.'), findsNothing);
-    expect(find.text('Unit is required.'), findsOneWidget);
-    expect(find.text('Precision is required.'), findsOneWidget);
+    expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
+    expect(find.text('La unidad es obligatoria.'), findsOneWidget);
+    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-unit')),
       'piece',
     );
     await tester.pump();
-    expect(find.text('Unit is required.'), findsNothing);
-    expect(find.text('Precision is required.'), findsOneWidget);
+    expect(find.text('La unidad es obligatoria.'), findsNothing);
+    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pump();
     expect(requests, isEmpty);
 
     await _selectCreationPrecision(tester, 0);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pumpAndSettle();
     expect(requests, hasLength(1));
     expect(
@@ -1862,7 +1864,7 @@ void main() {
         precision: 0,
       ),
     );
-    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
   });
 
   testWidgets(
@@ -1885,7 +1887,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
 
       final Finder precisionField = find.byKey(
@@ -1897,7 +1899,7 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Select 0–6'), findsOneWidget);
+      expect(find.text('Selecciona 0–6'), findsOneWidget);
 
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
@@ -1916,12 +1918,12 @@ void main() {
         find.byKey(const ValueKey<String>('create-product-unit')),
         'piece',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pumpAndSettle();
       expect(requests.single.precision, 6);
 
       // Reopening starts unset again: no silent default, not even to 0.
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -1929,7 +1931,7 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Select 0–6'), findsOneWidget);
+      expect(find.text('Selecciona 0–6'), findsOneWidget);
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
       await tester.tap(find.text('0').last);
@@ -1942,7 +1944,7 @@ void main() {
         find.byKey(const ValueKey<String>('create-product-unit')),
         'kg',
       );
-      final Finder createAgain = find.widgetWithText(FilledButton, 'Create');
+      final Finder createAgain = find.widgetWithText(FilledButton, 'Crear');
       await tester.ensureVisible(createAgain);
       await tester.tap(createAgain);
       await tester.pumpAndSettle();
@@ -1974,7 +1976,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create product'));
+    await tester.tap(find.text('Crear producto'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-name')),
@@ -1985,10 +1987,10 @@ void main() {
       'piece',
     );
     await _selectCreationPrecision(tester, 0);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(find.textContaining('resultado es incierto'), findsOneWidget);
     expect(
       tester
           .widget<TextFormField>(
@@ -1999,7 +2001,7 @@ void main() {
     );
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -2007,7 +2009,7 @@ void main() {
 
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
-    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
   });
 
   testWidgets('restored same-admin uncertainty is prefilled and must resolve', (
@@ -2074,7 +2076,7 @@ void main() {
     expect(keyCalls, 0);
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -2082,7 +2084,7 @@ void main() {
 
     expect(attempts, <ProductCreationDraft>[unresolved]);
     expect(keyCalls, 1);
-    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
   });
 
   testWidgets('duplicate taps invoke once and progress is accessible', (
@@ -2103,7 +2105,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create product'));
+    await tester.tap(find.text('Crear producto'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-name')),
@@ -2114,13 +2116,13 @@ void main() {
       'piece',
     );
     await _selectCreationPrecision(tester, 0);
-    final Finder create = find.widgetWithText(FilledButton, 'Create');
+    final Finder create = find.widgetWithText(FilledButton, 'Crear');
     await tester.tap(create);
     await tester.tap(create, warnIfMissed: false);
     await tester.pump();
 
     expect(calls, 1);
-    expect(find.bySemanticsLabel('Creating product'), findsOneWidget);
+    expect(find.bySemanticsLabel('Creando producto'), findsOneWidget);
     pending.complete(
       const ProductCreationResult(
         productId: 'PRD-COFFEE-001',
@@ -2160,7 +2162,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create product'));
+    await tester.tap(find.text('Crear producto'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-name')),
@@ -2171,11 +2173,11 @@ void main() {
       'piece',
     );
     await _selectCreationPrecision(tester, 0);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pumpAndSettle();
 
     expect(loads, 2);
-    expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+    expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('product-qr-PRD-NEW-0001')),
       findsOneWidget,
@@ -2209,7 +2211,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey<String>('create-product-name')),
@@ -2220,11 +2222,11 @@ void main() {
         'piece',
       );
       await _selectCreationPrecision(tester, 0);
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pumpAndSettle();
 
       expect(creates, 1);
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
     },
   );
@@ -2247,11 +2249,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Product name'), findsOneWidget);
-      expect(find.text('Create'), findsOneWidget);
+      expect(find.text('Nombre del producto'), findsOneWidget);
+      expect(find.text('Crear'), findsOneWidget);
       expect(tester.takeException(), isNull);
       tester.view.resetViewInsets();
       await tester.binding.setSurfaceSize(null);
@@ -2273,7 +2275,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Create product'));
+        await tester.tap(find.text('Crear producto'));
         await tester.pumpAndSettle();
         await tester.enterText(
           find.byKey(const ValueKey<String>('create-product-name')),
@@ -2284,7 +2286,7 @@ void main() {
           'piece',
         );
         await _selectCreationPrecision(tester, 0);
-        await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+        await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
         await tester.pump();
 
         if (dispose) {
@@ -2306,7 +2308,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+        expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
         expect(tester.takeException(), isNull);
       }
     },
@@ -2486,7 +2488,7 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Close'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
@@ -2610,14 +2612,14 @@ void main() {
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Save price / IVA');
-      await tapPricingButton(OutlinedButton, 'Close');
+      await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('Listed price is required.'), findsNothing);
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Save price / IVA');
-      await tapPricingButton(OutlinedButton, 'Close');
+      await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(tea.internalCode);
       expect(find.text('Listed price is required.'), findsNothing);
@@ -2640,11 +2642,11 @@ void main() {
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Save price / IVA');
       authoritative = restored;
-      await tapPricingButton(OutlinedButton, 'Close');
+      await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('Listed price is required.'), findsNothing);
-      expect(find.text('Retry same request'), findsOneWidget);
+      expect(find.text('Reintentar misma solicitud'), findsOneWidget);
       expect(requests, isEmpty);
     },
   );
@@ -3084,7 +3086,7 @@ void main() {
       );
       expect(ids, 0);
       expect(calls, 0);
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Close'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
       await tester.pumpAndSettle();
       await open();
       for (final String key in messages.keys) {
@@ -3204,7 +3206,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(find.textContaining('resultado es incierto'), findsOneWidget);
     expect(
       tester
           .widget<TextFormField>(
@@ -3215,7 +3217,7 @@ void main() {
     );
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -3276,7 +3278,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(requests.single.idempotencyKey, 'pricing-new-faux');
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       expect(
         tester
             .widget<TextFormField>(
@@ -3290,7 +3292,7 @@ void main() {
 
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -3332,7 +3334,7 @@ void main() {
 
       expect(calls, 1);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
-      expect(find.text('Retry same request'), findsNothing);
+      expect(find.text('Reintentar misma solicitud'), findsNothing);
       expect(find.textContaining('pricing-not-stored'), findsNothing);
     },
   );
@@ -3917,7 +3919,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(find.textContaining('resultado es incierto'), findsOneWidget);
     expect(
       tester
           .widget<TextFormField>(
@@ -3944,7 +3946,7 @@ void main() {
     );
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -4002,7 +4004,7 @@ void main() {
         find.text('Stock intake was rejected (out-of-range).'),
         findsOneWidget,
       );
-      expect(find.text('Retry same request'), findsNothing);
+      expect(find.text('Reintentar misma solicitud'), findsNothing);
       expect(
         tester
             .widget<TextFormField>(
@@ -4072,7 +4074,7 @@ void main() {
     expect(mutations, 1);
     expect(find.text('Intake recorded. Entry intake-key-1'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
-    expect(find.text('Retry same request'), findsNothing);
+    expect(find.text('Reintentar misma solicitud'), findsNothing);
   });
 
   testWidgets(
@@ -4124,7 +4126,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Close'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
       await tester.pumpAndSettle();
 
       // Reopen: the draft for South is restored explicitly and locked.
@@ -4161,12 +4163,12 @@ void main() {
             .enabled,
         isFalse,
       );
-      expect(find.text('Retry same request'), findsOneWidget);
+      expect(find.text('Reintentar misma solicitud'), findsOneWidget);
       expect(keyCalls, 0);
 
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -4235,8 +4237,8 @@ void main() {
             ?.text,
         '1.5',
       );
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
-      expect(find.text('Retry same request'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
+      expect(find.text('Reintentar misma solicitud'), findsOneWidget);
       expect(keyCalls, 0);
       expect(requests, isEmpty);
     },
@@ -4330,7 +4332,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
       InputDecoration decoration(String key) {
         final Finder field = find.byKey(ValueKey<String>(key));
@@ -4355,7 +4357,7 @@ void main() {
         normal.add(input.border! as OutlineInputBorder);
         expect(input.focusedBorder ?? input.border, isA<OutlineInputBorder>());
       }
-      final Finder create = find.widgetWithText(FilledButton, 'Create');
+      final Finder create = find.widgetWithText(FilledButton, 'Crear');
       await tester.ensureVisible(create);
       await tester.tap(create);
       await tester.pumpAndSettle();
@@ -4413,7 +4415,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Create product'));
+        await tester.tap(find.text('Crear producto'));
         await tester.pumpAndSettle();
         await tester.enterText(
           find.byKey(const ValueKey<String>('create-product-name')),
@@ -4424,17 +4426,19 @@ void main() {
           'piece',
         );
         await _selectCreationPrecision(tester, 0);
-        await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+        await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
         await tester.pumpAndSettle();
         expect(
           find.text(
             validation
                 ? 'Server validation declined the request.'
-                : 'Product creation was rejected (permission-denied).',
+                : 'Se rechazó la creación del producto (permission-denied).',
           ),
           findsOneWidget,
         );
-        final Finder banner = find.bySemanticsLabel('Product creation error');
+        final Finder banner = find.bySemanticsLabel(
+          'Error al crear el producto',
+        );
         expect(banner, findsOneWidget);
         expect(
           tester
@@ -4448,7 +4452,7 @@ void main() {
         expect(find.textContaining('is required.'), findsNothing);
         expect(find.textContaining('Exception'), findsNothing);
         expect(find.textContaining('credential'), findsNothing);
-        expect(find.text('Retry same request'), findsNothing);
+        expect(find.text('Reintentar misma solicitud'), findsNothing);
         semantics.dispose();
       },
     );
@@ -4472,7 +4476,7 @@ void main() {
     ]);
 
     Future<void> fillAndCreate(WidgetTester tester) async {
-      await tester.tap(find.text('Create product'));
+      await tester.tap(find.text('Crear producto'));
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey<String>('create-product-name')),
@@ -4483,7 +4487,7 @@ void main() {
         'piece',
       );
       await _selectCreationPrecision(tester, 0);
-      final Finder create = find.widgetWithText(FilledButton, 'Create');
+      final Finder create = find.widgetWithText(FilledButton, 'Crear');
       await tester.ensureVisible(create);
       await tester.tap(create);
     }
@@ -4582,11 +4586,11 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
-          await tester.tap(find.text('Create product'));
+          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          await tester.tap(find.text('Crear producto'));
           await tester.pump();
           if (close) {
-            final Finder button = find.widgetWithText(OutlinedButton, 'Close');
+            final Finder button = find.widgetWithText(OutlinedButton, 'Cerrar');
             await tester.ensureVisible(button);
             await tester.tap(button);
             await tester.pump();
@@ -4602,7 +4606,7 @@ void main() {
             close ? findsNothing : findsOneWidget,
           );
           expect(creates, 1);
-          expect(find.text('Retry same request'), findsNothing);
+          expect(find.text('Reintentar misma solicitud'), findsNothing);
           if (close) {
             await tester.tap(
               find.byKey(
@@ -4649,7 +4653,7 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+          final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
           await tester.ensureVisible(close);
           await tester.tap(close);
           await tester.pump();
@@ -4663,8 +4667,8 @@ void main() {
             find.byKey(const ValueKey<String>('intake-quantity')),
             findsNothing,
           );
-          expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
-          expect(find.text('Retry same request'), findsNothing);
+          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          expect(find.text('Reintentar misma solicitud'), findsNothing);
         },
       );
     }
@@ -4749,7 +4753,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
       expect(pricingCalls, 0);
     });
@@ -4775,7 +4779,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -4803,7 +4807,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
@@ -4833,7 +4837,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -4870,7 +4874,7 @@ void main() {
       await tester.pumpAndSettle();
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -4878,14 +4882,14 @@ void main() {
 
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
       expect(creates, 2);
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
     });
 
@@ -4920,10 +4924,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(find.text('PRD-COFFEE-001'), findsWidgets);
       expect(find.text('PRD-NEW-0001'), findsNothing);
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
     });
 
     testWidgets('an open pricing form for another product is not replaced', (
@@ -4952,7 +4956,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
       expect(find.text('PRD-COFFEE-001'), findsWidgets);
       expect(find.text('PRD-NEW-0001'), findsNothing);
     });
@@ -5045,7 +5049,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Create product'), findsNothing);
+      expect(find.text('Crear producto'), findsNothing);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,

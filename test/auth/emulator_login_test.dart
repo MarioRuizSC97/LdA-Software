@@ -259,7 +259,7 @@ Widget _app(
 );
 
 Future<void> _enterProduct(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(FilledButton, 'Create product'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Crear producto'));
   await tester.pumpAndSettle();
   await tester.enterText(
     find.byKey(const ValueKey<String>('create-product-name')),
@@ -276,7 +276,7 @@ Future<void> _enterProduct(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.text('0').last);
   await tester.pumpAndSettle();
-  final Finder create = find.widgetWithText(FilledButton, 'Create');
+  final Finder create = find.widgetWithText(FilledButton, 'Crear');
   await tester.ensureVisible(create);
   await tester.tap(create);
 }
@@ -492,7 +492,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Create product'), findsNothing);
+    expect(find.text('Crear producto'), findsNothing);
     expect(gatewayLoads, 0);
   });
 
@@ -530,9 +530,9 @@ void main() {
       await tester.pumpAndSettle();
       await _enterProduct(tester);
       await tester.pumpAndSettle();
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -551,7 +551,7 @@ void main() {
       );
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -561,7 +561,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
       expect(attempts[1].idempotencyKey, attempts[0].idempotencyKey);
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
     },
   );
 
@@ -608,11 +608,11 @@ void main() {
       await _enterProduct(tester);
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       expect(find.textContaining('failed-precondition'), findsNothing);
       final Map<String, Object?> originalRequest = requests.single;
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -631,7 +631,7 @@ void main() {
       );
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -641,7 +641,7 @@ void main() {
       expect(requests, hasLength(2));
       expect(requests[1], originalRequest);
       expect(requests[1]['idempotencyKey'], originalRequest['idempotencyKey']);
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
     },
   );
 
@@ -667,12 +667,12 @@ void main() {
 
       auth.sessions.add(_seller);
       await tester.pumpAndSettle();
-      expect(find.text('Create product'), findsNothing);
+      expect(find.text('Crear producto'), findsNothing);
       expect(find.text('Coffee'), findsNothing);
 
       auth.sessions.add(_otherAdministrator);
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create product'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Crear producto'));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -683,7 +683,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -745,7 +745,7 @@ void main() {
       await _signIn(tester);
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -754,7 +754,7 @@ void main() {
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
       expect(find.textContaining('late transport detail'), findsNothing);
     },
   );
@@ -797,8 +797,8 @@ void main() {
           );
           await tester.pump();
           if (checkPending) {
-            expect(find.textContaining('outcome is unknown'), findsNothing);
-            expect(find.text('Retry same request'), findsNothing);
+            expect(find.textContaining('resultado es incierto'), findsNothing);
+            expect(find.text('Reintentar misma solicitud'), findsNothing);
             expect(
               tester
                   .widget<FilledButton>(
@@ -829,8 +829,8 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Created product $code'), findsOneWidget);
-          expect(find.textContaining('outcome is unknown'), findsNothing);
+          expect(find.text('Producto creado $code'), findsOneWidget);
+          expect(find.textContaining('resultado es incierto'), findsNothing);
           expect(attempts, hasLength(index + 1));
         }
         expect(attempts[1].idempotencyKey, isNot(attempts[0].idempotencyKey));
@@ -895,7 +895,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
       // The shell has now resolved the store; a later same-identity frame
       // changes the observed draft to null during the catalog refresh await.
       auth.sessions.add(
@@ -906,7 +906,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
       refresh.complete(
         CatalogSnapshot(<CatalogItem>[
           CatalogItem(
@@ -924,7 +924,7 @@ void main() {
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsOneWidget,
       );
-      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(find.textContaining('resultado es incierto'), findsNothing);
       expect(calls, 1);
     },
   );
@@ -972,12 +972,12 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
     await tester.pump(const Duration(seconds: 10));
-    expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
     sameIdentityFrame();
     await tester.pump();
-    expect(find.textContaining('outcome is unknown'), findsNothing);
+    expect(find.textContaining('resultado es incierto'), findsNothing);
     refresh.complete(
       CatalogSnapshot(<CatalogItem>[
         CatalogItem(
@@ -991,7 +991,7 @@ void main() {
       ]),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Created product PRD-COFFEE-001'), findsNothing);
+    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
     expect(
       tester
           .widget<TextFormField>(
@@ -1041,10 +1041,10 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(find.textContaining('resultado es incierto'), findsNothing);
       result.completeError(const ProductCreationUncertainException());
       await tester.pumpAndSettle();
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       expect(attempts, hasLength(1));
       expect(
         tester
@@ -1056,15 +1056,15 @@ void main() {
       );
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
       await tester.pumpAndSettle();
       expect(attempts, hasLength(2));
       expect(identical(attempts[0], attempts[1]), isTrue);
-      expect(find.text('Created product PRD-COFFEE-001'), findsOneWidget);
-      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsNothing);
     },
   );
 
@@ -1101,7 +1101,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(find.textContaining('resultado es incierto'), findsNothing);
       if (authority == 'logout') {
         await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       } else {
@@ -1120,8 +1120,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Created product PRD-STALE-001'), findsNothing);
-      expect(find.textContaining('outcome is unknown'), findsNothing);
+      expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
+      expect(find.textContaining('resultado es incierto'), findsNothing);
       expect(calls, 1);
     });
   }
@@ -2073,7 +2073,7 @@ void main() {
 
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -2098,7 +2098,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('outcome is unknown'), findsNothing);
+    expect(find.textContaining('resultado es incierto'), findsNothing);
     expect(
       find.textContaining('Audit ${oldDraft.idempotencyKey}'),
       findsOneWidget,
@@ -2140,7 +2140,7 @@ void main() {
     await tester.pumpAndSettle();
     await _submitExistingPricing(tester);
     await tester.pumpAndSettle();
-    expect(find.textContaining('outcome is unknown'), findsOneWidget);
+    expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
     final String frozenPrice = tester
         .widget<TextFormField>(
@@ -2150,7 +2150,7 @@ void main() {
         .text;
     final Finder retry = find.widgetWithText(
       FilledButton,
-      'Retry same request',
+      'Reintentar misma solicitud',
     );
     await tester.ensureVisible(retry);
     await tester.tap(retry);
@@ -2247,10 +2247,10 @@ void main() {
 
       await _submitExistingPricing(tester);
       await tester.pumpAndSettle();
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       final ProductPricingDraft original = attempts.single;
 
-      Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2272,7 +2272,7 @@ void main() {
       );
       expect(find.text('IVA rate: Not required'), findsOneWidget);
 
-      close = find.widgetWithText(OutlinedButton, 'Close');
+      close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2295,7 +2295,7 @@ void main() {
       );
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -2351,9 +2351,9 @@ void main() {
       await tester.pumpAndSettle();
       await _submitExistingPricing(tester);
       await tester.pumpAndSettle();
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -2361,10 +2361,10 @@ void main() {
       await tester.pumpAndSettle();
       await _signIn(tester);
 
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
@@ -2400,7 +2400,7 @@ void main() {
     await tester.pumpAndSettle();
     await _submitExistingPricing(tester);
     await tester.pumpAndSettle();
-    final Finder close = find.widgetWithText(OutlinedButton, 'Close');
+    final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
     await tester.ensureVisible(close);
     await tester.tap(close);
     await tester.pump();
@@ -2408,8 +2408,8 @@ void main() {
     await tester.pumpAndSettle();
     await _signIn(tester);
 
-    expect(find.textContaining('outcome is unknown'), findsNothing);
-    expect(find.text('Retry same request'), findsNothing);
+    expect(find.textContaining('resultado es incierto'), findsNothing);
+    expect(find.text('Reintentar misma solicitud'), findsNothing);
   });
 
   testWidgets(
@@ -2816,8 +2816,8 @@ void main() {
 
       expect(attempts, hasLength(1));
       final String frozenKey = attempts.single.idempotencyKey;
-      expect(find.textContaining('outcome is unknown'), findsOneWidget);
-      expect(find.text('Retry same request'), findsOneWidget);
+      expect(find.textContaining('resultado es incierto'), findsOneWidget);
+      expect(find.text('Reintentar misma solicitud'), findsOneWidget);
 
       // A seller session receives no intake control and cannot read the draft.
       auth.sessions.add(_seller);
@@ -2865,7 +2865,7 @@ void main() {
       );
       final Finder retry = find.widgetWithText(
         FilledButton,
-        'Retry same request',
+        'Reintentar misma solicitud',
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);

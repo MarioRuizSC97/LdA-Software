@@ -633,8 +633,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _creationPrecision = unresolved.precision;
       _creationVisible = true;
       _creationUncertain = true;
-      _creationError =
-          'The outcome is unknown. Retry the same request before editing.';
+      _creationError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
     }
   }
 
@@ -695,8 +694,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _ivaTreatment = draft.ivaTreatment;
     _ivaRate.text = draft.ivaRatePercent ?? '';
     _pricingUncertain = true;
-    _pricingError =
-        'The outcome is unknown. Retry the same request before editing.';
+    _pricingError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
   }
 
   void _clearIntakePresentation() {
@@ -733,8 +731,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _intakeQuantity.text = draft.quantity;
     _intakeCost.text = draft.unitCostMxn;
     _intakeUncertain = true;
-    _intakeError =
-        'The outcome is unknown. Retry the same request before editing.';
+    _intakeError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
   }
 
   /// Loads the catalog and returns the accepted snapshot, or null when the
@@ -1061,7 +1058,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       setState(() {
         _creationPending = false;
         _creationUncertain = false;
-        _creationError = 'Product creation was rejected (${error.code}).';
+        _creationError = 'Se rechazó la creación del producto (${error.code}).';
       });
     } on ProductCreationStaleException {
       // A newer attempt or session owns presentation authority.
@@ -1070,8 +1067,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       setState(() {
         _creationPending = false;
         _creationUncertain = true;
-        _creationError =
-            'The outcome is unknown. Retry the same request before editing.';
+        _creationError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
       });
     }
   }
@@ -1118,13 +1114,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               Semantics(
                 header: true,
                 child: Text(
-                  'Create product',
+                  'Crear producto',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
               ),
               const SizedBox(height: 8),
               const Text(
-                'The server assigns the stable internal code and QR identity.',
+                'El servidor asigna el código interno permanente y la identidad QR.',
               ),
               const SizedBox(height: 16),
               Semantics(
@@ -1132,7 +1128,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _creationNameError != null,
                 label: _creationNameError == null
                     ? null
-                    : 'Product name error: $_creationNameError',
+                    : 'Error en el nombre del producto: $_creationNameError',
                 child: TextFormField(
                   key: const ValueKey<String>('create-product-name'),
                   controller: _name,
@@ -1145,7 +1141,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Product name',
+                      labelText: 'Nombre del producto',
                       border: _pricingFieldBorder,
                     ),
                     _creationNameError,
@@ -1158,7 +1154,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _creationUnitError != null,
                 label: _creationUnitError == null
                     ? null
-                    : 'Unit error: $_creationUnitError',
+                    : 'Error en la unidad: $_creationUnitError',
                 child: TextFormField(
                   key: const ValueKey<String>('create-product-unit'),
                   controller: _unit,
@@ -1170,10 +1166,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Unit identifier',
+                      labelText: 'Identificador de unidad',
                       border: _pricingFieldBorder,
-                      helperText:
-                          'Lowercase identifier, for example piece or kg.',
+                      helperText: 'Identificador en minúsculas, por ejemplo piece o kg.',
                     ),
                     _creationUnitError,
                   ),
@@ -1185,7 +1180,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _creationPrecisionError != null,
                 label: _creationPrecisionError == null
                     ? null
-                    : 'Precision error: $_creationPrecisionError',
+                    : 'Error en la precisión: $_creationPrecisionError',
                 child: DropdownButtonFormField<int>(
                   key: const ValueKey<String>('create-product-precision'),
                   isExpanded: true,
@@ -1193,13 +1188,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Quantity precision',
+                      labelText: 'Precisión de cantidad',
                       border: _pricingFieldBorder,
-                      helperText: 'Integer from 0 through 6.',
+                      helperText: 'Entero del 0 al 6.',
                     ),
                     _creationPrecisionError,
                   ),
-                  hint: const Text('Select 0–6'),
+                  hint: const Text('Selecciona 0–6'),
                   items: List<DropdownMenuItem<int>>.generate(
                     7,
                     (int index) => DropdownMenuItem<int>(
@@ -1218,7 +1213,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               if (_creationError case final String error) ...<Widget>[
                 const SizedBox(height: 12),
                 Semantics(
-                  label: 'Product creation error',
+                  label: 'Error al crear el producto',
                   liveRegion: true,
                   child: ExcludeSemantics(child: Text(error)),
                 ),
@@ -1232,7 +1227,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: _creationPending ? null : _submitCreation,
                     child: _creationPending
                         ? Semantics(
-                            label: 'Creating product',
+                            label: 'Creando producto',
                             liveRegion: true,
                             child: const SizedBox.square(
                               dimension: 20,
@@ -1241,13 +1236,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           )
                         : Text(
                             _creationUncertain
-                                ? 'Retry same request'
-                                : 'Create',
+                                ? 'Reintentar misma solicitud'
+                                : 'Crear',
                           ),
                   ),
                   OutlinedButton(
                     onPressed: _creationPending ? null : _closeCreation,
-                    child: const Text('Close'),
+                    child: const Text('Cerrar'),
                   ),
                 ],
               ),
@@ -1440,8 +1435,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         } else {
           _pricingUncertain = true;
           _lockedPricingDraft = draft;
-          _pricingError =
-              'The outcome is unknown. Retry the same request before editing.';
+          _pricingError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
         }
       });
     }
@@ -1630,13 +1624,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           )
                         : Text(
                             _pricingUncertain
-                                ? 'Retry same request'
+                                ? 'Reintentar misma solicitud'
                                 : 'Save price / IVA',
                           ),
                   ),
                   OutlinedButton(
                     onPressed: _pricingPending ? null : _closePricing,
-                    child: const Text('Close'),
+                    child: const Text('Cerrar'),
                   ),
                 ],
               ),
@@ -1855,8 +1849,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         } else {
           _intakeUncertain = true;
           _lockedIntakeDraft = draft;
-          _intakeError =
-              'The outcome is unknown. Retry the same request before editing.';
+          _intakeError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
         }
       });
     }
@@ -2017,13 +2010,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           )
                         : Text(
                             _intakeUncertain
-                                ? 'Retry same request'
+                                ? 'Reintentar misma solicitud'
                                 : 'Record intake',
                           ),
                   ),
                   OutlinedButton(
                     onPressed: _intakePending ? null : _closeIntake,
-                    child: const Text('Close'),
+                    child: const Text('Cerrar'),
                   ),
                 ],
               ),
@@ -2276,29 +2269,29 @@ bool _validBranchId(String value) =>
 /// authority: empty values read as required, non-empty invalid values reuse
 /// the canonical client messages verbatim.
 String? _creationNameFieldError(String name) {
-  if (name.isEmpty) return 'Product name is required.';
+  if (name.isEmpty) return 'El nombre del producto es obligatorio.';
   if (name.length > maxProductNameLength ||
       name.trim() != name ||
       RegExp(r'[\u0000-\u001f\u007f]').hasMatch(name)) {
-    return 'Name must be canonical text of 1 to 120 characters with no leading, '
-        'trailing, or control characters.';
+    return 'El nombre debe tener de 1 a 120 caracteres, sin espacios al inicio '
+        'o al final ni caracteres de control.';
   }
   return null;
 }
 
 String? _creationUnitFieldError(String unit) {
-  if (unit.isEmpty) return 'Unit is required.';
+  if (unit.isEmpty) return 'La unidad es obligatoria.';
   if (!RegExp(r'^[a-z][a-z0-9_-]{0,31}$').hasMatch(unit)) {
-    return 'Unit must start with a lowercase letter and use only lowercase '
-        'letters, numbers, underscores, or hyphens (1 to 32 characters).';
+    return 'La unidad debe empezar con una letra minúscula y usar solo minúsculas, '
+        'números, guiones bajos o guiones (de 1 a 32 caracteres).';
   }
   return null;
 }
 
 String? _creationPrecisionFieldError(int? precision) {
-  if (precision == null) return 'Precision is required.';
+  if (precision == null) return 'La precisión es obligatoria.';
   if (precision < 0 || precision > 6) {
-    return 'Precision must be an integer from 0 through 6.';
+    return 'La precisión debe ser un entero del 0 al 6.';
   }
   return null;
 }
@@ -2354,7 +2347,7 @@ class _CreationToolbar extends StatelessWidget {
       child: FilledButton.icon(
         onPressed: onPressed,
         icon: const Icon(Icons.add),
-        label: const Text('Create product'),
+        label: const Text('Crear producto'),
       ),
     ),
   );
@@ -2425,7 +2418,7 @@ class _CreationSuccess extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
-    label: 'Product creation succeeded',
+    label: 'Producto creado correctamente',
     child: ColoredBox(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Padding(
@@ -2435,7 +2428,7 @@ class _CreationSuccess extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.check_circle_outline),
             const SizedBox(width: 8),
-            Flexible(child: Text('Created product ${result.internalCode}')),
+            Flexible(child: Text('Producto creado ${result.internalCode}')),
           ],
         ),
       ),
