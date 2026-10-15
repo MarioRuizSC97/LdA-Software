@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart' show Size;
+import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/corrections/correction_draft.dart';
 import 'package:lda_inventory/corrections/correction_receipt.dart';
@@ -440,4 +442,22 @@ class FakeCorrections {
     },
     createKey: nextKey,
   );
+}
+
+/// Viewports every corrections screen must fit without overflow: narrow,
+/// narrow at double text size, and wide.
+const List<(Size, double)> responsiveViewports = <(Size, double)>[
+  (Size(320, 800), 1),
+  (Size(320, 800), 2),
+  (Size(1600, 900), 1),
+];
+
+/// Applies [size] at device pixel ratio 1 and [textScale], reset on teardown.
+void useViewport(WidgetTester tester, Size size, double textScale) {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 }

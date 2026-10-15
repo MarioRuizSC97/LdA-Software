@@ -340,4 +340,16 @@ void main() {
     await _tap(tester, _key('replacement-back'));
     expect(harness.backs, 1);
   });
+
+  for (final (Size size, double scale) in responsiveViewports) {
+    testWidgets(
+      'a filled replacement fits ${size.width.toInt()}px at text scale $scale',
+      (WidgetTester tester) async {
+        useViewport(tester, size, scale);
+        await _pump(tester);
+        await _fillPin(tester);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

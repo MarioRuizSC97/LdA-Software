@@ -14,6 +14,7 @@ import 'package:lda_inventory/sales/sale_format.dart';
 
 import '../sales/sale_fixtures.dart';
 import 'correction_fixtures.dart';
+import 'correction_ui_fixtures.dart' show responsiveViewports, useViewport;
 
 const Map<String, String> _names = <String, String>{'DEMO-RIBBON': 'Ribbon'};
 
@@ -590,4 +591,16 @@ void main() {
     expect(correctionWindowDays, 15);
     expect(correctionWindow, const Duration(days: correctionWindowDays));
   });
+
+  for (final (Size size, double scale) in responsiveViewports) {
+    testWidgets(
+      'a found sale fits ${size.width.toInt()}px at text scale $scale',
+      (WidgetTester tester) async {
+        useViewport(tester, size, scale);
+        await _pump(tester, _Backend());
+        await _search(tester, ' nte-3f2a-9c1b ');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

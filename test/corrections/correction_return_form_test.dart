@@ -578,4 +578,17 @@ void main() {
     await _tap(tester, _key('return-back'));
     expect(harness.backs, 1);
   });
+
+  for (final (Size size, double scale) in responsiveViewports) {
+    testWidgets(
+      'a previewed return fits ${size.width.toInt()}px at text scale $scale',
+      (WidgetTester tester) async {
+        useViewport(tester, size, scale);
+        await _pump(tester);
+        await _fillPin(tester);
+        await _settlePreview(tester);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

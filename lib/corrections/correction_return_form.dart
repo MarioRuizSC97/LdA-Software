@@ -223,7 +223,7 @@ class _LineEditor extends StatelessWidget {
                               controller.setSelected(index, value ?? false)
                         : null,
                   ),
-                  const Text('Devolver este producto'),
+                  const Flexible(child: Text('Devolver este producto')),
                 ],
               ),
               if (entry.selected) ...<Widget>[

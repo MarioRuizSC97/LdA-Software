@@ -644,4 +644,16 @@ void main() {
     await _tap(tester, _key('exchange-back'));
     expect(harness.backs, 1);
   });
+
+  for (final (Size size, double scale) in responsiveViewports) {
+    testWidgets(
+      'a previewed exchange fits ${size.width.toInt()}px at text scale $scale',
+      (WidgetTester tester) async {
+        useViewport(tester, size, scale);
+        await _pump(tester);
+        await _fillDefault(tester);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
