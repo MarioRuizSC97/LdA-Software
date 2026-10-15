@@ -111,8 +111,8 @@ class StockIntakeDraft {
         !_idPattern.hasMatch(branchId) ||
         !_idPattern.hasMatch(productId)) {
       throw const StockIntakeValidationException(
-        'La clave de idempotencia, la sucursal y el producto deben tener de 1 a '
-        '128 caracteres alfanuméricos (con - o _ internos).',
+        'Los identificadores de idempotencia, sucursal y producto deben tener '
+        'de 1 a 128 caracteres alfanuméricos (con - o _ internos).',
       );
     }
     quantitySpec.validate();

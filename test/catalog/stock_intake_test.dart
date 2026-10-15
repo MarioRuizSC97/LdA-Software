@@ -630,4 +630,18 @@ void main() {
       );
     });
   });
+
+  test('validation messages are shown to users in Spanish', () {
+    expect(
+      _draft(quantity: '1234567890123456.7890').validate,
+      throwsA(
+        isA<StockIntakeValidationException>().having(
+          (StockIntakeValidationException error) => error.message,
+          'message',
+          'La cantidad debe ser un decimal positivo de máximo 18 caracteres, '
+              'sin signo, espacios, comas ni exponentes.',
+        ),
+      ),
+    );
+  });
 }

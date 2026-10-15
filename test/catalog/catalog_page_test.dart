@@ -1075,7 +1075,10 @@ void main() {
           expect(find.textContaining('Sin entrada registrada'), findsNothing);
           expect(find.text('Registrar entrada de inventario'), findsNothing);
           expect(find.text('Editar precio / IVA'), findsNothing);
-          expect(find.textContaining('cost'), findsNothing);
+          expect(
+            find.textContaining(RegExp('costo?', caseSensitive: false)),
+            findsNothing,
+          );
           expect(mutations, 0);
         },
       );
@@ -1612,7 +1615,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
-    expect(find.text('Quantity: kg (precisión 2)'), findsNothing);
+    expect(find.text('Cantidad: kg (precisión 2)'), findsNothing);
     expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
     expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
@@ -3762,7 +3765,7 @@ void main() {
         const ValueKey<String>('intake-unit-cost'),
       );
       expect(find.text('Selecciona una sucursal'), findsOneWidget);
-      expect(find.textContaining('Line total'), findsNothing);
+      expect(find.textContaining('Total de la línea'), findsNothing);
       expect(find.byIcon(Icons.error_outline), findsNothing);
       expect(find.text('La sucursal es obligatoria.'), findsNothing);
       expect(find.text('La cantidad es obligatoria.'), findsNothing);
@@ -3937,17 +3940,17 @@ void main() {
     final Finder costField = find.byKey(
       const ValueKey<String>('intake-unit-cost'),
     );
-    expect(find.textContaining('Line total'), findsNothing);
+    expect(find.textContaining('Total de la línea'), findsNothing);
 
     await tester.tap(branchField);
     await tester.pumpAndSettle();
     await tester.tap(find.text('North Demo Branch').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Line total'), findsNothing);
+    expect(find.textContaining('Total de la línea'), findsNothing);
 
     await tester.enterText(quantityField, '2.55');
     await tester.pump();
-    expect(find.textContaining('Line total'), findsNothing);
+    expect(find.textContaining('Total de la línea'), findsNothing);
 
     await tester.enterText(costField, '12.33');
     await tester.pump();
@@ -3964,7 +3967,7 @@ void main() {
 
     await tester.enterText(quantityField, '0.001');
     await tester.pump();
-    expect(find.textContaining('Line total'), findsNothing);
+    expect(find.textContaining('Total de la línea'), findsNothing);
   });
 
   testWidgets('uncertain intake locks fields and retries the same request', (
@@ -4401,7 +4404,7 @@ void main() {
         pending.complete(_intakeResult(submitted!));
         await tester.pumpAndSettle();
 
-        expect(find.textContaining('Intake recorded'), findsNothing);
+        expect(find.textContaining('Entrada registrada'), findsNothing);
         expect(tester.takeException(), isNull);
       }
     },
@@ -4545,7 +4548,10 @@ void main() {
           isTrue,
         );
         expect(find.byIcon(Icons.error_outline), findsNothing);
-        expect(find.textContaining('is required.'), findsNothing);
+        expect(
+          find.textContaining(RegExp(r'es obligatori[oa]\.')),
+          findsNothing,
+        );
         expect(find.textContaining('Exception'), findsNothing);
         expect(find.textContaining('credential'), findsNothing);
         expect(find.text('Reintentar misma solicitud'), findsNothing);
@@ -4638,7 +4644,10 @@ void main() {
         loader.requests[1].complete(_snapshot(created));
         await tester.pumpAndSettle();
         expectEmptyPricingFormFor(tester, created.internalCode);
-        expect(find.textContaining('is required.'), findsNothing);
+        expect(
+          find.textContaining(RegExp(r'es obligatori[oa]\.')),
+          findsNothing,
+        );
         final Finder save = find.widgetWithText(
           FilledButton,
           'Guardar precio / IVA',

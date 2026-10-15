@@ -633,7 +633,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _creationPrecision = unresolved.precision;
       _creationVisible = true;
       _creationUncertain = true;
-      _creationError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+      _creationError = _uncertainOutcomeMessage;
     }
   }
 
@@ -694,7 +694,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _ivaTreatment = draft.ivaTreatment;
     _ivaRate.text = draft.ivaRatePercent ?? '';
     _pricingUncertain = true;
-    _pricingError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+    _pricingError = _uncertainOutcomeMessage;
   }
 
   void _clearIntakePresentation() {
@@ -731,7 +731,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _intakeQuantity.text = draft.quantity;
     _intakeCost.text = draft.unitCostMxn;
     _intakeUncertain = true;
-    _intakeError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+    _intakeError = _uncertainOutcomeMessage;
   }
 
   /// Loads the catalog and returns the accepted snapshot, or null when the
@@ -1067,7 +1067,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       setState(() {
         _creationPending = false;
         _creationUncertain = true;
-        _creationError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+        _creationError = _uncertainOutcomeMessage;
       });
     }
   }
@@ -1439,7 +1439,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         } else {
           _pricingUncertain = true;
           _lockedPricingDraft = draft;
-          _pricingError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+          _pricingError = _uncertainOutcomeMessage;
         }
       });
     }
@@ -1858,7 +1858,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         } else {
           _intakeUncertain = true;
           _lockedIntakeDraft = draft;
-          _intakeError = 'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+          _intakeError = _uncertainOutcomeMessage;
         }
       });
     }
@@ -2180,8 +2180,12 @@ void _validateBranchName(String? name) {
 /// Width of the required-error border, stronger than the 1.0 normal border.
 const double _errorBorderWidth = 2.0;
 
+/// Shown when a create, pricing or intake request may or may not have landed.
+const String _uncertainOutcomeMessage =
+    'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+
 /// Spanish display name of a session role; the wire value stays unchanged.
-String _roleLabel(InventoryRole role) => switch (role) {
+String _roleDisplayName(InventoryRole role) => switch (role) {
   InventoryRole.administrator => 'Administrador',
   InventoryRole.seller => 'Vendedor',
 };
@@ -2275,8 +2279,8 @@ bool _validBranchId(String value) =>
 
 /// Client-side mirror of `ProductCreationDraft.validate()` used to mark each
 /// creation field independently before a submit. The server remains the
-/// authority: empty values read as required, non-empty invalid values reuse
-/// the canonical client messages verbatim.
+/// authority: empty values read as required, non-empty invalid values show
+/// the same Spanish messages as the client-side draft validators.
 String? _creationNameFieldError(String name) {
   if (name.isEmpty) return 'El nombre del producto es obligatorio.';
   if (name.length > maxProductNameLength ||
@@ -2332,7 +2336,7 @@ class _SessionStatus extends StatelessWidget {
             children: <Widget>[
               Text('Autenticado localmente', style: style),
               Text(session.email, style: style),
-              Text('Rol: ${_roleLabel(session.role)}', style: style),
+              Text('Rol: ${_roleDisplayName(session.role)}', style: style),
               if (session.branchId case final String branchId)
                 Text('Sucursal: $branchId', style: style),
             ],

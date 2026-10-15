@@ -226,4 +226,17 @@ void main() {
       );
     }
   });
+
+  test('validation messages are shown to users in Spanish', () {
+    expect(
+      _taxable.copyWith(ivaTreatment: 'exempt').validate,
+      throwsA(
+        isA<ProductPricingValidationException>().having(
+          (ProductPricingValidationException error) => error.message,
+          'message',
+          'El IVA exento no debe tener tasa.',
+        ),
+      ),
+    );
+  });
 }

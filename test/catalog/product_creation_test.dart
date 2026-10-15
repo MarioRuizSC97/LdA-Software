@@ -387,4 +387,22 @@ void main() {
       );
     }
   });
+
+  test('validation messages are shown to users in Spanish', () {
+    expect(
+      const ProductCreationDraft(
+        idempotencyKey: 'valid-key',
+        name: 'Coffee',
+        unit: 'piece',
+        precision: 7,
+      ).validate,
+      throwsA(
+        isA<ProductCreationValidationException>().having(
+          (ProductCreationValidationException error) => error.message,
+          'message',
+          'La precisión debe ser un entero del 0 al 6.',
+        ),
+      ),
+    );
+  });
 }
