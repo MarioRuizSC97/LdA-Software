@@ -14,6 +14,7 @@ import 'package:lda_inventory/catalog/product_pricing.dart';
 import 'package:lda_inventory/catalog/stock_intake.dart';
 import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
+import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
@@ -359,6 +360,21 @@ StockIntakeResult _intakeResult(
   'lineTotalCentavos': draft.lineTotalCentavos,
   'replayed': replayed,
 }, request: draft);
+
+/// In-process fake of both notice streams; no Firebase, backend, or emulator.
+class _FakeNoticeStreams implements TransferNoticeStreamSource {
+  final StreamController<TransferNoticeStreamEnvelope> movementsCtrl =
+      StreamController<TransferNoticeStreamEnvelope>.broadcast();
+  final StreamController<TransferNoticeStreamEnvelope> markersCtrl =
+      StreamController<TransferNoticeStreamEnvelope>.broadcast();
+
+  @override
+  Stream<TransferNoticeStreamEnvelope> movements({required String branchId}) =>
+      movementsCtrl.stream;
+
+  @override
+  Stream<TransferNoticeStreamEnvelope> markers() => markersCtrl.stream;
+}
 
 void main() {
   testWidgets('shows a safe loading state while bootstrap is pending', (
@@ -2863,5 +2879,79 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
     await tester.pumpAndSettle();
     expect(find.text('Local emulator sign in'), findsOneWidget);
+  });
+
+  group('seller transfer notices shell wiring', () {
+    Widget shellApp(
+      _FakeGateway gateway, {
+      TransferNoticeBackendSessionLoader? noticeLoader,
+    }) => MaterialApp(
+      home: EmulatorLoginShell(
+        sessionGateway: Future<EmulatorSessionGateway>.value(gateway),
+        catalogLoader: _emptyCatalog,
+        transferNoticeBackendLoader: noticeLoader,
+      ),
+    );
+
+    testWidgets('exact seller gets the live notice entry with a closed inbox', (
+      WidgetTester tester,
+    ) async {
+      final _FakeNoticeStreams streams = _FakeNoticeStreams();
+      var backendLoads = 0;
+      final _FakeGateway gateway = _FakeGateway(restored: _seller);
+      await tester.pumpWidget(
+        shellApp(
+          gateway,
+          noticeLoader: (EmulatorSession session) async {
+            backendLoads += 1;
+            expect(session.userId, _seller.userId);
+            return TransferNoticeBackend(
+              streams: streams,
+              markRead: (_) async => null,
+            );
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('notices-open')),
+        findsOneWidget,
+      );
+      // The badge exists without any confirmed event yet (unknown state),
+      // and the backend binds exactly once for this session.
+      await tester.pump();
+      expect(backendLoads, 1);
+    });
+
+    testWidgets('administrator never gets the notice entry', (
+      WidgetTester tester,
+    ) async {
+      final _FakeGateway gateway = _FakeGateway(restored: _administrator);
+      await tester.pumpWidget(
+        shellApp(
+          gateway,
+          noticeLoader: (EmulatorSession session) async =>
+              TransferNoticeBackend(
+                streams: _FakeNoticeStreams(),
+                markRead: (_) async => null,
+              ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+    });
+
+    testWidgets('seller without a notice loader gets no entry', (
+      WidgetTester tester,
+    ) async {
+      final _FakeGateway gateway = _FakeGateway(restored: _seller);
+      await tester.pumpWidget(shellApp(gateway));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+    });
   });
 }

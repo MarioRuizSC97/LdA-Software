@@ -12,7 +12,10 @@ import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/stock_intake.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
+import 'package:lda_inventory/catalog/firestore_catalog_repository.dart'
+    show CatalogDocument;
 import 'package:lda_inventory/catalog/product_qr.dart';
+import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
 class _InjectedCost implements CatalogProductCost {
   _InjectedCost({
@@ -164,6 +167,49 @@ Future<void> _selectCreationPrecision(WidgetTester tester, int value) async {
 
 Widget _app(CatalogRepository repository) =>
     MaterialApp(home: CatalogPage(repository: repository));
+
+/// In-process fake of both notice streams plus the callable transport.
+class _FakeNoticeStreams implements TransferNoticeStreamSource {
+  final StreamController<TransferNoticeStreamEnvelope> movementsCtrl =
+      StreamController<TransferNoticeStreamEnvelope>.broadcast();
+  final StreamController<TransferNoticeStreamEnvelope> markersCtrl =
+      StreamController<TransferNoticeStreamEnvelope>.broadcast();
+  final List<Map<String, Object?>> requests = <Map<String, Object?>>[];
+  final List<Completer<Object?>> replies = <Completer<Object?>>[];
+
+  void emitMovements(List<CatalogDocument> documents) => movementsCtrl.add(
+    TransferNoticeStreamEnvelope(documents: documents, isFromCache: false),
+  );
+
+  void emitMarkers(List<CatalogDocument> documents) => markersCtrl.add(
+    TransferNoticeStreamEnvelope(documents: documents, isFromCache: false),
+  );
+
+  CatalogDocument marker(String transferId) => CatalogDocument(
+    path:
+        'transferNoticeReads/seller-north/branches/branch-north/transfers/$transferId',
+    data: <String, Object?>{
+      'userId': 'seller-north',
+      'branchId': 'branch-north',
+      'transferId': transferId,
+      'readAt': Timestamp.fromMillisecondsSinceEpoch(1767300000000),
+    },
+  );
+
+  void completeAck(String transferId) =>
+      replies.removeLast().complete(<String, Object?>{
+        'transferId': transferId,
+        'branchId': 'branch-north',
+        'read': true,
+      });
+
+  @override
+  Stream<TransferNoticeStreamEnvelope> movements({required String branchId}) =>
+      movementsCtrl.stream;
+
+  @override
+  Stream<TransferNoticeStreamEnvelope> markers() => markersCtrl.stream;
+}
 
 void main() {
   for (final String category in <String>['creation', 'pricing', 'intake']) {
@@ -5003,6 +5049,162 @@ void main() {
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
       );
+    });
+  });
+
+  group('seller transfer notices', () {
+    Map<String, Object?> leg(String transferId, String movementId) =>
+        <String, Object?>{
+          'branchId': 'branch-north',
+          'type': 'transfer-in',
+          'productId': 'PRD-COFFEE-001',
+          'quantityScaled': 500,
+          'unit': 'kg',
+          'precision': 2,
+          'transferId': transferId,
+          'occurredAt': Timestamp.fromMillisecondsSinceEpoch(1767225600000),
+          'actorId': 'administrator-1',
+        };
+
+    TransferNoticeController controllerFor(_FakeNoticeStreams streams) {
+      final TransferNoticeController controller = TransferNoticeController(
+        session: _seller,
+        loadBackend: () async => TransferNoticeBackend(
+          streams: streams,
+          markRead: (Map<String, Object?> request) async {
+            streams.requests.add(Map<String, Object?>.of(request));
+            final Completer<Object?> reply = Completer<Object?>();
+            streams.replies.add(reply);
+            return reply.future;
+          },
+        ),
+        sessionChecker: () async => _seller,
+      );
+      controller.start();
+      return controller;
+    }
+
+    Future<void> flush(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump();
+    }
+
+    Widget appWithNotices(
+      _FakeNoticeStreams streams, {
+      EmulatorSession session = _seller,
+    }) {
+      final TransferNoticeController? controller =
+          session.role == InventoryRole.seller ? controllerFor(streams) : null;
+      return MaterialApp(
+        home: AuthenticatedCatalogPage(
+          session: session,
+          catalogLoader: (_) async => _snapshot(
+            _coffee,
+            holdings: const <CatalogHolding>[
+              CatalogHolding(
+                branchId: 'branch-north',
+                branchName: 'North Demo Branch',
+                quantityScaled: 5000,
+              ),
+            ],
+          ),
+          transferNotices: controller == null
+              ? null
+              : (EmulatorSession _) => controller,
+          onLogout: () async {},
+        ),
+      );
+    }
+
+    testWidgets(
+      'seller badge shows the live unread count with a closed inbox',
+      (WidgetTester tester) async {
+        final _FakeNoticeStreams streams = _FakeNoticeStreams();
+        await tester.pumpWidget(appWithNotices(streams));
+        await flush(tester);
+
+        // Confirmed zero: no badge label yet, but the entry exists.
+        streams.emitMovements(<CatalogDocument>[]);
+        streams.emitMarkers(<CatalogDocument>[]);
+        await flush(tester);
+        expect(
+          find.byKey(const ValueKey<String>('notices-open')),
+          findsOneWidget,
+        );
+        expect(find.text('1'), findsNothing);
+
+        // A new arrival updates the badge live.
+        streams.emitMovements(<CatalogDocument>[
+          CatalogDocument(
+            path: 'inventoryMovements/m1',
+            data: leg('t-a', 'm1'),
+          ),
+        ]);
+        await flush(tester);
+        expect(find.text('1'), findsOneWidget);
+      },
+    );
+
+    testWidgets('administrator never gets the notices entry', (
+      WidgetTester tester,
+    ) async {
+      final _FakeNoticeStreams streams = _FakeNoticeStreams();
+      await tester.pumpWidget(appWithNotices(streams, session: _administrator));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+    });
+
+    testWidgets('opening the inbox lists notices and acks through the seam', (
+      WidgetTester tester,
+    ) async {
+      final _FakeNoticeStreams streams = _FakeNoticeStreams();
+      await tester.pumpWidget(appWithNotices(streams));
+      await flush(tester);
+      streams.emitMovements(<CatalogDocument>[
+        CatalogDocument(path: 'inventoryMovements/m1', data: leg('t-a', 'm1')),
+      ]);
+      streams.emitMarkers(<CatalogDocument>[]);
+      await flush(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('notices-open')));
+      await tester.pumpAndSettle();
+      expect(find.text('Avisos de traslados'), findsOneWidget);
+      expect(find.text('Coffee: +5.00 kg'), findsOneWidget);
+      expect(find.byType(Dialog), findsNothing);
+      // Merely opening the inbox never marks anything read.
+      expect(streams.requests, isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey<String>('notice-read-t-a')));
+      await flush(tester);
+      expect(streams.requests.single, <String, Object?>{'transferId': 't-a'});
+      streams.completeAck('t-a');
+      await flush(tester);
+      expect(find.text('Leído'), findsOneWidget);
+      // The badge clears once the ack settles.
+      expect(find.text('1'), findsNothing);
+    });
+
+    testWidgets('removing the seam disposes the notice controller', (
+      WidgetTester tester,
+    ) async {
+      final _FakeNoticeStreams streams = _FakeNoticeStreams();
+      await tester.pumpWidget(appWithNotices(streams));
+      await flush(tester);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuthenticatedCatalogPage(
+            session: _seller,
+            catalogLoader: (_) async => _snapshot(_coffee),
+            onLogout: () async {},
+          ),
+        ),
+      );
+      await flush(tester);
+
+      expect(streams.movementsCtrl.hasListener, isFalse);
+      expect(streams.markersCtrl.hasListener, isFalse);
     });
   });
 }

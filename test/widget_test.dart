@@ -6,9 +6,11 @@ import 'package:lda_inventory/catalog/catalog_product.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/catalog/product_creation.dart';
 import 'package:lda_inventory/catalog/product_pricing.dart';
+import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
 import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/main.dart';
+import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
 class _UnauthenticatedGateway implements EmulatorSessionGateway {
   @override
@@ -47,6 +49,51 @@ Future<EmulatorStockIntakeGateway> _unexpectedStockIntakeLoad(
 Future<EmulatorCorrectionGateway> _unexpectedCorrectionLoad(
   EmulatorSession session,
 ) => throw StateError('the shell must not initialize corrections eagerly');
+
+class _SessionGateway implements EmulatorSessionGateway {
+  _SessionGateway(this.restored);
+
+  final EmulatorSession? restored;
+
+  @override
+  Future<EmulatorSession?> restoreSession() async => restored;
+
+  @override
+  Stream<EmulatorSession?> sessionChanges() => const Stream.empty();
+
+  @override
+  Future<EmulatorSession> login({
+    required String email,
+    required String password,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> logout() async {}
+}
+
+class _RecordingNoticeStreams implements TransferNoticeStreamSource {
+  @override
+  Stream<TransferNoticeStreamEnvelope> movements({required String branchId}) =>
+      const Stream<TransferNoticeStreamEnvelope>.empty();
+
+  @override
+  Stream<TransferNoticeStreamEnvelope> markers() =>
+      const Stream<TransferNoticeStreamEnvelope>.empty();
+}
+
+class _RecordingNoticeLoader {
+  int calls = 0;
+  final List<EmulatorSession> sessions = <EmulatorSession>[];
+
+  Future<TransferNoticeBackend> call(EmulatorSession session) async {
+    calls += 1;
+    sessions.add(session);
+    return TransferNoticeBackend(
+      streams: _RecordingNoticeStreams(),
+      markRead: (_) async => null,
+    );
+  }
+}
 
 void main() {
   testWidgets('ordinary bootstrap fails closed without fixture products', (
@@ -133,6 +180,137 @@ void main() {
     expect(find.text('Demo data · Not connected'), findsOneWidget);
     expect(find.text('Coffee'), findsOneWidget);
     expect(find.text('Local emulator sign in'), findsNothing);
+  });
+
+  group('transfer notice bootstrap wiring (B1)', () {
+    const EmulatorSession sellerSession = EmulatorSession(
+      userId: 'seller-1',
+      email: 'seller@demo.invalid',
+      role: InventoryRole.seller,
+      branchId: 'branch-north',
+    );
+    const EmulatorSession adminSession = EmulatorSession(
+      userId: 'administrator-1',
+      email: 'admin@demo.invalid',
+      role: InventoryRole.administrator,
+    );
+
+    CatalogSnapshot sellerSnapshot() => CatalogSnapshot(<CatalogItem>[
+      CatalogItem(
+        product: const CatalogProduct(
+          internalCode: 'PRD-COFFEE-001',
+          name: 'Coffee',
+          quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+        ),
+        holdings: const <CatalogHolding>[
+          CatalogHolding(
+            branchId: 'branch-north',
+            branchName: 'North Demo Branch',
+            quantityScaled: 1000,
+          ),
+        ],
+      ),
+    ]);
+
+    testWidgets(
+      'local-emulator seller sees the live notice badge and binds the backend',
+      (WidgetTester tester) async {
+        final _RecordingNoticeLoader loader = _RecordingNoticeLoader();
+        await tester.pumpWidget(
+          LdaInventoryBootstrap(
+            demoEnabled: false,
+            localEmulatorsEnabled: true,
+            emulatorLoader: () async => _SessionGateway(sellerSession),
+            emulatorCatalogLoader: (_) async => sellerSnapshot(),
+            emulatorTransferNoticeLoader: loader.call,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey<String>('notices-open')),
+          findsOneWidget,
+        );
+        expect(loader.calls, 1);
+        expect(loader.sessions.single.userId, 'seller-1');
+        expect(loader.sessions.single.branchId, 'branch-north');
+      },
+    );
+
+    testWidgets('local-emulator administrator never loads the seller backend', (
+      WidgetTester tester,
+    ) async {
+      final _RecordingNoticeLoader loader = _RecordingNoticeLoader();
+      await tester.pumpWidget(
+        LdaInventoryBootstrap(
+          demoEnabled: false,
+          localEmulatorsEnabled: true,
+          emulatorLoader: () async => _SessionGateway(adminSession),
+          emulatorCatalogLoader: (_) async => sellerSnapshot(),
+          emulatorTransferNoticeLoader: loader.call,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+      expect(loader.calls, 0);
+    });
+
+    testWidgets('demo mode never loads or shows notices', (
+      WidgetTester tester,
+    ) async {
+      final _RecordingNoticeLoader loader = _RecordingNoticeLoader();
+      await tester.pumpWidget(
+        LdaInventoryBootstrap(
+          demoEnabled: true,
+          localEmulatorsEnabled: true,
+          emulatorTransferNoticeLoader: loader.call,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EmulatorLoginShell), findsNothing);
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+      expect(loader.calls, 0);
+    });
+
+    testWidgets('disconnected mode never loads notices', (
+      WidgetTester tester,
+    ) async {
+      final _RecordingNoticeLoader loader = _RecordingNoticeLoader();
+      await tester.pumpWidget(
+        LdaInventoryBootstrap(
+          demoEnabled: false,
+          emulatorTransferNoticeLoader: loader.call,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Catalog not connected'), findsOneWidget);
+      expect(loader.calls, 0);
+    });
+
+    testWidgets(
+      'local-emulator bootstrap defaults to the live notice backend loader',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          const LdaInventoryBootstrap(
+            demoEnabled: false,
+            localEmulatorsEnabled: true,
+            emulatorLoader: _loadUnauthenticatedGateway,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+          find.byType(EmulatorLoginShell),
+        );
+        expect(
+          shell.transferNoticeBackendLoader,
+          same(DemoEmulatorBootstrap.initializeTransferNoticeBackend),
+        );
+      },
+    );
   });
 
   testWidgets('injected inventory catalog renders accessibly', (

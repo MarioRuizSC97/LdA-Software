@@ -15,6 +15,8 @@ import '../sales/sale_format.dart';
 import '../sales/sale_receipt_view.dart';
 import '../transfers/administrator_transfer_form.dart';
 import '../transfers/transfer_draft.dart';
+import '../transfers/transfer_notice_controller.dart';
+import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'product_creation.dart';
@@ -139,6 +141,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.submitTransfer,
     this.unresolvedTransferDraft,
     this.createTransferId,
+    this.transferNotices,
     super.key,
   });
 
@@ -177,6 +180,11 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 
   /// Mints the stable key for a fresh transfer.
   final TransferIdFactory? createTransferId;
+
+  /// Seller-only transfer-destination notice controller factory; null hides
+  /// the badge entry and the inbox. The controller belongs to the page so its
+  /// streams stay alive while the seller navigates inside the shell.
+  final TransferNoticeControllerFactory? transferNotices;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -239,6 +247,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
   bool _transferVisible = false;
+  bool _noticesVisible = false;
+  TransferNoticeController? _noticeController;
   int _transferGeneration = 0;
 
   /// The global admin snapshot captured when the transfer view opened, the
@@ -253,6 +263,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     super.initState();
     _configureCreation();
     _configureSale();
+    _configureNotices();
     _requestCatalog(initial: true);
   }
 
@@ -337,6 +348,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _transferGeneration += 1;
       _transferVisible = false;
       _transferSnapshot = null;
+    }
+    if (sessionChanged ||
+        (widget.transferNotices == null) !=
+            (oldWidget.transferNotices == null)) {
+      // A replaced session or a removed seam never keeps live notice streams.
+      _teardownNotices();
+      _noticesVisible = false;
+      _configureNotices();
     }
     if (sessionChanged) _requestCatalog();
   }
@@ -442,6 +461,62 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     setState(() => _correctionsVisible = false);
   }
 
+  void _configureNotices() {
+    if (widget.session.role != InventoryRole.seller) return;
+    final TransferNoticeController? controller = widget.transferNotices?.call(
+      widget.session,
+    );
+    if (controller == null) return;
+    controller.addListener(_onNoticesChanged);
+    controller.start();
+    _noticeController = controller;
+  }
+
+  void _onNoticesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _teardownNotices() {
+    _noticeController?.removeListener(_onNoticesChanged);
+    _noticeController?.dispose();
+    _noticeController = null;
+  }
+
+  void _showNotices() {
+    _presentationRevision += 1;
+    setState(() {
+      _cartVisible = false;
+      _correctionsVisible = false;
+      _noticesVisible = true;
+    });
+  }
+
+  void _closeNotices() {
+    _presentationRevision += 1;
+    setState(() => _noticesVisible = false);
+  }
+
+  /// The explicit ack path. Opening the inbox never writes; only this user
+  /// action reaches the callable. A session loss abandons silently because
+  /// the shell rebuilds the page for the new owner; any other failure is
+  /// surfaced without inventing success.
+  Future<void> _markNoticeRead(String transferId) async {
+    final TransferNoticeController? controller = _noticeController;
+    if (controller == null) return;
+    try {
+      await controller.markRead(transferId);
+    } on TransferNoticeSessionException {
+      return;
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo marcar el aviso como leído. Reintenta.'),
+        ),
+      );
+    }
+  }
+
   /// Product names from the loaded catalog, for correction lines.
   Map<String, String> _productNames() => <String, String>{
     for (final CatalogItem item in _snapshot?.items ?? const <CatalogItem>[])
@@ -523,6 +598,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _intakeGeneration += 1;
     _transferGeneration += 1;
     _transferSnapshot = null;
+    _teardownNotices();
     _sale?.dispose();
     _name.dispose();
     _unit.dispose();
@@ -710,9 +786,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool showMovements = movements != null && _movementsVisible;
     final TransferSubmit? transfer = _transfer;
     final bool showTransfer = transfer != null && _transferVisible;
+    final TransferNoticeController? noticeController =
+        widget.session.role == InventoryRole.seller ? _noticeController : null;
+    final bool showNotices = noticeController != null && _noticesVisible;
+    final int? unreadNotices = noticeController?.state.unreadCount;
     return Scaffold(
       bottomNavigationBar:
-          sale != null && receipt == null && !_cartVisible && !showCorrections
+          sale != null &&
+              receipt == null &&
+              !_cartVisible &&
+              !showCorrections &&
+              !showNotices
           ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
@@ -726,6 +810,20 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   : _showCorrections,
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
+            ),
+          if (noticeController != null)
+            IconButton(
+              key: const ValueKey<String>('notices-open'),
+              tooltip: 'Avisos de traslados',
+              onPressed: showNotices ? null : _showNotices,
+              icon: Badge(
+                isLabelVisible: unreadNotices == null || unreadNotices > 0,
+                label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+                backgroundColor: unreadNotices == null
+                    ? Theme.of(context).colorScheme.surfaceContainerHighest
+                    : null,
+                child: const Icon(Icons.inbox_outlined),
+              ),
             ),
           if (movements != null)
             TextButton.icon(
@@ -784,6 +882,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     )
                   : transfer != null && _transferVisible
                   ? _transferForm(transfer)
+                  : showNotices
+                  ? TransferNoticesView(
+                      state: noticeController.state,
+                      productNames: _productNames(),
+                      onMarkRead: _markNoticeRead,
+                      onClose: _closeNotices,
+                      onRetry: noticeController.retry,
+                    )
                   : receipt != null
                   ? SaleReceiptView(
                       receipt: receipt,

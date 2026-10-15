@@ -36,6 +36,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorCorrectionLoader,
     this.emulatorMovementsLoader,
     this.emulatorTransferLoader,
+    this.emulatorTransferNoticeLoader,
     super.key,
   });
 
@@ -50,6 +51,10 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final CorrectionGatewayLoader? emulatorCorrectionLoader;
   final AdministratorMovementsLoader? emulatorMovementsLoader;
   final TransferGatewayLoader? emulatorTransferLoader;
+
+  /// Seller transfer-notice backend loader; production wiring uses the
+  /// emulator-only default. Demo and disconnected modes never receive it.
+  final TransferNoticeBackendSessionLoader? emulatorTransferNoticeLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +88,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         transferGatewayLoader:
             emulatorTransferLoader ??
             DemoEmulatorBootstrap.initializeTransferGateway,
+        transferNoticeBackendLoader:
+            emulatorTransferNoticeLoader ??
+            DemoEmulatorBootstrap.initializeTransferNoticeBackend,
       );
     }
     return const CatalogSetupApp();
@@ -103,6 +111,8 @@ class LocalEmulatorAuthApp extends StatefulWidget {
         DemoEmulatorBootstrap.initializeAdministratorMovements,
     this.transferGatewayLoader =
         DemoEmulatorBootstrap.initializeTransferGateway,
+    this.transferNoticeBackendLoader =
+        DemoEmulatorBootstrap.initializeTransferNoticeBackend,
     super.key,
   });
 
@@ -116,6 +126,10 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final CorrectionGatewayLoader correctionGatewayLoader;
   final AdministratorMovementsLoader administratorMovementsLoader;
   final TransferGatewayLoader transferGatewayLoader;
+
+  /// Seller-only live notice backend; the shell gates it to exact seller
+  /// sessions, so administrator/disconnected flows never invoke it.
+  final TransferNoticeBackendSessionLoader transferNoticeBackendLoader;
 
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
@@ -151,6 +165,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       correctionGatewayLoader: widget.correctionGatewayLoader,
       administratorMovementsLoader: widget.administratorMovementsLoader,
       transferGatewayLoader: widget.transferGatewayLoader,
+      transferNoticeBackendLoader: widget.transferNoticeBackendLoader,
     ),
   );
 }

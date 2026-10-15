@@ -25,6 +25,7 @@ import '../transfers/administrator_transfer_form.dart';
 import '../transfers/transfer_draft.dart';
 import '../transfers/transfer_draft_persistence.dart';
 import '../transfers/transfer_draft_persistence_platform.dart';
+import '../transfers/transfer_notice_controller.dart';
 import 'emulator_bootstrap_diagnostics.dart';
 import 'emulator_session.dart';
 
@@ -42,6 +43,8 @@ typedef StockIntakeGatewayLoader = Future<EmulatorStockIntakeGateway> Function(
 typedef TransferGatewayLoader = Future<EmulatorTransferGateway> Function(
   EmulatorSession session,
 );
+typedef TransferNoticeBackendSessionLoader =
+    Future<TransferNoticeBackend> Function(EmulatorSession session);
 
 class EmulatorLoginShell extends StatefulWidget {
   const EmulatorLoginShell({
@@ -54,6 +57,7 @@ class EmulatorLoginShell extends StatefulWidget {
     this.correctionGatewayLoader,
     this.administratorMovementsLoader,
     this.transferGatewayLoader,
+    this.transferNoticeBackendLoader,
     this.transferDraftJournal,
     this.retryLoader,
     super.key,
@@ -76,6 +80,10 @@ class EmulatorLoginShell extends StatefulWidget {
 
   /// Branch-less administrator transfer gateway loader; null hides transfers.
   final TransferGatewayLoader? transferGatewayLoader;
+
+  /// Exact-seller transfer-notice backend loader; null hides the notice badge
+  /// and inbox for every role.
+  final TransferNoticeBackendSessionLoader? transferNoticeBackendLoader;
 
   /// Durable unresolved-transfer journal; null uses the platform adapter.
   final TransferDraftJournal? transferDraftJournal;
@@ -993,6 +1001,27 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       ? null
       : () => unresolvedTransferDraftFor(session);
 
+  /// The page's notice controller factory, only for the exact seller session
+  /// currently signed in. The session checker the controller consults is the
+  /// shell's own current session, so a replaced or signed-out seller never
+  /// receives late events or acknowledgements.
+  TransferNoticeControllerFactory? _transferNoticesFor(
+    EmulatorSession session,
+  ) {
+    if (!_isExactSeller(session) ||
+        widget.transferNoticeBackendLoader == null) {
+      return null;
+    }
+    return (EmulatorSession seller) => TransferNoticeController(
+      session: seller,
+      loadBackend: () => widget.transferNoticeBackendLoader!(seller),
+      sessionChecker: () async {
+        final EmulatorSession? current = _session;
+        return _isSameCurrentSeller(seller) ? current : null;
+      },
+    );
+  }
+
   ProductPricingDraft? _unresolvedPricingDraftFor(
     EmulatorSession originatingSession,
     String productId,
@@ -1074,6 +1103,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         saleCheckout: _saleCheckoutFor(session),
         saleCorrections: _saleCorrectionsFor(session),
         administratorMovements: _administratorMovementsFor(session),
+        transferNotices: _transferNoticesFor(session),
         onLogout: _logout,
       );
       if (transferJournal == null) return page;

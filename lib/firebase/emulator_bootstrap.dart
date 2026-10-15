@@ -16,12 +16,14 @@ import 'emulator_platform_stub.dart'
     if (dart.library.io) 'emulator_platform_io.dart'
     as emulator_platform;
 import '../movements/administrator_movements.dart';
+import '../transfers/transfer_notice_controller.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
 import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_transfer_gateway.dart';
+import 'emulator_transfer_notice_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
 enum EmulatorClientPlatform { android, ios, web, unsupported }
@@ -528,6 +530,31 @@ class DemoEmulatorBootstrap {
             sessionChecker: _firebaseActiveSessionChecker(auth),
             invoke: firebaseTransferCallable(functions),
           ),
+    );
+  }
+
+  /// Seller transfer-destination notice backend over the already-connected
+  /// trusted emulator Firestore (named app, never the default cloud instance)
+  /// and the `markTransferNoticeRead` callable in region us-south1, wired
+  /// exactly like the other live gateways. Seller-only: an administrator or
+  /// branch-less session is refused before any SDK work, so only exact seller
+  /// sessions ever load this backend.
+  static Future<TransferNoticeBackend> initializeTransferNoticeBackend(
+    EmulatorSession session,
+  ) {
+    if (session.role != InventoryRole.seller || session.branchId == null) {
+      throw ArgumentError('transfer notices belong to an exact seller session');
+    }
+    return _initializeLiveFirebase<TransferNoticeBackend>(
+      (
+        FirebaseAuth auth,
+        FirebaseFirestore firestore,
+        FirebaseFunctions functions,
+      ) => loadTransferNoticeBackend(
+        firestore: firestore,
+        functions: functions,
+        session: session,
+      ),
     );
   }
 
