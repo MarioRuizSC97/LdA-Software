@@ -647,8 +647,8 @@ void main() {
       await _pump(tester, _administrator, backend);
 
       // The entry is a labelled body toolbar action at every width, so the
-      // legacy AppBar row gains no width from transfers and refresh and
-      // logout keep their place.
+      // AppBar gains no width from transfers; refresh keeps its place and
+      // logout stays reachable from the narrow shell's overflow menu.
       expect(tester.takeException(), isNull);
       expect(find.text('Traslados'), findsOneWidget);
       expect(find.byTooltip('Traslados'), findsOneWidget);
@@ -659,8 +659,12 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.text('Log out'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+      await tester.tap(_key('shell-more'));
+      await tester.pumpAndSettle();
+      expect(find.text('Log out'), findsOneWidget);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
 
       // The entry is inside the viewport and really opens the form.
       final Rect rect = tester.getRect(_key('transfer-open'));
@@ -702,9 +706,11 @@ void main() {
         withMovements: true,
       );
 
-      // Any base legacy row overflow stays measured, not asserted away; the
-      // entry must add neither a report nor a single pixel to it.
+      // The entry must add neither a report nor a single pixel.
       expect(withEntry, equals(baseline));
+      // The shell collapses its text actions when narrow, so neither layout
+      // may overflow at all.
+      expect(baseline, isEmpty);
 
       // The entry is inside the viewport and really opens the form.
       final Rect rect = tester.getRect(_key('transfer-open'));
@@ -766,6 +772,9 @@ void main() {
         );
 
         expect(withEntry, equals(baseline));
+        // The shell collapses its text actions when narrow, so neither layout
+        // may overflow at all.
+        expect(baseline, isEmpty);
 
         final Rect rect = tester.getRect(_key('transfer-open'));
         expect(rect.left, greaterThanOrEqualTo(0.0));
@@ -801,6 +810,9 @@ void main() {
       );
 
       expect(withEntry, equals(baseline));
+      // The shell collapses its text actions when narrow, so neither layout
+      // may overflow at all.
+      expect(baseline, isEmpty);
       expect(find.text('Traslados'), findsOneWidget);
       final Rect rect = tester.getRect(_key('transfer-open'));
       expect(rect.left, greaterThanOrEqualTo(0.0));

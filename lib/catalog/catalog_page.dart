@@ -790,6 +790,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         widget.session.role == InventoryRole.seller ? _noticeController : null;
     final bool showNotices = noticeController != null && _noticesVisible;
     final int? unreadNotices = noticeController?.state.unreadCount;
+    // Text actions collapse into an overflow menu when the window (measured
+    // in unscaled text units) cannot hold them next to the title.
+    final bool compactBar =
+        MediaQuery.sizeOf(context).width <
+        _compactShellWidth * MediaQuery.textScalerOf(context).scale(1);
+    final VoidCallback? openCorrections = showCorrections || showTransfer
+        ? null
+        : _showCorrections;
+    final VoidCallback? openMovements = showMovements || showTransfer
+        ? null
+        : _showMovements;
     return Scaffold(
       bottomNavigationBar:
           sale != null &&
@@ -802,12 +813,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       appBar: AppBar(
         title: const Text('LDA Inventory'),
         actions: <Widget>[
-          if (corrections != null)
+          if (corrections != null && !compactBar)
             TextButton.icon(
               key: const ValueKey<String>('corrections-open'),
-              onPressed: showCorrections || showTransfer
-                  ? null
-                  : _showCorrections,
+              onPressed: openCorrections,
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
             ),
@@ -825,10 +834,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 child: const Icon(Icons.inbox_outlined),
               ),
             ),
-          if (movements != null)
+          if (movements != null && !compactBar)
             TextButton.icon(
               key: const ValueKey<String>('movements-open'),
-              onPressed: showMovements || showTransfer ? null : _showMovements,
+              onPressed: openMovements,
               icon: const Icon(Icons.swap_vert),
               label: const Text('Movimientos'),
             ),
@@ -837,11 +846,48 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             onPressed: _loading ? null : _requestCatalog,
             icon: const Icon(Icons.refresh),
           ),
-          OutlinedButton(
-            onPressed: widget.onLogout,
-            child: const Text('Log out'),
-          ),
-          const SizedBox(width: 12),
+          if (compactBar)
+            PopupMenuButton<VoidCallback>(
+              key: const ValueKey<String>('shell-more'),
+              onSelected: (VoidCallback action) => action(),
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<VoidCallback>>[
+                    if (corrections != null)
+                      PopupMenuItem<VoidCallback>(
+                        key: const ValueKey<String>('corrections-open'),
+                        enabled: openCorrections != null,
+                        value: openCorrections,
+                        child: const ListTile(
+                          leading: Icon(Icons.assignment_return_outlined),
+                          title: Text('Correcciones'),
+                        ),
+                      ),
+                    if (movements != null)
+                      PopupMenuItem<VoidCallback>(
+                        key: const ValueKey<String>('movements-open'),
+                        enabled: openMovements != null,
+                        value: openMovements,
+                        child: const ListTile(
+                          leading: Icon(Icons.swap_vert),
+                          title: Text('Movimientos'),
+                        ),
+                      ),
+                    PopupMenuItem<VoidCallback>(
+                      value: widget.onLogout,
+                      child: const ListTile(
+                        leading: Icon(Icons.logout),
+                        title: Text('Log out'),
+                      ),
+                    ),
+                  ],
+            )
+          else ...<Widget>[
+            OutlinedButton(
+              onPressed: widget.onLogout,
+              child: const Text('Log out'),
+            ),
+            const SizedBox(width: 12),
+          ],
         ],
       ),
       body: SafeArea(
@@ -2120,6 +2166,10 @@ void _validateBranchName(String? name) {
 
 /// Width of the required-error border, stronger than the 1.0 normal border.
 const double _errorBorderWidth = 2.0;
+
+/// Below this window width (in unscaled text units) the shell AppBar moves
+/// its text actions into an overflow menu.
+const double _compactShellWidth = 600;
 
 /// Stable outlined shape shared by the pricing form fields in normal and error
 /// states, so an error never switches the field's border shape.
