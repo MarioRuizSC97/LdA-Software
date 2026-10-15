@@ -238,7 +238,7 @@ void main() {
       Finder banner() => find.textContaining(switch (category) {
         'creation' => 'Producto creado',
         'pricing' => 'Precio guardado. Auditoría',
-        _ => 'Intake recorded. Entry',
+        _ => 'Entrada registrada. Folio',
       });
       Future<void> begin(WidgetTester tester) async {
         final Finder open = category == 'creation'
@@ -281,7 +281,7 @@ void main() {
           switch (category) {
             'creation' => 'Crear',
             'pricing' => 'Guardar precio / IVA',
-            _ => 'Record intake',
+            _ => 'Registrar entrada',
           },
         );
         await tester.ensureVisible(button);
@@ -369,7 +369,7 @@ void main() {
           if (category != 'creation') {
             expect(find.text('Coffee'), findsOneWidget);
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-            expect(find.text('Cost unavailable'), findsOneWidget);
+            expect(find.text('Costo no disponible'), findsOneWidget);
             expect(find.textContaining('Sin entrada registrada'), findsWidgets);
           } else {
             expect(
@@ -443,7 +443,7 @@ void main() {
             );
             await tester.pumpAndSettle();
             final Finder error = find.textContaining(
-              unknown ? 'resultado es incierto' : RegExp('rejected|Se rechazó'),
+              unknown ? 'resultado es incierto' : 'Se rechazó',
             );
             expect(error, findsOneWidget);
             await tester.pump(const Duration(seconds: 20));
@@ -588,11 +588,11 @@ void main() {
       quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
     );
     for (final (int?, bool, String) state in <(int?, bool, String)>[
-      (0, true, 'Latest unit cost: 0.00 MXN'),
-      (12345, true, 'Latest unit cost: 123.45 MXN'),
-      (9007199254740991, true, 'Latest unit cost: 90071992547409.91 MXN'),
-      (null, true, 'No cost recorded'),
-      (null, false, 'Cost unavailable'),
+      (0, true, 'Último costo unitario: 0.00 MXN'),
+      (12345, true, 'Último costo unitario: 123.45 MXN'),
+      (9007199254740991, true, 'Último costo unitario: 90071992547409.91 MXN'),
+      (null, true, 'Sin costo registrado'),
+      (null, false, 'Costo no disponible'),
     ]) {
       for (final CatalogProduct product in <CatalogProduct>[
         _coffee,
@@ -659,7 +659,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Catálogo no disponible'), findsOneWidget);
         expect(find.text('Coffee'), findsNothing);
-        expect(find.textContaining('Latest unit cost:'), findsNothing);
+        expect(find.textContaining('Último costo unitario:'), findsNothing);
         await tester.pumpWidget(const SizedBox.shrink());
       }
     });
@@ -674,7 +674,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(find.text('Coffee'), findsNothing);
-      expect(find.textContaining('Latest unit cost:'), findsNothing);
+      expect(find.textContaining('Último costo unitario:'), findsNothing);
     });
     testWidgets('refresh replaces latest cost, clears stale states and role', (
       WidgetTester tester,
@@ -685,7 +685,7 @@ void main() {
       );
       loader.requests.last.complete(snapshot(cents: 345));
       await tester.pumpAndSettle();
-      expect(find.text('Latest unit cost: 3.45 MXN'), findsOneWidget);
+      expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
       for (final CatalogSnapshot next in <CatalogSnapshot>[
         snapshot(cents: 678),
         snapshot(available: false),
@@ -693,18 +693,18 @@ void main() {
       ]) {
         await tester.tap(find.byTooltip('Actualizar catálogo'));
         await tester.pump();
-        expect(find.textContaining('Latest unit cost:'), findsNothing);
-        expect(find.text('Cost unavailable'), findsNothing);
-        expect(find.text('No cost recorded'), findsNothing);
+        expect(find.textContaining('Último costo unitario:'), findsNothing);
+        expect(find.text('Costo no disponible'), findsNothing);
+        expect(find.text('Sin costo registrado'), findsNothing);
         loader.requests.last.complete(next);
         await tester.pumpAndSettle();
         final String expected = !next.costsAvailable
-            ? 'Cost unavailable'
+            ? 'Costo no disponible'
             : next.costs.isEmpty
-            ? 'No cost recorded'
-            : 'Latest unit cost: 6.78 MXN';
+            ? 'Sin costo registrado'
+            : 'Último costo unitario: 6.78 MXN';
         expect(find.text(expected), findsOneWidget);
-        expect(find.text('Latest unit cost: 3.45 MXN'), findsNothing);
+        expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
       }
       await tester.tap(find.byTooltip('Actualizar catálogo'));
       await tester.pump();
@@ -724,12 +724,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Coffee'), findsOneWidget);
-      expect(find.text('Stock: 0.00 kg'), findsOneWidget);
+      expect(find.text('Existencias: 0.00 kg'), findsOneWidget);
       expect(find.text('Agotado'), findsOneWidget);
       expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-      expect(find.textContaining('Latest unit cost:'), findsNothing);
-      expect(find.text('Cost unavailable'), findsNothing);
-      expect(find.text('No cost recorded'), findsNothing);
+      expect(find.textContaining('Último costo unitario:'), findsNothing);
+      expect(find.text('Costo no disponible'), findsNothing);
+      expect(find.text('Sin costo registrado'), findsNothing);
     });
   });
   group('creation pending draft authority', () {
@@ -977,7 +977,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text(southMissing), findsOneWidget);
-      expect(find.text('No branch holdings'), findsNothing);
+      expect(find.text('Sin existencias en sucursales'), findsNothing);
       expect(find.textContaining(': 0.00 kg'), findsNothing);
       expect(data.items.single.holdings, isEmpty);
     });
@@ -1062,7 +1062,9 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(
-            find.text(quantity == 0 ? 'Stock: 0.00 kg' : 'Stock: 1.25 kg'),
+            find.text(
+              quantity == 0 ? 'Existencias: 0.00 kg' : 'Existencias: 1.25 kg',
+            ),
             findsOneWidget,
           );
           expect(
@@ -1071,7 +1073,7 @@ void main() {
           );
           expect(find.textContaining('Demo Branch'), findsNothing);
           expect(find.textContaining('Sin entrada registrada'), findsNothing);
-          expect(find.text('Record stock intake'), findsNothing);
+          expect(find.text('Registrar entrada de inventario'), findsNothing);
           expect(find.text('Editar precio / IVA'), findsNothing);
           expect(find.textContaining('cost'), findsNothing);
           expect(mutations, 0);
@@ -1142,7 +1144,7 @@ void main() {
         snapshot(holdings: const <CatalogHolding>[north]),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Stock: 1.25 kg'), findsOneWidget);
+      expect(find.text('Existencias: 1.25 kg'), findsOneWidget);
       expect(find.textContaining('Demo Branch'), findsNothing);
       expect(find.textContaining('Sin entrada registrada'), findsNothing);
     });
@@ -1371,7 +1373,7 @@ void main() {
 
     expect(find.text('Coffee'), findsNothing);
     expect(find.text('Tea'), findsOneWidget);
-    expect(find.text('Stock: 4 piece'), findsOneWidget);
+    expect(find.text('Existencias: 4 piece'), findsOneWidget);
   });
 
   testWidgets('administrator sees named zero holdings and no-holdings state', (
@@ -1411,7 +1413,7 @@ void main() {
 
     expect(find.text('North Demo Branch: 0.00 kg · Agotado'), findsOneWidget);
     expect(find.text('South Demo Branch: 2.50 kg'), findsOneWidget);
-    expect(find.text('No branch holdings'), findsOneWidget);
+    expect(find.text('Sin existencias en sucursales'), findsOneWidget);
   });
 
   testWidgets('empty catalog is explicit', (WidgetTester tester) async {
@@ -1448,14 +1450,14 @@ void main() {
 
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
-    expect(find.text('Stock: 9.99 kg'), findsNothing);
+    expect(find.text('Existencias: 9.99 kg'), findsNothing);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Reintentar'));
     await tester.pumpAndSettle();
 
     expect(calls, 2);
     expect(find.text('Coffee'), findsOneWidget);
-    expect(find.text('Stock: 1.00 kg'), findsOneWidget);
+    expect(find.text('Existencias: 1.00 kg'), findsOneWidget);
   });
 
   testWidgets('rejects missing and multiple seller holdings', (
@@ -1609,8 +1611,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Unit: kg (precision 2)'), findsOneWidget);
-    expect(find.text('Quantity: kg (precision 2)'), findsNothing);
+    expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
+    expect(find.text('Quantity: kg (precisión 2)'), findsNothing);
     expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
     expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
@@ -3711,7 +3713,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Record stock intake'), findsNothing);
+    expect(find.text('Registrar entrada de inventario'), findsNothing);
     expect(
       find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       findsNothing,
@@ -3759,14 +3761,14 @@ void main() {
       final Finder costField = find.byKey(
         const ValueKey<String>('intake-unit-cost'),
       );
-      expect(find.text('Select branch'), findsOneWidget);
+      expect(find.text('Selecciona una sucursal'), findsOneWidget);
       expect(find.textContaining('Line total'), findsNothing);
       expect(find.byIcon(Icons.error_outline), findsNothing);
-      expect(find.text('Branch is required.'), findsNothing);
-      expect(find.text('Quantity is required.'), findsNothing);
-      expect(find.text('Unit cost is required.'), findsNothing);
+      expect(find.text('La sucursal es obligatoria.'), findsNothing);
+      expect(find.text('La cantidad es obligatoria.'), findsNothing);
+      expect(find.text('El costo unitario es obligatorio.'), findsNothing);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pump();
 
       expect(intakeIds, 0);
@@ -3826,16 +3828,19 @@ void main() {
         );
       }
 
-      expectDropdownFeedback('Branch is required.', RegExp('^Branch error: '));
+      expectDropdownFeedback(
+        'La sucursal es obligatoria.',
+        RegExp('^Error en la sucursal: '),
+      );
       expectFieldFeedback(
         quantityField,
-        'Quantity is required.',
-        RegExp('^Quantity error: '),
+        'La cantidad es obligatoria.',
+        RegExp('^Error en la cantidad: '),
       );
       expectFieldFeedback(
         costField,
-        'Unit cost is required.',
-        RegExp('^Unit cost error: '),
+        'El costo unitario es obligatorio.',
+        RegExp('^Error en el costo unitario: '),
       );
 
       // Correcting one field keeps the remaining feedback visible.
@@ -3843,16 +3848,16 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('North Demo Branch').last);
       await tester.pumpAndSettle();
-      expect(find.text('Branch is required.'), findsNothing);
+      expect(find.text('La sucursal es obligatoria.'), findsNothing);
       expectFieldFeedback(
         quantityField,
-        'Quantity is required.',
-        RegExp('^Quantity error: '),
+        'La cantidad es obligatoria.',
+        RegExp('^Error en la cantidad: '),
       );
       expectFieldFeedback(
         costField,
-        'Unit cost is required.',
-        RegExp('^Unit cost error: '),
+        'El costo unitario es obligatorio.',
+        RegExp('^Error en el costo unitario: '),
       );
 
       await tester.enterText(quantityField, '2');
@@ -3860,7 +3865,7 @@ void main() {
       await tester.pump();
       expect(find.byIcon(Icons.error_outline), findsNothing);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
       expect(intakeIds, 1);
@@ -3872,8 +3877,11 @@ void main() {
         'quantity': '2',
         'unitCostMxn': '12.50',
       });
-      expect(find.text('Intake recorded. Entry intake-key-1'), findsOneWidget);
-      expect(find.text('Record intake'), findsNothing);
+      expect(
+        find.text('Entrada registrada. Folio intake-key-1'),
+        findsOneWidget,
+      );
+      expect(find.text('Registrar entrada'), findsNothing);
 
       // The next intake advances to a fresh idempotency key.
       await tester.tap(
@@ -3892,7 +3900,7 @@ void main() {
         find.byKey(const ValueKey<String>('intake-unit-cost')),
         '5',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
       expect(intakeIds, 2);
       expect(requests, hasLength(2));
@@ -3944,12 +3952,15 @@ void main() {
     await tester.enterText(costField, '12.33');
     await tester.pump();
     // 2.55 kg * 12.33 MXN: 255 * 1233 / 100 truncates to 3144 centavos.
-    expect(find.text('Line total (truncated): 31.44 MXN'), findsOneWidget);
+    expect(
+      find.text('Total de la línea (truncado): 31.44 MXN'),
+      findsOneWidget,
+    );
 
     await tester.enterText(quantityField, '0.01');
     await tester.enterText(costField, '0.01');
     await tester.pump();
-    expect(find.text('Line total (truncated): 0.00 MXN'), findsOneWidget);
+    expect(find.text('Total de la línea (truncado): 0.00 MXN'), findsOneWidget);
 
     await tester.enterText(quantityField, '0.001');
     await tester.pump();
@@ -3992,7 +4003,7 @@ void main() {
       find.byKey(const ValueKey<String>('intake-unit-cost')),
       '12.50',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -4032,7 +4043,7 @@ void main() {
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
     expect(requests[1].idempotencyKey, 'intake-key-1');
-    expect(find.text('Intake recorded. Entry intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
   });
 
   testWidgets(
@@ -4073,11 +4084,11 @@ void main() {
         find.byKey(const ValueKey<String>('intake-unit-cost')),
         '12.50',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Record intake'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
       expect(
-        find.text('Stock intake was rejected (out-of-range).'),
+        find.text('Se rechazó la entrada de inventario (out-of-range).'),
         findsOneWidget,
       );
       expect(find.text('Reintentar misma solicitud'), findsNothing);
@@ -4092,7 +4103,7 @@ void main() {
 
       final Finder retryRecord = find.widgetWithText(
         FilledButton,
-        'Record intake',
+        'Registrar entrada',
       );
       await tester.ensureVisible(retryRecord);
       await tester.tap(retryRecord);
@@ -4101,7 +4112,10 @@ void main() {
       expect(keyCalls, 2);
       expect(requests, hasLength(2));
       expect(requests.last.idempotencyKey, 'intake-key-2');
-      expect(find.text('Intake recorded. Entry intake-key-2'), findsOneWidget);
+      expect(
+        find.text('Entrada registrada. Folio intake-key-2'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -4142,13 +4156,16 @@ void main() {
       find.byKey(const ValueKey<String>('intake-unit-cost')),
       '12.50',
     );
-    final Finder record = find.widgetWithText(FilledButton, 'Record intake');
+    final Finder record = find.widgetWithText(
+      FilledButton,
+      'Registrar entrada',
+    );
     await tester.ensureVisible(record);
     await tester.tap(record);
     await tester.pumpAndSettle();
 
     expect(mutations, 1);
-    expect(find.text('Intake recorded. Entry intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Reintentar misma solicitud'), findsNothing);
   });
@@ -4192,7 +4209,7 @@ void main() {
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Select branch'), findsOneWidget);
+      expect(find.text('Selecciona una sucursal'), findsOneWidget);
       expect(
         tester
             .widget<TextFormField>(
@@ -4252,7 +4269,10 @@ void main() {
 
       expect(requests, <StockIntakeDraft>[stored]);
       expect(requests.single.idempotencyKey, 'intake-stored');
-      expect(find.text('Intake recorded. Entry intake-stored'), findsOneWidget);
+      expect(
+        find.text('Entrada registrada. Folio intake-stored'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -4357,7 +4377,7 @@ void main() {
         );
         final Finder record = find.widgetWithText(
           FilledButton,
-          'Record intake',
+          'Registrar entrada',
         );
         await tester.ensureVisible(record);
         await tester.tap(record);

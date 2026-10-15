@@ -2809,7 +2809,10 @@ void main() {
         find.byKey(const ValueKey<String>('intake-unit-cost')),
         '12.50',
       );
-      final Finder record = find.widgetWithText(FilledButton, 'Record intake');
+      final Finder record = find.widgetWithText(
+        FilledButton,
+        'Registrar entrada',
+      );
       await tester.ensureVisible(record);
       await tester.tap(record);
       await tester.pumpAndSettle();
@@ -2875,7 +2878,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
       expect(attempts[1].idempotencyKey, frozenKey);
-      expect(find.text('Intake recorded. Entry $frozenKey'), findsOneWidget);
+      expect(find.text('Entrada registrada. Folio $frozenKey'), findsOneWidget);
       expect(
         shell.unresolvedStockIntakeDraftFor(
           _administrator,

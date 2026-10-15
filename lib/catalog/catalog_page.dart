@@ -1759,11 +1759,15 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       if (missingBranch || missingQuantity || missingCost) {
         setState(() {
           _intakeError = null;
-          _intakeBranchError = missingBranch ? 'Branch is required.' : null;
-          _intakeQuantityError = missingQuantity
-              ? 'Quantity is required.'
+          _intakeBranchError = missingBranch
+              ? 'La sucursal es obligatoria.'
               : null;
-          _intakeCostError = missingCost ? 'Unit cost is required.' : null;
+          _intakeQuantityError = missingQuantity
+              ? 'La cantidad es obligatoria.'
+              : null;
+          _intakeCostError = missingCost
+              ? 'El costo unitario es obligatorio.'
+              : null;
         });
         return;
       }
@@ -1820,7 +1824,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _intakePending = false;
         _intakeUncertain = false;
         _lockedIntakeDraft = null;
-        _intakeError = 'Stock intake was rejected (${error.code}).';
+        _intakeError = 'Se rechazó la entrada de inventario (${error.code}).';
       });
     } on StockIntakeUnresolvedException {
       if (!mounted || generation != _intakeGeneration) return;
@@ -1882,7 +1886,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               Semantics(
                 header: true,
                 child: Text(
-                  'Record stock intake',
+                  'Registrar entrada de inventario',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
               ),
@@ -1891,8 +1895,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               SelectableText(product.internalCode),
               const SizedBox(height: 8),
               Text(
-                'Unit: ${product.quantitySpec.unit} '
-                '(precision ${product.quantitySpec.precision})',
+                'Unidad: ${product.quantitySpec.unit} '
+                '(precisión ${product.quantitySpec.precision})',
               ),
               const SizedBox(height: 16),
               Semantics(
@@ -1900,7 +1904,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _intakeBranchError != null,
                 label: _intakeBranchError == null
                     ? null
-                    : 'Branch error: $_intakeBranchError',
+                    : 'Error en la sucursal: $_intakeBranchError',
                 child: DropdownButtonFormField<String>(
                   key: const ValueKey<String>('intake-branch'),
                   isExpanded: true,
@@ -1908,12 +1912,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Branch',
+                      labelText: 'Sucursal',
                       border: _pricingFieldBorder,
                     ),
                     _intakeBranchError,
                   ),
-                  hint: const Text('Select branch'),
+                  hint: const Text('Selecciona una sucursal'),
                   items: choices
                       .map(
                         (CatalogBranchChoice choice) =>
@@ -1932,7 +1936,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _intakeQuantityError != null,
                 label: _intakeQuantityError == null
                     ? null
-                    : 'Quantity error: $_intakeQuantityError',
+                    : 'Error en la cantidad: $_intakeQuantityError',
                 child: TextFormField(
                   key: const ValueKey<String>('intake-quantity'),
                   controller: _intakeQuantity,
@@ -1946,11 +1950,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     InputDecoration(
-                      labelText: 'Quantity (${product.quantitySpec.unit})',
+                      labelText: 'Cantidad (${product.quantitySpec.unit})',
                       helperText: product.quantitySpec.precision == 0
-                          ? 'Whole ${product.quantitySpec.unit} only.'
-                          : 'Up to ${product.quantitySpec.precision} decimal '
-                                'places.',
+                          ? 'Solo cantidades enteras.'
+                          : 'Hasta ${product.quantitySpec.precision} decimales.',
                       border: _pricingFieldBorder,
                     ),
                     _intakeQuantityError,
@@ -1963,7 +1966,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _intakeCostError != null,
                 label: _intakeCostError == null
                     ? null
-                    : 'Unit cost error: $_intakeCostError',
+                    : 'Error en el costo unitario: $_intakeCostError',
                 child: TextFormField(
                   key: const ValueKey<String>('intake-unit-cost'),
                   controller: _intakeCost,
@@ -1977,7 +1980,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Unit cost (MXN)',
+                      labelText: 'Costo unitario (MXN)',
                       helperText:
                           'Monto exacto en MXN con máximo dos decimales.',
                       border: _pricingFieldBorder,
@@ -1988,12 +1991,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               ),
               if (totalPreview case final String total) ...<Widget>[
                 const SizedBox(height: 12),
-                Text('Line total (truncated): $total'),
+                Text('Total de la línea (truncado): $total'),
               ],
               if (_intakeError case final String error) ...<Widget>[
                 const SizedBox(height: 12),
                 Semantics(
-                  label: 'Stock intake error',
+                  label: 'Error en la entrada de inventario',
                   liveRegion: true,
                   child: ExcludeSemantics(child: Text(error)),
                 ),
@@ -2007,7 +2010,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: _intakePending ? null : _submitIntake,
                     child: _intakePending
                         ? Semantics(
-                            label: 'Recording stock intake',
+                            label: 'Registrando entrada de inventario',
                             liveRegion: true,
                             child: const SizedBox.square(
                               dimension: 20,
@@ -2017,7 +2020,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                         : Text(
                             _intakeUncertain
                                 ? 'Reintentar misma solicitud'
-                                : 'Record intake',
+                                : 'Registrar entrada',
                           ),
                   ),
                   OutlinedButton(
@@ -2453,7 +2456,7 @@ class _IntakeSuccess extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
-    label: 'Stock intake succeeded',
+    label: 'Entrada de inventario registrada',
     child: ColoredBox(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Padding(
@@ -2463,7 +2466,9 @@ class _IntakeSuccess extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.check_circle_outline),
             const SizedBox(width: 8),
-            Flexible(child: Text('Intake recorded. Entry ${result.entryId}')),
+            Flexible(
+              child: Text('Entrada registrada. Folio ${result.entryId}'),
+            ),
           ],
         ),
       ),
@@ -2595,10 +2600,12 @@ class _CatalogList extends StatelessWidget {
 }
 
 String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
-  if (snapshot == null || !snapshot.costsAvailable) return 'Cost unavailable';
+  if (snapshot == null || !snapshot.costsAvailable) {
+    return 'Costo no disponible';
+  }
   final CatalogProductCost? cost = snapshot.costs[productId];
-  if (cost == null) return 'No cost recorded';
-  return 'Latest unit cost: '
+  if (cost == null) return 'Sin costo registrado';
+  return 'Último costo unitario: '
       '${formatCentavos(cost.latestUnitCostCentavos)} MXN';
 }
 
@@ -2703,13 +2710,13 @@ class _ProductDetails extends StatelessWidget {
         const SizedBox(height: 8),
         SelectableText(
           product.internalCode,
-          semanticsLabel: 'Internal code ${product.internalCode}',
+          semanticsLabel: 'Código interno ${product.internalCode}',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
         Text(
-          'Unit: ${product.quantitySpec.unit} '
-          '(precision ${product.quantitySpec.precision})',
+          'Unidad: ${product.quantitySpec.unit} '
+          '(precisión ${product.quantitySpec.precision})',
         ),
         if (product.pricing case final CatalogPricing pricing) ...<Widget>[
           const SizedBox(height: 4),
@@ -2757,7 +2764,7 @@ class _ProductDetails extends StatelessWidget {
             key: ValueKey<String>('intake-${product.internalCode}'),
             onPressed: () => onRecordIntake!(product),
             icon: const Icon(Icons.inventory_outlined),
-            label: const Text('Record stock intake'),
+            label: const Text('Registrar entrada de inventario'),
           ),
         ],
         if (saleAction?.call(product) case final Widget action) ...<Widget>[
@@ -2794,7 +2801,7 @@ class _ProductDetails extends StatelessWidget {
           .toList(growable: false);
     }
     if (role == InventoryRole.administrator && item.holdings.isEmpty) {
-      return const <Widget>[Text('No branch holdings')];
+      return const <Widget>[Text('Sin existencias en sucursales')];
     }
     return item.holdings.map(_holdingRow).toList(growable: false);
   }
@@ -2813,7 +2820,7 @@ class _ProductDetails extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Stock: $quantity $unit'),
+        Text('Existencias: $quantity $unit'),
         if (holding.isOutOfStock)
           Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
       ],
