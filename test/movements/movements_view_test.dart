@@ -524,4 +524,72 @@ void main() {
     expect(find.text('Movimiento ilegible'), findsOne);
     expect(find.textContaining('bad'), findsOne);
   });
+
+  group('responsive and accessible layout', () {
+    void setViewport(WidgetTester tester, Size size, {double textScale = 1}) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    for (final double scale in <double>[1, 2]) {
+      testWidgets('fits 320px at text scale $scale', (
+        WidgetTester tester,
+      ) async {
+        setViewport(tester, const Size(320, 900), textScale: scale);
+        await tester.pumpWidget(_view(backend));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(_key('movement-m-1'), findsOne);
+        expect(find.text('Editar nombre'), findsOne);
+      });
+    }
+
+    testWidgets('rows stay readable width on wide screens', (
+      WidgetTester tester,
+    ) async {
+      setViewport(tester, const Size(1600, 900));
+      await tester.pumpWidget(_view(backend));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.getSize(_key('movement-m-1')).width,
+        lessThanOrEqualTo(920),
+      );
+    });
+
+    testWidgets('the branch filter announces its purpose', (
+      WidgetTester tester,
+    ) async {
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.pumpWidget(_view(backend));
+      await tester.pumpAndSettle();
+
+      expect(find.bySemanticsLabel(RegExp('Filtrar por sucursal')), findsOne);
+      semantics.dispose();
+    });
+
+    testWidgets('a movement row reads as one announcement', (
+      WidgetTester tester,
+    ) async {
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.pumpWidget(_view(backend));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.bySemanticsLabel(
+          RegExp('Venta.*Café molido.*Norte.*Ana López', dotAll: true),
+        ),
+        findsOne,
+      );
+      // The name action stays its own focusable button.
+      expect(find.bySemanticsLabel('Editar nombre'), findsOne);
+      semantics.dispose();
+    });
+  });
 }

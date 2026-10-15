@@ -6,6 +6,13 @@ import 'administrator_movements.dart';
 import 'inventory_movement.dart';
 import 'seller_profiles.dart';
 
+/// Rows stop growing past this width so they stay readable on wide screens.
+const double _maxContentWidth = 920;
+
+/// Below this row width (in unscaled text units) the name action moves
+/// under the row details.
+const double _inlineActionMinWidth = 480;
+
 /// Administrator movements screen. It replaces the catalog body, like the
 /// corrections view. Seller names are resolved once per uid and cached for
 /// the life of this screen; only the display name is ever shown.
@@ -171,18 +178,22 @@ class _MovementsViewState extends State<MovementsView> {
                 'Movimientos',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              DropdownButton<String?>(
-                key: const ValueKey<String>('movements-branch-filter'),
-                value: _branchId,
-                onChanged: _selectBranch,
-                items: <DropdownMenuItem<String?>>[
-                  const DropdownMenuItem<String?>(child: Text('Todas')),
-                  for (final CatalogBranchChoice choice in widget.branchChoices)
-                    DropdownMenuItem<String?>(
-                      value: choice.branchId,
-                      child: Text(choice.branchName),
-                    ),
-                ],
+              Semantics(
+                label: 'Filtrar por sucursal',
+                child: DropdownButton<String?>(
+                  key: const ValueKey<String>('movements-branch-filter'),
+                  value: _branchId,
+                  onChanged: _selectBranch,
+                  items: <DropdownMenuItem<String?>>[
+                    const DropdownMenuItem<String?>(child: Text('Todas')),
+                    for (final CatalogBranchChoice choice
+                        in widget.branchChoices)
+                      DropdownMenuItem<String?>(
+                        value: choice.branchId,
+                        child: Text(choice.branchName),
+                      ),
+                  ],
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: _loading ? null : _refresh,
@@ -192,7 +203,15 @@ class _MovementsViewState extends State<MovementsView> {
             ],
           ),
         ),
-        Expanded(child: _body()),
+        Expanded(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+              child: _body(),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -247,27 +266,41 @@ class _MovementsViewState extends State<MovementsView> {
       movement.unit,
     );
     final (String actor, String? action) = _actor(movement);
+    final Widget? actionButton = action == null
+        ? null
+        : TextButton(
+            onPressed: () => _editName(movement.actorId),
+            child: Text(action),
+          );
     return Card(
       key: ValueKey<String>('movement-${movement.id}'),
-      child: ListTile(
-        title: Text(movement.type.label),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text('$product · $quantity'),
-            Text(
-              '${_branchLabel(movement.branchId)} · '
-              '${formatSaleDateTime(movement.occurredAt)}',
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          // A narrow or large-text row has no room beside the details for the
+          // name action, so it moves below them instead of squeezing them.
+          final bool stacked =
+              constraints.maxWidth <
+              _inlineActionMinWidth * MediaQuery.textScalerOf(context).scale(1);
+          return ListTile(
+            title: Text(movement.type.label),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('$product · $quantity'),
+                Text(
+                  '${_branchLabel(movement.branchId)} · '
+                  '${formatSaleDateTime(movement.occurredAt)}',
+                ),
+                Text(
+                  actor,
+                  key: ValueKey<String>('movement-actor-${movement.id}'),
+                ),
+                if (stacked && actionButton != null) actionButton,
+              ],
             ),
-            Text(actor, key: ValueKey<String>('movement-actor-${movement.id}')),
-          ],
-        ),
-        trailing: action == null
-            ? null
-            : TextButton(
-                onPressed: () => _editName(movement.actorId),
-                child: Text(action),
-              ),
+            trailing: stacked ? null : actionButton,
+          );
+        },
       ),
     );
   }
