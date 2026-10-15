@@ -85,12 +85,12 @@ class ProductPricingDraft {
     if (!_pricingIdPattern.hasMatch(idempotencyKey) ||
         !_pricingIdPattern.hasMatch(productId)) {
       throw const ProductPricingValidationException(
-        'Request and product identifiers must be 1 to 128 supported characters.',
+        'Los identificadores de solicitud y producto deben tener de 1 a 128 caracteres válidos.',
       );
     }
     if (listedPriceMxn.length > 17 || !_moneyPattern.hasMatch(listedPriceMxn)) {
       throw const ProductPricingValidationException(
-        'Listed price must be exact non-negative MXN with at most two decimals.',
+        'El precio de lista debe ser un monto exacto en MXN, no negativo, con máximo dos decimales.',
       );
     }
     final List<String> priceParts = listedPriceMxn.split('.');
@@ -101,23 +101,23 @@ class ProductPricingDraft {
         );
     if (centavos > BigInt.from(maxSafePricingInteger)) {
       throw const ProductPricingValidationException(
-        'Listed price exceeds safe integer bounds.',
+        'El precio de lista excede el límite permitido.',
       );
     }
     if (!_priceModes.contains(priceMode)) {
       throw const ProductPricingValidationException(
-        'Price mode is unsupported.',
+        'Modo de precio no admitido.',
       );
     }
     if (!_ivaTreatments.contains(ivaTreatment)) {
       throw const ProductPricingValidationException(
-        'IVA treatment is unsupported.',
+        'Tratamiento de IVA no admitido.',
       );
     }
     if (ivaTreatment == 'exempt') {
       if (ivaRatePercent != null) {
         throw const ProductPricingValidationException(
-          'Exempt IVA treatment must not have a rate.',
+          'El IVA exento no debe tener tasa.',
         );
       }
       return;
@@ -125,7 +125,7 @@ class ProductPricingDraft {
     final String? rate = ivaRatePercent;
     if (rate == null || !_ratePattern.hasMatch(rate)) {
       throw const ProductPricingValidationException(
-        'IVA rate must be an exact percentage with at most two decimals.',
+        'La tasa de IVA debe ser un porcentaje exacto con máximo dos decimales.',
       );
     }
     final List<String> rateParts = rate.split('.');
@@ -134,12 +134,12 @@ class ProductPricingDraft {
         int.parse(rateParts.length == 1 ? '0' : rateParts[1].padRight(2, '0'));
     if (ivaTreatment == 'zero-rated' && basisPoints != 0) {
       throw const ProductPricingValidationException(
-        'Zero-rated IVA must use a zero rate.',
+        'El IVA a tasa 0% debe usar tasa cero.',
       );
     }
     if (ivaTreatment == 'taxable' && basisPoints == 0) {
       throw const ProductPricingValidationException(
-        'Taxable IVA must use a positive rate.',
+        'El IVA gravado debe usar una tasa positiva.',
       );
     }
   }

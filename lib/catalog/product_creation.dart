@@ -33,7 +33,7 @@ class ProductCreationDraft {
   void validate() {
     if (!_idempotencyKeyPattern.hasMatch(idempotencyKey)) {
       throw const ProductCreationValidationException(
-        'The draft identifier is invalid.',
+        'El identificador del borrador no es válido.',
       );
     }
     if (name.isEmpty ||
@@ -41,19 +41,19 @@ class ProductCreationDraft {
         name.trim() != name ||
         _controlCharacterPattern.hasMatch(name)) {
       throw const ProductCreationValidationException(
-        'Name must be canonical text of 1 to 120 characters with no leading, '
-        'trailing, or control characters.',
+        'El nombre debe tener de 1 a 120 caracteres, sin espacios al inicio '
+        'o al final ni caracteres de control.',
       );
     }
     if (!_unitPattern.hasMatch(unit)) {
       throw const ProductCreationValidationException(
-        'Unit must start with a lowercase letter and use only lowercase '
-        'letters, numbers, underscores, or hyphens (1 to 32 characters).',
+        'La unidad debe empezar con una letra minúscula y usar solo minúsculas, '
+        'números, guiones bajos o guiones (de 1 a 32 caracteres).',
       );
     }
     if (precision < 0 || precision > 6) {
       throw const ProductCreationValidationException(
-        'Precision must be an integer from 0 through 6.',
+        'La precisión debe ser un entero del 0 al 6.',
       );
     }
   }

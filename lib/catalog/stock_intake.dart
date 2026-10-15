@@ -36,12 +36,12 @@ class StockIntakeQuantitySpec {
   void validate() {
     if (!_unitPattern.hasMatch(unit)) {
       throw const StockIntakeValidationException(
-        'Quantity unit must be a lowercase identifier of 1 to 32 characters.',
+        'La unidad debe ser un identificador en minúsculas de 1 a 32 caracteres.',
       );
     }
     if (precision < 0 || precision > _maxDecimalPrecision) {
       throw const StockIntakeValidationException(
-        'Quantity precision must be an integer from 0 through 6.',
+        'La precisión de cantidad debe ser un entero del 0 al 6.',
       );
     }
   }
@@ -111,8 +111,8 @@ class StockIntakeDraft {
         !_idPattern.hasMatch(branchId) ||
         !_idPattern.hasMatch(productId)) {
       throw const StockIntakeValidationException(
-        'Idempotency key, branch ID, and product ID must be 1 to 128 '
-        'alphanumeric characters (with internal - or _).',
+        'La clave de idempotencia, la sucursal y el producto deben tener de 1 a '
+        '128 caracteres alfanuméricos (con - o _ internos).',
       );
     }
     quantitySpec.validate();
@@ -137,28 +137,28 @@ class StockIntakeDraft {
     if (quantity.length > _maxQuantityInputLength ||
         !_quantityPattern.hasMatch(quantity)) {
       throw const StockIntakeValidationException(
-        'Quantity must be a canonical positive decimal string of at most 18 '
-        'characters without sign, whitespace, commas, or exponents.',
+        'La cantidad debe ser un decimal positivo de máximo 18 caracteres, '
+        'sin signo, espacios, comas ni exponentes.',
       );
     }
     final List<String> parts = quantity.split('.');
     final String fraction = parts.length == 1 ? '' : parts[1];
     if (fraction.length > quantitySpec.precision) {
       throw StockIntakeValidationException(
-        'Quantity exceeds the product precision of '
-        '${quantitySpec.precision} decimal places; excess digits are '
-        'rejected even when they are zeros.',
+        'La cantidad excede la precisión del producto de '
+        '${quantitySpec.precision} decimales; los dígitos de más se '
+        'rechazan aunque sean ceros.',
       );
     }
     final BigInt scaled = _computeScaledQuantity();
     if (scaled <= BigInt.zero) {
       throw const StockIntakeValidationException(
-        'Quantity must be strictly greater than zero.',
+        'La cantidad debe ser mayor que cero.',
       );
     }
     if (scaled > _maxSafeBigInt) {
       throw const StockIntakeValidationException(
-        'Quantity exceeds safe integer bounds.',
+        'La cantidad excede el límite permitido.',
       );
     }
   }
@@ -167,14 +167,14 @@ class StockIntakeDraft {
     if (unitCostMxn.length > _maxCostInputLength ||
         !_moneyPattern.hasMatch(unitCostMxn)) {
       throw const StockIntakeValidationException(
-        'Unit cost must be exact non-negative MXN with at most two decimal '
-        'places.',
+        'El costo unitario debe ser un monto exacto en MXN, no negativo, con '
+        'máximo dos decimales.',
       );
     }
     final BigInt centavos = _computeUnitCostCentavos();
     if (centavos > _maxSafeBigInt) {
       throw const StockIntakeValidationException(
-        'Unit cost exceeds safe integer bounds.',
+        'El costo unitario excede el límite permitido.',
       );
     }
   }
@@ -200,7 +200,7 @@ class StockIntakeDraft {
         _computeScaledQuantity() * _computeUnitCostCentavos() ~/ scale;
     if (total < BigInt.zero || total > _maxSafeBigInt) {
       throw const StockIntakeValidationException(
-        'Line total exceeds safe integer bounds.',
+        'El total de la línea excede el límite permitido.',
       );
     }
     return total;
