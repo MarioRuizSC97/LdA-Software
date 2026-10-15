@@ -109,7 +109,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Catalog not connected'), findsOneWidget);
+    expect(find.text('Catálogo sin conexión'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
     expect(find.text('Tea'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -121,7 +121,7 @@ void main() {
     await tester.pumpWidget(const LdaInventoryBootstrap(demoEnabled: true));
     await tester.pumpAndSettle();
 
-    expect(find.text('Demo data · Not connected'), findsOneWidget);
+    expect(find.text('Datos de demostración · Sin conexión'), findsOneWidget);
     expect(find.text('Coffee'), findsOneWidget);
     expect(find.text('Tea'), findsOneWidget);
   });
@@ -138,8 +138,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Local emulator sign in'), findsOneWidget);
-    expect(find.text('Catalog data is not connected.'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
+    expect(
+      find.text('Los datos del catálogo no están conectados.'),
+      findsOneWidget,
+    );
     expect(find.text('Coffee'), findsNothing);
   });
 
@@ -177,9 +180,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Demo data · Not connected'), findsOneWidget);
+    expect(find.text('Datos de demostración · Sin conexión'), findsOneWidget);
     expect(find.text('Coffee'), findsOneWidget);
-    expect(find.text('Local emulator sign in'), findsNothing);
+    expect(find.text('Inicio de sesión en el emulador local'), findsNothing);
   });
 
   group('transfer notice bootstrap wiring (B1)', () {
@@ -286,7 +289,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Catalog not connected'), findsOneWidget);
+      expect(find.text('Catálogo sin conexión'), findsOneWidget);
       expect(loader.calls, 0);
     });
 
@@ -334,10 +337,10 @@ void main() {
 
       final MaterialApp app = tester.widget(find.byType(MaterialApp));
       expect(app.title, 'LDA Inventory');
-      expect(find.text('Catalog'), findsOneWidget);
+      expect(find.text('Catálogo'), findsOneWidget);
       expect(find.text('Test product'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('QR code for Test product. Code PRD-TEST-001'),
+        find.bySemanticsLabel('Código QR de Test product. Código PRD-TEST-001'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

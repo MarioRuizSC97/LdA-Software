@@ -114,7 +114,7 @@ void main() {
         expect(_inAppBar(_key('notices-open')), findsOneWidget);
         expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
         expect(_inAppBar(find.text('Correcciones')), findsNothing);
-        expect(_inAppBar(find.text('Log out')), findsNothing);
+        expect(_inAppBar(find.text('Cerrar sesión')), findsNothing);
 
         await _openMore(tester);
         expect(tester.takeException(), isNull);
@@ -134,7 +134,7 @@ void main() {
               .enabled,
           isFalse,
         );
-        await tester.tap(find.text('Log out'));
+        await tester.tap(find.text('Cerrar sesión'));
         await tester.pumpAndSettle();
         expect(shell.logouts, 1);
       });
@@ -163,7 +163,7 @@ void main() {
                 .enabled,
             isFalse,
           );
-          await tester.tap(find.text('Log out'));
+          await tester.tap(find.text('Cerrar sesión'));
           await tester.pumpAndSettle();
           expect(shell.logouts, 1);
         },
@@ -194,7 +194,7 @@ void main() {
     expect(_key('shell-more'), findsNothing);
     expect(_inAppBar(find.text('Correcciones')), findsOneWidget);
     expect(_inAppBar(_key('notices-open')), findsOneWidget);
-    expect(_inAppBar(find.text('Log out')), findsOneWidget);
+    expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);
   });
 
   testWidgets('the wide seller shell meets tap target guidelines', (

@@ -330,10 +330,10 @@ void main() {
     await _addRibbonAndCharge(tester);
     expect(_key('sale-retry-submit'), findsOneWidget);
 
-    await _tap(tester, find.widgetWithText(OutlinedButton, 'Log out'));
+    await _tap(tester, find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.enterText(_key('login-email'), _seller.email);
     await tester.enterText(_key('login-password'), 'Demo-Only-Seller-2026!');
-    await _tap(tester, find.widgetWithText(FilledButton, 'Sign in'));
+    await _tap(tester, find.widgetWithText(FilledButton, 'Iniciar sesión'));
 
     expect(_key('sale-cart-button'), findsOneWidget);
     expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);

@@ -853,7 +853,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               label: const Text('Movimientos'),
             ),
           IconButton(
-            tooltip: 'Refresh catalog',
+            tooltip: 'Actualizar catálogo',
             onPressed: _loading ? null : _requestCatalog,
             icon: const Icon(Icons.refresh),
           ),
@@ -887,7 +887,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       value: widget.onLogout,
                       child: const ListTile(
                         leading: Icon(Icons.logout),
-                        title: Text('Log out'),
+                        title: Text('Cerrar sesión'),
                       ),
                     ),
                   ],
@@ -895,7 +895,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           else ...<Widget>[
             OutlinedButton(
               onPressed: widget.onLogout,
-              child: const Text('Log out'),
+              child: const Text('Cerrar sesión'),
             ),
             const SizedBox(width: 12),
           ],
@@ -2178,6 +2178,12 @@ void _validateBranchName(String? name) {
 /// Width of the required-error border, stronger than the 1.0 normal border.
 const double _errorBorderWidth = 2.0;
 
+/// Spanish display name of a session role; the wire value stays unchanged.
+String _roleLabel(InventoryRole role) => switch (role) {
+  InventoryRole.administrator => 'Administrador',
+  InventoryRole.seller => 'Vendedor',
+};
+
 /// Below this window width (in unscaled text units) the shell AppBar moves
 /// its text actions into an overflow menu.
 const double _compactShellWidth = 600;
@@ -2312,7 +2318,7 @@ class _SessionStatus extends StatelessWidget {
     return Semantics(
       container: true,
       liveRegion: true,
-      label: 'Authenticated local catalog session',
+      label: 'Sesión local autenticada del catálogo',
       child: ColoredBox(
         color: colors.secondaryContainer,
         child: Padding(
@@ -2322,11 +2328,11 @@ class _SessionStatus extends StatelessWidget {
             spacing: 12,
             runSpacing: 4,
             children: <Widget>[
-              Text('Authenticated locally', style: style),
+              Text('Autenticado localmente', style: style),
               Text(session.email, style: style),
-              Text('Role: ${session.role.label}', style: style),
+              Text('Rol: ${_roleLabel(session.role)}', style: style),
               if (session.branchId case final String branchId)
-                Text('Branch: $branchId', style: style),
+                Text('Sucursal: $branchId', style: style),
             ],
           ),
         ),
@@ -2470,7 +2476,7 @@ class _CatalogLoading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
     child: Semantics(
-      label: 'Loading catalog',
+      label: 'Cargando catálogo',
       liveRegion: true,
       child: const CircularProgressIndicator(),
     ),
@@ -2548,7 +2554,7 @@ class _CatalogList extends StatelessWidget {
                 child: Semantics(
                   header: true,
                   child: Text(
-                    'Catalog',
+                    'Catálogo',
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
                 ),
@@ -2819,8 +2825,8 @@ class _EmptyCatalog extends StatelessWidget {
   Widget build(BuildContext context) {
     return const _CatalogMessage(
       icon: Icons.inventory_2_outlined,
-      title: 'No products yet',
-      message: 'Products will appear here when available.',
+      title: 'Aún no hay productos',
+      message: 'Los productos aparecerán aquí cuando estén disponibles.',
     );
   }
 }
@@ -2834,9 +2840,9 @@ class _CatalogError extends StatelessWidget {
   Widget build(BuildContext context) {
     return _CatalogMessage(
       icon: Icons.cloud_off_outlined,
-      title: 'Catalog unavailable',
-      message: 'Check your connection and try again.',
-      action: FilledButton(onPressed: onRetry, child: const Text('Try again')),
+      title: 'Catálogo no disponible',
+      message: 'Revisa tu conexión e inténtalo de nuevo.',
+      action: FilledButton(onPressed: onRetry, child: const Text('Reintentar')),
     );
   }
 }

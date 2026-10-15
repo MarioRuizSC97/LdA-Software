@@ -50,7 +50,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(
+        find.text('Inicio de sesión en el emulador local'),
+        findsOneWidget,
+      );
       final EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
         find.byType(EmulatorLoginShell),
       );
@@ -92,7 +95,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Demo data · Not connected'), findsOneWidget);
+    expect(find.text('Datos de demostración · Sin conexión'), findsOneWidget);
     expect(find.byType(EmulatorLoginShell), findsNothing);
   });
 }

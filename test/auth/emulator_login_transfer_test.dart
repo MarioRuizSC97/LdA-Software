@@ -575,9 +575,12 @@ void main() {
       expect(harness.transport.invocations, 1);
 
       // A pending request must never trap the administrator in the app.
-      await tester.tap(find.text('Log out'));
+      await tester.tap(find.text('Cerrar sesión'));
       await tester.pump();
-      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(
+        find.text('Inicio de sesión en el emulador local'),
+        findsOneWidget,
+      );
 
       // The late answer belongs to the old session: no completion is reported.
       harness.transport.succeed();
@@ -588,7 +591,7 @@ void main() {
       // The same uid coming back still owns the frozen key and payload.
       await tester.enterText(_key('login-email'), 'admin@demo.invalid');
       await tester.enterText(_key('login-password'), 'secret123');
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pumpAndSettle();
       final TransferDraft? retained = harness
           .state(tester)
@@ -632,14 +635,17 @@ void main() {
       harness.transport.fail(StateError('unknown'));
       await expectLater(pending, throwsA(isA<TransferUncertainException>()));
 
-      await tester.tap(find.text('Log out'));
+      await tester.tap(find.text('Cerrar sesión'));
       await tester.pumpAndSettle();
       expect(harness.gateway.logouts, 1);
-      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(
+        find.text('Inicio de sesión en el emulador local'),
+        findsOneWidget,
+      );
 
       await tester.enterText(_key('login-email'), 'admin@demo.invalid');
       await tester.enterText(_key('login-password'), 'secret123');
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pumpAndSettle();
 
       expect(

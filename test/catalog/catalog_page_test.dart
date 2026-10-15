@@ -533,7 +533,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(find.text('Coffee'), findsNothing);
-          expect(find.text('Catalog unavailable'), findsOneWidget);
+          expect(find.text('Catálogo no disponible'), findsOneWidget);
           await tester.pumpWidget(const SizedBox.shrink());
         }
       }
@@ -546,7 +546,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
   });
   group('administrator global latest unit cost cards', () {
     CatalogSnapshot snapshot({
@@ -646,7 +646,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Catalog unavailable'), findsOneWidget);
+        expect(find.text('Catálogo no disponible'), findsOneWidget);
         expect(find.text('Coffee'), findsNothing);
         expect(find.textContaining('Latest unit cost:'), findsNothing);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -661,7 +661,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(find.text('Coffee'), findsNothing);
       expect(find.textContaining('Latest unit cost:'), findsNothing);
     });
@@ -680,7 +680,7 @@ void main() {
         snapshot(available: false),
         snapshot(),
       ]) {
-        await tester.tap(find.byTooltip('Refresh catalog'));
+        await tester.tap(find.byTooltip('Actualizar catálogo'));
         await tester.pump();
         expect(find.textContaining('Latest unit cost:'), findsNothing);
         expect(find.text('Cost unavailable'), findsNothing);
@@ -695,7 +695,7 @@ void main() {
         expect(find.text(expected), findsOneWidget);
         expect(find.text('Latest unit cost: 3.45 MXN'), findsNothing);
       }
-      await tester.tap(find.byTooltip('Refresh catalog'));
+      await tester.tap(find.byTooltip('Actualizar catálogo'));
       await tester.pump();
       final Completer<CatalogSnapshot> stale = loader.requests.last;
       await tester.pumpWidget(
@@ -903,9 +903,9 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Catalog unavailable'), findsOneWidget);
+          expect(find.text('Catálogo no disponible'), findsOneWidget);
           expect(
-            find.widgetWithText(FilledButton, 'Try again'),
+            find.widgetWithText(FilledButton, 'Reintentar'),
             findsOneWidget,
           );
           expect(find.text('Coffee'), findsNothing);
@@ -1080,7 +1080,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text(southMissing), findsOneWidget);
-        await tester.tap(find.byTooltip('Refresh catalog'));
+        await tester.tap(find.byTooltip('Actualizar catálogo'));
         await tester.pump();
         expect(find.text(southMissing), findsNothing);
         loader.requests.last.complete(
@@ -1191,7 +1191,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Catalog unavailable'), findsOneWidget);
+          expect(find.text('Catálogo no disponible'), findsOneWidget);
           expect(find.text('Coffee'), findsNothing);
           expect(find.textContaining('Sin entrada registrada'), findsNothing);
         },
@@ -1205,7 +1205,7 @@ void main() {
     await tester.pumpWidget(_app(_Repository(completer.future)));
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+    expect(find.bySemanticsLabel('Cargando catálogo'), findsOneWidget);
   });
 
   testWidgets('shows an empty catalog state', (WidgetTester tester) async {
@@ -1214,9 +1214,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No products yet'), findsOneWidget);
+    expect(find.text('Aún no hay productos'), findsOneWidget);
     expect(
-      find.text('Products will appear here when available.'),
+      find.text('Los productos aparecerán aquí cuando estén disponibles.'),
       findsOneWidget,
     );
   });
@@ -1236,9 +1236,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.textContaining('secret-stack-value'), findsNothing);
-    expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Reintentar'), findsOneWidget);
   });
 
   testWidgets('renders the exact internal code as the QR data', (
@@ -1258,7 +1258,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.bySemanticsLabel('QR code for Coffee. Code PRD-COFFEE-001'),
+      find.bySemanticsLabel('Código QR de Coffee. Código PRD-COFFEE-001'),
       findsOneWidget,
     );
     expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
@@ -1282,7 +1282,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Catalog'), findsOneWidget);
+      expect(find.text('Catálogo'), findsOneWidget);
       expect(find.text('Coffee'), findsOneWidget);
       expect(tester.takeException(), isNull);
     }
@@ -1298,7 +1298,7 @@ void main() {
     );
 
     expect(loader.requests, hasLength(1));
-    expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+    expect(find.bySemanticsLabel('Cargando catálogo'), findsOneWidget);
     loader.requests.single.complete(
       _snapshot(
         _coffee,
@@ -1336,12 +1336,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Refresh catalog'));
+    await tester.tap(find.byTooltip('Actualizar catálogo'));
     await tester.pump();
 
     expect(loader.requests, hasLength(2));
     expect(find.text('Coffee'), findsNothing);
-    expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+    expect(find.bySemanticsLabel('Cargando catálogo'), findsOneWidget);
 
     const CatalogProduct tea = CatalogProduct(
       internalCode: 'PRD-TEA-002',
@@ -1412,7 +1412,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No products yet'), findsOneWidget);
+    expect(find.text('Aún no hay productos'), findsOneWidget);
   });
 
   testWidgets('rejects cross-branch seller data and retries safely', (
@@ -1435,11 +1435,11 @@ void main() {
     await tester.pumpWidget(_authenticatedApp(session: _seller, loader: load));
     await tester.pumpAndSettle();
 
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
     expect(find.text('Stock: 9.99 kg'), findsNothing);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Reintentar'));
     await tester.pumpAndSettle();
 
     expect(calls, 2);
@@ -1465,7 +1465,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(find.text('Coffee'), findsNothing);
     }
   });
@@ -1491,7 +1491,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(find.textContaining('branch-north:'), findsNothing);
       expect(find.text('Coffee'), findsNothing);
     }
@@ -1537,9 +1537,9 @@ void main() {
     await tester.pumpWidget(_authenticatedApp(session: _seller, loader: load));
     await tester.pumpAndSettle();
 
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.textContaining('secret firestore sdk detail'), findsNothing);
-    await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Reintentar'));
     await tester.pumpAndSettle();
 
     expect(calls, 2);
@@ -1560,12 +1560,12 @@ void main() {
     );
     await tester.pump();
     expect(loader.requests, hasLength(2));
-    expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+    expect(find.bySemanticsLabel('Cargando catálogo'), findsOneWidget);
 
     loader.requests.first.complete(_snapshot(_coffee));
     await tester.pump();
     expect(find.text('Coffee'), findsNothing);
-    expect(find.text('Catalog unavailable'), findsNothing);
+    expect(find.text('Catálogo no disponible'), findsNothing);
 
     const CatalogProduct tea = CatalogProduct(
       internalCode: 'PRD-TEA-002',
@@ -2225,7 +2225,7 @@ void main() {
 
       expect(creates, 1);
       expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
     },
   );
 
@@ -3331,7 +3331,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(calls, 1);
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(find.text('Retry same request'), findsNothing);
       expect(find.textContaining('pricing-not-stored'), findsNothing);
     },
@@ -3560,7 +3560,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(mutations, 1);
   });
 
@@ -3604,7 +3604,7 @@ void main() {
 
     loader.requests.first.completeError(StateError('stale secret'));
     await tester.pump();
-    expect(find.text('Catalog unavailable'), findsNothing);
+    expect(find.text('Catálogo no disponible'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     loader.requests.last.completeError(StateError('disposed secret'));
@@ -4071,7 +4071,7 @@ void main() {
 
     expect(mutations, 1);
     expect(find.text('Intake recorded. Entry intake-key-1'), findsOneWidget);
-    expect(find.text('Catalog unavailable'), findsOneWidget);
+    expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Retry same request'), findsNothing);
   });
 
@@ -4804,7 +4804,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Created product PRD-NEW-0001'), findsOneWidget);
-      expect(find.text('Catalog unavailable'), findsOneWidget);
+      expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,

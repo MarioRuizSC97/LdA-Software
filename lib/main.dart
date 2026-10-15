@@ -61,7 +61,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     if (demoEnabled) {
       return const LdaInventoryApp(
         catalogRepository: FixtureCatalogRepository(_catalogFixtures),
-        statusLabel: 'Demo data · Not connected',
+        statusLabel: 'Datos de demostración · Sin conexión',
       );
     }
     if (localEmulatorsEnabled) {
@@ -223,15 +223,15 @@ class CatalogSetupApp extends StatelessWidget {
                   Semantics(
                     header: true,
                     child: Text(
-                      'Catalog not connected',
+                      'Catálogo sin conexión',
                       style: Theme.of(context).textTheme.headlineSmall,
                       textAlign: TextAlign.center,
                     ),
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'No product data is loaded. Authenticated emulator access '
-                    'has not been configured.',
+                    'No hay datos de productos cargados. No se ha configurado '
+                    'el acceso autenticado al emulador.',
                     textAlign: TextAlign.center,
                   ),
                 ],

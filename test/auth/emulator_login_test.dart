@@ -335,7 +335,7 @@ Future<void> _signIn(WidgetTester tester) async {
     find.byKey(const ValueKey<String>('login-password')),
     'Demo-Only-Administrator-2026!',
   );
-  await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
   await tester.pumpAndSettle();
 }
 
@@ -385,7 +385,10 @@ void main() {
 
     await tester.pumpWidget(_app(completer.future));
 
-    expect(find.text('Connecting to local Auth emulator'), findsOneWidget);
+    expect(
+      find.text('Conectando con el emulador local de autenticación'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 
@@ -395,9 +398,12 @@ void main() {
     await tester.pumpWidget(_app(Future.value(_FakeGateway())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(find.byType(TextFormField), findsNWidgets(2));
-    expect(find.text('Catalog data is not connected.'), findsOneWidget);
+    expect(
+      find.text('Los datos del catálogo no están conectados.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('logs in and loads catalog for the validated session', (
@@ -415,15 +421,15 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pumpAndSettle();
 
     expect(gateway.submittedEmail, 'seller.north@demo-lda-inventory.invalid');
     expect(gateway.submittedPassword, 'Demo-Only-Seller-2026!');
-    expect(find.text('Authenticated locally'), findsOneWidget);
-    expect(find.text('Role: seller'), findsOneWidget);
-    expect(find.text('Branch: branch-north'), findsOneWidget);
-    expect(find.text('No products yet'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(find.text('Rol: Vendedor'), findsOneWidget);
+    expect(find.text('Sucursal: branch-north'), findsOneWidget);
+    expect(find.text('Aún no hay productos'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
 
@@ -444,15 +450,15 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'password',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Unable to sign in to the local emulator.'),
+      find.text('No se pudo iniciar sesión en el emulador local.'),
       findsOneWidget,
     );
     expect(find.textContaining('secret network details'), findsNothing);
-    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.text('Autenticado localmente'), findsNothing);
   });
 
   testWidgets('logs out to the login form', (WidgetTester tester) async {
@@ -460,11 +466,11 @@ void main() {
     await tester.pumpWidget(_app(Future.value(gateway)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
 
     expect(gateway.logoutCalls, 1);
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
   });
 
   testWidgets('seller session never receives or initializes product creation', (
@@ -530,7 +536,7 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
       await _signIn(tester);
 
@@ -610,7 +616,7 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
       await _signIn(tester);
 
@@ -731,7 +737,7 @@ void main() {
       await tester.pumpAndSettle();
       await _enterProduct(tester);
       await tester.pump();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
 
       first.completeError(StateError('late transport detail'));
@@ -1097,7 +1103,7 @@ void main() {
       await tester.pump();
       expect(find.textContaining('outcome is unknown'), findsNothing);
       if (authority == 'logout') {
-        await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       } else {
         auth.sessions.add(switch (authority) {
           'seller' => _seller,
@@ -1130,8 +1136,8 @@ void main() {
     gateway.sessions.add(null);
     await tester.pumpAndSettle();
 
-    expect(find.text('Authenticated locally'), findsNothing);
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
 
@@ -1150,8 +1156,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Role: administrator'), findsOneWidget);
-    expect(find.text('Branch: branch-north'), findsNothing);
+    expect(find.text('Rol: Administrador'), findsOneWidget);
+    expect(find.text('Sucursal: branch-north'), findsNothing);
 
     gateway.sessions.add(
       const EmulatorSession(
@@ -1162,9 +1168,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Role: seller'), findsOneWidget);
-    expect(find.text('Branch: branch-south'), findsOneWidget);
-    expect(find.text('Branch: branch-north'), findsNothing);
+    expect(find.text('Rol: Vendedor'), findsOneWidget);
+    expect(find.text('Sucursal: branch-south'), findsOneWidget);
+    expect(find.text('Sucursal: branch-north'), findsNothing);
   });
 
   testWidgets('remote disablement clears session and fails closed', (
@@ -1177,8 +1183,8 @@ void main() {
     gateway.sessions.addError(const UntrustedSessionException());
     await tester.pumpAndSettle();
 
-    expect(find.text('Authenticated locally'), findsNothing);
-    expect(find.text('Session rejected'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.text('Sesión rechazada'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
 
@@ -1204,9 +1210,12 @@ void main() {
     await tester.pumpWidget(_app(Future.value(gateway)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Session rejected'), findsOneWidget);
-    expect(find.text('Local Auth emulator unavailable'), findsNothing);
-    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.text('Sesión rechazada'), findsOneWidget);
+    expect(
+      find.text('Emulador local de autenticación no disponible'),
+      findsNothing,
+    );
+    expect(find.text('Autenticado localmente'), findsNothing);
   });
 
   testWidgets('connection retry reuses the initialized gateway', (
@@ -1231,16 +1240,16 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Unable to verify session'), findsOneWidget);
+    expect(find.text('No se pudo verificar la sesión'), findsOneWidget);
     expect(loaderCalls, 1);
 
     gateway.restoreError = null;
-    await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Reintentar'));
     await tester.pumpAndSettle();
 
     expect(loaderCalls, 1);
     expect(gateway.restoreCalls, 2);
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
   });
 
   testWidgets('authenticated catalog auto-loads once for harmless notices', (
@@ -1317,7 +1326,7 @@ void main() {
     for (final EmulatorSession replacement in replacements) {
       gateway.sessions.add(replacement);
       await tester.pump();
-      expect(find.bySemanticsLabel('Loading catalog'), findsOneWidget);
+      expect(find.bySemanticsLabel('Cargando catálogo'), findsOneWidget);
     }
     expect(requested, hasLength(4));
     expect(requested.last.userId, 'another-admin');
@@ -1355,14 +1364,14 @@ void main() {
     expect(find.text('Live product'), findsOneWidget);
     expect(catalogCalls, 1);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pump();
     gateway.sessions.add(_seller);
     await tester.pump();
 
     expect(gateway.logoutCalls, 1);
     expect(find.text('Live product'), findsNothing);
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(catalogCalls, 1);
     signOut.complete();
     await tester.pumpAndSettle();
@@ -1395,7 +1404,7 @@ void main() {
         find.byKey(const ValueKey<String>('login-password')),
         'Demo-Only-Seller-2026!',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pump();
 
       gateway.sessions.add(null);
@@ -1403,24 +1412,29 @@ void main() {
       staleLogin.complete(_seller);
       await tester.pumpAndSettle();
 
-      expect(find.text('Local emulator sign in'), findsOneWidget);
-      expect(find.text('Authenticated locally'), findsNothing);
+      expect(
+        find.text('Inicio de sesión en el emulador local'),
+        findsOneWidget,
+      );
+      expect(find.text('Autenticado localmente'), findsNothing);
       expect(catalogCalls, 0);
       expect(
         tester
-            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in'))
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Iniciar sesión'),
+            )
             .onPressed,
         isNotNull,
       );
 
       final Completer<EmulatorSession> newLogin = Completer<EmulatorSession>();
       gateway.loginCompleter = newLogin;
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pump();
       newLogin.complete(_seller);
       await tester.pumpAndSettle();
 
-      expect(find.text('Authenticated locally'), findsOneWidget);
+      expect(find.text('Autenticado localmente'), findsOneWidget);
       expect(catalogCalls, 1);
     },
   );
@@ -1532,12 +1546,15 @@ void main() {
       await tester.pumpAndSettle();
       auth.events.addError(_HostileSdkError());
       await tester.pumpAndSettle();
-      expect(find.text('Unable to verify session'), findsOneWidget);
+      expect(find.text('No se pudo verificar la sesión'), findsOneWidget);
       expect(find.textContaining('Temporary local diagnostic:'), findsNothing);
       auth.events.add(null);
       await tester.pumpAndSettle();
-      expect(find.text('Unable to verify session'), findsNothing);
-      expect(find.text('Local emulator sign in'), findsOneWidget);
+      expect(find.text('No se pudo verificar la sesión'), findsNothing);
+      expect(
+        find.text('Inicio de sesión en el emulador local'),
+        findsOneWidget,
+      );
       expect(find.textContaining('synthetic-private'), findsNothing);
     },
   );
@@ -1571,11 +1588,11 @@ void main() {
           find.byKey(const ValueKey<String>('login-password')),
           'test-only-password',
         );
-        await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+        await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
         await tester.pumpAndSettle();
         expect(auth.cleanupCalls, validationFailure ? 2 : 1);
         expect(
-          find.text('Unable to sign in to the local emulator.'),
+          find.text('No se pudo iniciar sesión en el emulador local.'),
           findsOneWidget,
         );
         expect(
@@ -1583,13 +1600,13 @@ void main() {
           findsNothing,
         );
         expect(find.textContaining('private'), findsNothing);
-        expect(find.text('Authenticated locally'), findsNothing);
+        expect(find.text('Autenticado localmente'), findsNothing);
         expect(find.byType(CircularProgressIndicator), findsNothing);
         expect(catalogCalls, 0);
         expect(
           tester
               .widget<FilledButton>(
-                find.widgetWithText(FilledButton, 'Sign in'),
+                find.widgetWithText(FilledButton, 'Iniciar sesión'),
               )
               .onPressed,
           isNotNull,
@@ -1625,22 +1642,22 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'test-only-password',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
     login.completeError(StateError('private Firebase detail/token'));
     await tester.pumpAndSettle();
     expect(
-      find.text('Unable to sign in to the local emulator.'),
+      find.text('No se pudo iniciar sesión en el emulador local.'),
       findsOneWidget,
     );
     expect(find.textContaining('private Firebase'), findsNothing);
-    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.text('Autenticado localmente'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(catalogCalls, 0);
     final Semantics announcement = tester.widget<Semantics>(
       find
           .ancestor(
-            of: find.text('Unable to sign in to the local emulator.'),
+            of: find.text('No se pudo iniciar sesión en el emulador local.'),
             matching: find.byType(Semantics),
           )
           .first,
@@ -1651,20 +1668,26 @@ void main() {
     gateway.sessions.add(null);
     await tester.pumpAndSettle();
     expect(
-      find.text('Unable to sign in to the local emulator.'),
+      find.text('No se pudo iniciar sesión en el emulador local.'),
       findsOneWidget,
     );
     gateway.loginCompleter = Completer<EmulatorSession>();
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
-    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+    expect(
+      find.text('No se pudo iniciar sesión en el emulador local.'),
+      findsNothing,
+    );
     gateway.loginCompleter!.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
     expect(catalogCalls, 1);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
-    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+    expect(
+      find.text('No se pudo iniciar sesión en el emulador local.'),
+      findsNothing,
+    );
   });
 
   for (final String boundary in <String>[
@@ -1692,7 +1715,7 @@ void main() {
         find.byKey(const ValueKey<String>('login-password')),
         'old-private-password',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pump();
       gateway.sessions.add(null);
       await tester.pump();
@@ -1710,7 +1733,9 @@ void main() {
         case 'logout':
           gateway.sessions.add(_seller);
           await tester.pumpAndSettle();
-          await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+          await tester.tap(
+            find.widgetWithText(OutlinedButton, 'Cerrar sesión'),
+          );
         case 'disposal':
           await tester.pumpWidget(const MaterialApp(home: SizedBox()));
         case 'lifecycle rejection':
@@ -1722,12 +1747,15 @@ void main() {
       login.completeError(StateError('old-private-password/token'));
       await tester.pumpAndSettle();
       expect(
-        find.text('Unable to sign in to the local emulator.'),
+        find.text('No se pudo iniciar sesión en el emulador local.'),
         boundary == 'external null' ? findsOneWidget : findsNothing,
       );
       expect(find.textContaining('old-private-password/token'), findsNothing);
       if (boundary == 'logout') {
-        expect(find.text('Local emulator sign in'), findsOneWidget);
+        expect(
+          find.text('Inicio de sesión en el emulador local'),
+          findsOneWidget,
+        );
         expect(
           tester
               .widget<TextFormField>(
@@ -1776,25 +1804,28 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
 
     gateway.sessions.add(null);
     await tester.pump();
     final Completer<EmulatorSession> newLogin = Completer<EmulatorSession>();
     gateway.loginCompleter = newLogin;
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
 
     staleLogin.completeError(StateError('stale login failure detail'));
     await tester.pump();
     expect(find.textContaining('stale login failure detail'), findsNothing);
-    expect(find.text('Unable to sign in to the local emulator.'), findsNothing);
+    expect(
+      find.text('No se pudo iniciar sesión en el emulador local.'),
+      findsNothing,
+    );
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     newLogin.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
     expect(catalogCalls, 1);
   });
 
@@ -1821,17 +1852,17 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
     expect(catalogCalls, 1);
 
     login.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
     expect(catalogCalls, 1);
   });
 
@@ -1860,17 +1891,17 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
 
     gateway.sessions.addError(const UntrustedSessionException());
     await tester.pumpAndSettle();
-    expect(find.text('Session rejected'), findsOneWidget);
+    expect(find.text('Sesión rechazada'), findsOneWidget);
 
     login.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Session rejected'), findsOneWidget);
-    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.text('Sesión rechazada'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsNothing);
     expect(catalogCalls, 0);
   });
 
@@ -1897,21 +1928,21 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Authenticated locally'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsOneWidget);
     expect(catalogCalls, 1);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
     login.complete(_seller);
     await tester.pumpAndSettle();
 
-    expect(find.text('Local emulator sign in'), findsOneWidget);
-    expect(find.text('Authenticated locally'), findsNothing);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
+    expect(find.text('Autenticado localmente'), findsNothing);
     expect(catalogCalls, 1);
   });
 
@@ -1948,21 +1979,23 @@ void main() {
       _app(Future<EmulatorSessionGateway>.value(gateway), catalogLoader: load),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pump();
 
     signOut.completeError(StateError('sanitized logout failure'));
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
 
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(find.text('Live product'), findsNothing);
     expect(find.textContaining('sanitized logout failure'), findsNothing);
     expect(catalogCalls, 1);
 
     expect(
       tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Sign in'))
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Iniciar sesión'),
+          )
           .onPressed,
       isNotNull,
     );
@@ -1974,7 +2007,7 @@ void main() {
       find.byKey(const ValueKey<String>('login-password')),
       'Demo-Only-Seller-2026!',
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pumpAndSettle();
 
     expect(find.text('Live product'), findsOneWidget);
@@ -1988,7 +2021,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Role: administrator'), findsOneWidget);
+    expect(find.text('Rol: Administrador'), findsOneWidget);
     expect(catalogCalls, 3);
   });
 
@@ -2034,7 +2067,7 @@ void main() {
     await tester.pumpAndSettle();
     await _submitExistingPricing(tester);
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
     await _signIn(tester);
 
@@ -2324,7 +2357,7 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
       await _signIn(tester);
 
@@ -2371,7 +2404,7 @@ void main() {
     await tester.ensureVisible(close);
     await tester.tap(close);
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
     await _signIn(tester);
 
@@ -2427,7 +2460,7 @@ void main() {
         same(draft),
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
       await _signIn(tester);
 
@@ -2533,7 +2566,7 @@ void main() {
         same(draft),
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Log out'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
       await tester.pumpAndSettle();
       await _signIn(tester);
 
@@ -2872,13 +2905,16 @@ void main() {
     first.completeError(StateError('host unavailable'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Local Auth emulator unavailable'), findsOneWidget);
+    expect(
+      find.text('Emulador local de autenticación no disponible'),
+      findsOneWidget,
+    );
     expect(find.textContaining('host unavailable'), findsNothing);
-    expect(find.text('Catalog data not loaded.'), findsOneWidget);
+    expect(find.text('No se cargaron los datos del catálogo.'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Try again'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Reintentar'));
     await tester.pumpAndSettle();
-    expect(find.text('Local emulator sign in'), findsOneWidget);
+    expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
   });
 
   group('seller transfer notices shell wiring', () {

@@ -411,24 +411,24 @@ function snapshotRows(elements) {
   })));
 }
 
-test('semantic snapshot includes the captured Sign in button DOM-text label', () => {
+test('semantic snapshot includes the captured Iniciar sesión button DOM-text label', () => {
   assert.deepEqual(snapshotRows([
-    snapshotElement({ attrs: { role: 'button' }, text: '  Sign in  ' }),
+    snapshotElement({ attrs: { role: 'button' }, text: '  Iniciar sesión  ' }),
   ]), [{
-    tag: 'flt-semantics', role: 'button', label: 'Sign in', disabled: false, focused: false,
+    tag: 'flt-semantics', role: 'button', label: 'Iniciar sesión', disabled: false, focused: false,
     x: 10, y: 20, w: 100, h: 30,
   }]);
 });
 
 test('semantic snapshot preserves aria labels and does not aggregate container text', () => {
   assert.deepEqual(snapshotRows([
-    snapshotElement({ tag: 'INPUT', attrs: { 'aria-label': 'Email' } }),
-    snapshotElement({ tag: 'INPUT', parentLabel: 'Password' }),
-    snapshotElement({ attrs: { 'aria-label': 'Page' }, text: 'Sign in', nested: true }),
-    snapshotElement({ text: 'Email Password Sign in', nested: true }),
+    snapshotElement({ tag: 'INPUT', attrs: { 'aria-label': 'Correo electrónico' } }),
+    snapshotElement({ tag: 'INPUT', parentLabel: 'Contraseña' }),
+    snapshotElement({ attrs: { 'aria-label': 'Page' }, text: 'Iniciar sesión', nested: true }),
+    snapshotElement({ text: 'Correo electrónico Contraseña Iniciar sesión', nested: true }),
   ]), [
-    { tag: 'input', role: 'input', label: 'Email', disabled: false, focused: false, x: 10, y: 20, w: 100, h: 30 },
-    { tag: 'input', role: 'input', label: 'Password', disabled: false, focused: false, x: 10, y: 20, w: 100, h: 30 },
+    { tag: 'input', role: 'input', label: 'Correo electrónico', disabled: false, focused: false, x: 10, y: 20, w: 100, h: 30 },
+    { tag: 'input', role: 'input', label: 'Contraseña', disabled: false, focused: false, x: 10, y: 20, w: 100, h: 30 },
     { tag: 'flt-semantics', role: 'flt-semantics', label: 'Page', disabled: false, focused: false, x: 10, y: 20, w: 100, h: 30 },
   ]);
 });
@@ -542,8 +542,8 @@ test('openPage drives semantics and real CDP input through a fake connection', a
     if (expression === SEMANTICS_ACTIVE_JS) return { nodes: 4, placeholder: 0 };
     if (expression === SEMANTIC_SNAPSHOT_JS) {
       return [
-        { tag: 'input', role: 'input', label: 'Email', disabled: false, x: 10, y: 20, w: 100, h: 30 },
-        { tag: 'flt-semantics', role: 'button', label: 'Sign in', disabled: false, x: 0, y: 0, w: 40, h: 20 },
+        { tag: 'input', role: 'input', label: 'Correo electrónico', disabled: false, x: 10, y: 20, w: 100, h: 30 },
+        { tag: 'flt-semantics', role: 'button', label: 'Iniciar sesión', disabled: false, x: 0, y: 0, w: 40, h: 20 },
       ];
     }
     return null;
@@ -586,9 +586,9 @@ test('openPage drives semantics and real CDP input through a fake connection', a
   });
   await page.navigate('http://127.0.0.1:7358/');
   await page.enableSemantics();
-  const button = await page.findSemantics({ label: 'Sign in' }, { timeoutMs: 50 });
+  const button = await page.findSemantics({ label: 'Iniciar sesión' }, { timeoutMs: 50 });
   assert.equal(button.role, 'button');
-  const clicked = await page.clickSemantic({ label: 'Sign in' });
+  const clicked = await page.clickSemantic({ label: 'Iniciar sesión' });
   assert.deepEqual([clicked.x, clicked.y], [20, 10]);
   assert.equal(dispatched.filter((event) => event.type === 'mousePressed').length, 1);
   assert.equal(dispatched.filter((event) => event.type === 'mouseReleased').length, 1);
@@ -612,7 +612,7 @@ test('editable click waits for DOM focus before any keystroke', async () => {
     on: () => () => {},
     send: async (method, params) => {
       if (method === 'Runtime.evaluate') return { result: { value: [{
-        tag: 'input', role: 'input', label: 'Password', disabled: false, focused,
+        tag: 'input', role: 'input', label: 'Contraseña', disabled: false, focused,
         x: 0, y: 0, w: 100, h: 30,
       }] } };
       if (method === 'Input.insertText') bulkInserts++;
@@ -627,7 +627,7 @@ test('editable click waits for DOM focus before any keystroke', async () => {
     now: () => tick, sleep: async ms => { tick += ms; focused = true; }, stepMs: 10, pollMs: 1,
   } });
   try {
-    await page.clickSemantic({ role: 'input', label: 'Password' });
+    await page.clickSemantic({ role: 'input', label: 'Contraseña' });
     await page.typeText('probe-only');
     assert.equal(prematureKeystrokes, 0);
     assert.equal(bulkInserts, 0);
@@ -823,10 +823,10 @@ function lifecycleHarness({
     const marked = kind === 'seller-fresh-read';
     const pageState = { marked };
     const baseNodes = () => [
-      { tag: 'input', role: 'input', label: 'Email', disabled: false, x: 0, y: 0, w: 10, h: 10 },
-      { tag: 'input', role: 'input', label: 'Password', disabled: false, x: 0, y: 0, w: 10, h: 10 },
-      { tag: 'flt-semantics', role: 'button', label: 'Sign in', disabled: false, x: 0, y: 0, w: 10, h: 10 },
-      { tag: 'flt-semantics', role: 'button', label: 'Log out', disabled: false, x: 0, y: 0, w: 10, h: 10 },
+      { tag: 'input', role: 'input', label: 'Correo electrónico', disabled: false, x: 0, y: 0, w: 10, h: 10 },
+      { tag: 'input', role: 'input', label: 'Contraseña', disabled: false, x: 0, y: 0, w: 10, h: 10 },
+      { tag: 'flt-semantics', role: 'button', label: 'Iniciar sesión', disabled: false, x: 0, y: 0, w: 10, h: 10 },
+      { tag: 'flt-semantics', role: 'button', label: 'Cerrar sesión', disabled: false, x: 0, y: 0, w: 10, h: 10 },
       { tag: 'flt-semantics', role: 'button', label: 'Avisos de traslados', disabled: false, x: 0, y: 0, w: 10, h: 10 },
       { tag: 'flt-semantics', role: 'button', label: 'Cerrar bandeja de avisos', disabled: false, x: 0, y: 0, w: 10, h: 10 },
     ];
@@ -1157,8 +1157,8 @@ test('a transfer screen is only driven once the local catalog has loaded', () =>
   // showed the loaded catalog.
   const blockedCatalog = [
     'Movimientos',
-    'Log out',
-    'Authenticated locally administrator@notice-e2e.invalid Role: administrator',
+    'Cerrar sesión',
+    'Autenticado localmente administrator@notice-e2e.invalid Rol: Administrador',
     'Traslados',
     'Se necesitan al menos dos sucursales para registrar un traslado.',
     'No hay productos disponibles para trasladar.',
@@ -1170,7 +1170,7 @@ test('a transfer screen is only driven once the local catalog has loaded', () =>
   ];
   const loadedCatalog = [
     'Movimientos',
-    'Log out',
+    'Cerrar sesión',
     'Sucursal de origen South Demo Branch',
     'Sucursal de destino North Demo Branch',
     'Producto Demo Coffee',

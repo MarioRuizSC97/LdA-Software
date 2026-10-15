@@ -17,7 +17,7 @@ class ProductQrView extends StatelessWidget {
     return Semantics(
       container: true,
       image: true,
-      label: 'QR code for ${product.name}. Code ${product.internalCode}',
+      label: 'Código QR de ${product.name}. Código ${product.internalCode}',
       child: ExcludeSemantics(
         child: QrImageView(
           key: ValueKey<String>('product-qr-${product.internalCode}'),

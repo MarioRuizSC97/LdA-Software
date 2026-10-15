@@ -434,11 +434,11 @@ void main() {
       WidgetTester tester,
     ) async {
       final _Loader loader = await _pump(tester, _administrator, backend);
-      expect(find.text('Catalog'), findsOneWidget);
+      expect(find.text('Catálogo'), findsOneWidget);
 
       await _open(tester);
       expect(find.text('Traslado entre sucursales'), findsOneWidget);
-      expect(find.text('Catalog'), findsNothing);
+      expect(find.text('Catálogo'), findsNothing);
       // Opening never reads or writes: the gateway seam is never called.
       expect(backend.invocations, 0);
       expect(backend.lookups, greaterThan(0));
@@ -505,7 +505,7 @@ void main() {
       // to the catalog, and closing never triggers another read.
       await _tap(tester, _key('transfer-close'));
       await tester.pumpAndSettle();
-      expect(find.text('Catalog'), findsOneWidget);
+      expect(find.text('Catálogo'), findsOneWidget);
       expect(find.text('Café'), findsOneWidget);
       expect(find.text('Cinta'), findsOneWidget);
       expect(loader.calls, 2);
@@ -662,7 +662,7 @@ void main() {
       expect(find.byIcon(Icons.refresh), findsOneWidget);
       await tester.tap(_key('shell-more'));
       await tester.pumpAndSettle();
-      expect(find.text('Log out'), findsOneWidget);
+      expect(find.text('Cerrar sesión'), findsOneWidget);
       await tester.tapAt(Offset.zero);
       await tester.pumpAndSettle();
 

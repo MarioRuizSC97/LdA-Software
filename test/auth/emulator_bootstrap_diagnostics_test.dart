@@ -122,7 +122,10 @@ void main() {
       gateway.completeError(UnsupportedError(_secret));
       await tester.pumpAndSettle();
 
-      expect(find.text('Local Auth emulator unavailable'), findsOneWidget);
+      expect(
+        find.text('Emulador local de autenticación no disponible'),
+        findsOneWidget,
+      );
       expect(
         captured.map((EmulatorBootstrapDiagnostic d) => d.render()),
         <String>[
@@ -143,7 +146,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('Local Auth emulator unavailable'), findsOneWidget);
+      expect(
+        find.text('Emulador local de autenticación no disponible'),
+        findsOneWidget,
+      );
       expect(find.textContaining('demo.invalid'), findsNothing);
     });
   });

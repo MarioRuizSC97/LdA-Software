@@ -1039,20 +1039,20 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     switch (_failure) {
       case _SessionFailure.bootstrap:
         return _SessionErrorView(
-          title: 'Local Auth emulator unavailable',
+          title: 'Emulador local de autenticación no disponible',
           canRetry: widget.retryLoader != null,
           onRetry: _retryBootstrap,
         );
       case _SessionFailure.rejected:
         return _SessionErrorView(
-          title: 'Session rejected',
+          title: 'Sesión rechazada',
           canRetry: true,
-          retryLabel: 'Return to sign in',
+          retryLabel: 'Volver a iniciar sesión',
           onRetry: _returnToLogin,
         );
       case _SessionFailure.connection:
         return _SessionErrorView(
-          title: 'Unable to verify session',
+          title: 'No se pudo verificar la sesión',
           canRetry: _gateway != null,
           onRetry: _retryRestore,
         );
@@ -1226,7 +1226,7 @@ class _LoadingView extends StatelessWidget {
         children: <Widget>[
           CircularProgressIndicator(),
           SizedBox(height: 16),
-          Text('Connecting to local Auth emulator'),
+          Text('Conectando con el emulador local de autenticación'),
         ],
       ),
     ),
@@ -1238,7 +1238,7 @@ class _SessionErrorView extends StatelessWidget {
     required this.title,
     required this.canRetry,
     required this.onRetry,
-    this.retryLabel = 'Try again',
+    this.retryLabel = 'Reintentar',
   });
 
   final String title;
@@ -1263,7 +1263,10 @@ class _SessionErrorView extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
-            const Text('Catalog data not loaded.', textAlign: TextAlign.center),
+            const Text(
+              'No se cargaron los datos del catálogo.',
+              textAlign: TextAlign.center,
+            ),
             if (canRetry) ...<Widget>[
               const SizedBox(height: 16),
               FilledButton(onPressed: onRetry, child: Text(retryLabel)),
@@ -1327,7 +1330,7 @@ class _LoginViewState extends State<_LoginView> {
     if (email.isEmpty || password.isEmpty) {
       setState(() {
         _errorAttempt = null;
-        _error = 'Enter the local demo email and password.';
+        _error = 'Ingresa el correo y la contraseña de demostración local.';
       });
       return;
     }
@@ -1349,7 +1352,7 @@ class _LoginViewState extends State<_LoginView> {
       setState(() {
         _submitting = false;
         _errorAttempt = generation;
-        _error = 'Unable to sign in to the local emulator.';
+        _error = 'No se pudo iniciar sesión en el emulador local.';
       });
     }
   }
@@ -1366,13 +1369,13 @@ class _LoginViewState extends State<_LoginView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Text(
-                'Local emulator sign in',
+                'Inicio de sesión en el emulador local',
                 style: Theme.of(context).textTheme.headlineSmall,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
               const Text(
-                'Catalog data is not connected.',
+                'Los datos del catálogo no están conectados.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -1382,7 +1385,9 @@ class _LoginViewState extends State<_LoginView> {
                 enabled: !_submitting,
                 keyboardType: TextInputType.emailAddress,
                 autofillHints: const <String>[AutofillHints.username],
-                decoration: const InputDecoration(labelText: 'Email'),
+                decoration: const InputDecoration(
+                  labelText: 'Correo electrónico',
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -1391,7 +1396,7 @@ class _LoginViewState extends State<_LoginView> {
                 enabled: !_submitting,
                 obscureText: true,
                 autofillHints: const <String>[AutofillHints.password],
-                decoration: const InputDecoration(labelText: 'Password'),
+                decoration: const InputDecoration(labelText: 'Contraseña'),
                 onFieldSubmitted: (_) => _submitting ? null : _submit(),
               ),
               if (_error case final String error) ...<Widget>[
@@ -1406,7 +1411,7 @@ class _LoginViewState extends State<_LoginView> {
                         dimension: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('Sign in'),
+                    : const Text('Iniciar sesión'),
               ),
             ],
           ),

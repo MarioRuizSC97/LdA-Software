@@ -1155,13 +1155,13 @@ async function stageGuard(page, stage, evidenceDir, work) {
 
 async function loginThroughUi(page, account, d) {
   await page.enableSemantics({ timeoutMs: d.timeouts.semanticStepMs });
-  await page.findSemantics({ role: 'input', label: 'Email' }, { timeoutMs: d.timeouts.semanticStepMs });
-  await page.clickSemantic({ role: 'input', label: 'Email' });
+  await page.findSemantics({ role: 'input', label: 'Correo electrónico' }, { timeoutMs: d.timeouts.semanticStepMs });
+  await page.clickSemantic({ role: 'input', label: 'Correo electrónico' });
   await page.typeText(account.email);
-  await page.clickSemantic({ role: 'input', label: 'Password' });
+  await page.clickSemantic({ role: 'input', label: 'Contraseña' });
   await page.typeText(account.password);
-  await page.clickSemantic({ label: 'Sign in' }, { timeoutMs: d.timeouts.semanticStepMs });
-  await page.findSemantics({ labelIncludes: 'Log out' }, { timeoutMs: d.timeouts.semanticStepMs });
+  await page.clickSemantic({ label: 'Iniciar sesión' }, { timeoutMs: d.timeouts.semanticStepMs });
+  await page.findSemantics({ labelIncludes: 'Cerrar sesión' }, { timeoutMs: d.timeouts.semanticStepMs });
 }
 
 async function openInbox(page, d) {
