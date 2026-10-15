@@ -825,13 +825,24 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               key: const ValueKey<String>('notices-open'),
               tooltip: 'Avisos de traslados',
               onPressed: showNotices ? null : _showNotices,
-              icon: Badge(
-                isLabelVisible: unreadNotices == null || unreadNotices > 0,
-                label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                backgroundColor: unreadNotices == null
-                    ? Theme.of(context).colorScheme.surfaceContainerHighest
+              // Screen readers hear the badge state in words, not the bare
+              // count or the '!' glyph.
+              icon: Semantics(
+                label: unreadNotices == null
+                    ? 'sin confirmar'
+                    : unreadNotices > 0
+                    ? '$unreadNotices sin leer'
                     : null,
-                child: const Icon(Icons.inbox_outlined),
+                child: ExcludeSemantics(
+                  child: Badge(
+                    isLabelVisible: unreadNotices == null || unreadNotices > 0,
+                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+                    backgroundColor: unreadNotices == null
+                        ? Theme.of(context).colorScheme.surfaceContainerHighest
+                        : null,
+                    child: const Icon(Icons.inbox_outlined),
+                  ),
+                ),
               ),
             ),
           if (movements != null && !compactBar)

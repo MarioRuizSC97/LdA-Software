@@ -1341,4 +1341,14 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  testWidgets('the transfer form meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    await _pump(tester);
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
 }

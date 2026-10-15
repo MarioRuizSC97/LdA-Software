@@ -284,6 +284,8 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Avisos de traslados'), findsOneWidget);
     expect(find.byTooltip('Cerrar bandeja de avisos'), findsOneWidget);
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
     semantics.dispose();
   });
 }

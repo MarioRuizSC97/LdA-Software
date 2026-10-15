@@ -2954,4 +2954,15 @@ void main() {
       expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
     });
   });
+
+  testWidgets('the login form meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    await tester.pumpWidget(_app(Future.value(_FakeGateway())));
+    await tester.pumpAndSettle();
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
 }

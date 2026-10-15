@@ -190,4 +190,28 @@ void main() {
     expect(_inAppBar(_key('notices-open')), findsOneWidget);
     expect(_inAppBar(find.text('Log out')), findsOneWidget);
   });
+
+  testWidgets('the wide seller shell meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    _setViewport(tester, const Size(1000, 800));
+    await tester.pumpWidget(_Shell().seller());
+    await tester.pumpAndSettle();
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
+
+  testWidgets('the narrow administrator shell meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    _setViewport(tester, const Size(320, 700));
+    await tester.pumpWidget(_Shell().administrator());
+    await tester.pumpAndSettle();
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
 }

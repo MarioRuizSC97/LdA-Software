@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -5144,6 +5145,30 @@ void main() {
         expect(find.text('1'), findsOneWidget);
       },
     );
+
+    testWidgets('the notices entry announces its unread state', (
+      WidgetTester tester,
+    ) async {
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      final _FakeNoticeStreams streams = _FakeNoticeStreams();
+      await tester.pumpWidget(appWithNotices(streams));
+      await flush(tester);
+      // Before both streams confirm, the count is unknown, never zero.
+      SemanticsNode entry() => tester.getSemantics(
+        find.byKey(const ValueKey<String>('notices-open')),
+      );
+      expect(entry().tooltip, 'Avisos de traslados');
+      expect(entry().label, 'sin confirmar');
+
+      streams.emitMovements(<CatalogDocument>[
+        CatalogDocument(path: 'inventoryMovements/m1', data: leg('t-a', 'm1')),
+      ]);
+      streams.emitMarkers(<CatalogDocument>[]);
+      await flush(tester);
+      expect(entry().tooltip, 'Avisos de traslados');
+      expect(entry().label, '1 sin leer');
+      semantics.dispose();
+    });
 
     testWidgets('administrator never gets the notices entry', (
       WidgetTester tester,

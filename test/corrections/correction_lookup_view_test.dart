@@ -603,4 +603,15 @@ void main() {
       },
     );
   }
+
+  testWidgets('a found sale meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    await _pump(tester, _Backend());
+    await _search(tester, ' nte-3f2a-9c1b ');
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
 }

@@ -773,4 +773,17 @@ void main() {
       expect(_key('sale-charge'), findsNothing);
     });
   });
+
+  testWidgets('the open cart meets tap target guidelines', (
+    WidgetTester tester,
+  ) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
+    await tester.pumpWidget(_page(FakeSaleCheckout()));
+    await tester.pumpAndSettle();
+    await _enterQuantity(tester, 'DEMO-RIBBON', '2.5');
+    await _openCart(tester);
+    await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+    await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+    semantics.dispose();
+  });
 }
