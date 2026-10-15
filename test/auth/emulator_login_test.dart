@@ -321,7 +321,7 @@ Future<void> _submitExistingPricing(WidgetTester tester) async {
     find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
   );
   await tester.pumpAndSettle();
-  final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+  final Finder save = find.widgetWithText(FilledButton, 'Guardar precio / IVA');
   await tester.ensureVisible(save);
   await tester.tap(save);
 }
@@ -2100,7 +2100,7 @@ void main() {
 
     expect(find.textContaining('resultado es incierto'), findsNothing);
     expect(
-      find.textContaining('Audit ${oldDraft.idempotencyKey}'),
+      find.textContaining('Auditoría ${oldDraft.idempotencyKey}'),
       findsOneWidget,
     );
     expect(gatewayLoads, 2);
@@ -2158,7 +2158,7 @@ void main() {
 
     expect(loads, 2);
     expect(retried?.listedPriceMxn, frozenPrice);
-    expect(find.textContaining('Pricing saved. Audit'), findsOneWidget);
+    expect(find.textContaining('Precio guardado. Auditoría'), findsOneWidget);
   });
 
   testWidgets('seller never receives or initializes product pricing', (
@@ -2270,7 +2270,7 @@ void main() {
             ?.text,
         '75.00',
       );
-      expect(find.text('IVA rate: Not required'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
 
       close = find.widgetWithText(OutlinedButton, 'Cerrar');
       await tester.ensureVisible(close);
@@ -2307,7 +2307,7 @@ void main() {
       expect(attempts[1].idempotencyKey, original.idempotencyKey);
       expect(attempts[1].productId, 'PRD-COFFEE-001');
       expect(
-        find.textContaining('Audit ${original.idempotencyKey}'),
+        find.textContaining('Auditoría ${original.idempotencyKey}'),
         findsOneWidget,
       );
     },
@@ -2374,7 +2374,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
       expect(
-        find.textContaining('Audit ${attempts[0].idempotencyKey}'),
+        find.textContaining('Auditoría ${attempts[0].idempotencyKey}'),
         findsOneWidget,
       );
     },

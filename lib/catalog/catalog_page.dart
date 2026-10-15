@@ -1328,13 +1328,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       if (missingPrice || missingMode || missingTreatment || missingRate) {
         setState(() {
           _pricingError = null;
-          _listedPriceError = missingPrice ? 'Listed price is required.' : null;
-          _priceModeError = missingMode ? 'Price mode is required.' : null;
+          _listedPriceError = missingPrice
+              ? 'El precio de lista es obligatorio.'
+              : null;
+          _priceModeError = missingMode
+              ? 'El modo de precio es obligatorio.'
+              : null;
           _ivaTreatmentError = missingTreatment
-              ? 'IVA treatment is required.'
+              ? 'El tratamiento de IVA es obligatorio.'
               : null;
           _ivaRateError = missingRate
-              ? 'IVA rate is required for taxable products.'
+              ? 'La tasa de IVA es obligatoria para productos gravados.'
               : null;
         });
         return;
@@ -1401,7 +1405,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _pricingPending = false;
         _pricingUncertain = false;
         _lockedPricingDraft = null;
-        _pricingError = 'Product pricing was rejected (${error.code}).';
+        _pricingError = 'Se rechazó el precio del producto (${error.code}).';
       });
     } on ProductPricingUnresolvedException {
       if (!mounted || generation != _pricingGeneration) return;
@@ -1460,7 +1464,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               Semantics(
                 header: true,
                 child: Text(
-                  'Edit price / IVA',
+                  'Editar precio / IVA',
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
               ),
@@ -1473,7 +1477,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _listedPriceError != null,
                 label: _listedPriceError == null
                     ? null
-                    : 'Listed price error: $_listedPriceError',
+                    : 'Error en el precio de lista: $_listedPriceError',
                 child: TextFormField(
                   key: const ValueKey<String>('pricing-listed-price'),
                   controller: _listedPrice,
@@ -1488,8 +1492,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Listed price (MXN)',
-                      helperText: 'Exact MXN amount with at most two decimals.',
+                      labelText: 'Precio de lista (MXN)',
+                      helperText:
+                          'Monto exacto en MXN con máximo dos decimales.',
                       border: _pricingFieldBorder,
                     ),
                     _listedPriceError,
@@ -1502,7 +1507,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _priceModeError != null,
                 label: _priceModeError == null
                     ? null
-                    : 'Price mode error: $_priceModeError',
+                    : 'Error en el modo de precio: $_priceModeError',
                 child: DropdownButtonFormField<String>(
                   key: const ValueKey<String>('pricing-mode'),
                   isExpanded: true,
@@ -1510,20 +1515,20 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Price mode',
+                      labelText: 'Modo de precio',
                       border: _pricingFieldBorder,
                     ),
                     _priceModeError,
                   ),
-                  hint: const Text('Select price mode'),
+                  hint: const Text('Selecciona el modo de precio'),
                   items: const <DropdownMenuItem<String>>[
                     DropdownMenuItem(
                       value: 'iva-included',
-                      child: Text('IVA included'),
+                      child: Text('IVA incluido'),
                     ),
                     DropdownMenuItem(
                       value: 'iva-additional-on-invoice',
-                      child: Text('IVA additional on invoice'),
+                      child: Text('IVA adicional en factura'),
                     ),
                   ],
                   onChanged: locked
@@ -1540,7 +1545,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _ivaTreatmentError != null,
                 label: _ivaTreatmentError == null
                     ? null
-                    : 'IVA treatment error: $_ivaTreatmentError',
+                    : 'Error en el tratamiento de IVA: $_ivaTreatmentError',
                 child: DropdownButtonFormField<String>(
                   key: const ValueKey<String>('pricing-treatment'),
                   isExpanded: true,
@@ -1548,33 +1553,33 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'IVA treatment',
+                      labelText: 'Tratamiento de IVA',
                       border: _pricingFieldBorder,
                     ),
                     _ivaTreatmentError,
                   ),
-                  hint: const Text('Select IVA treatment'),
+                  hint: const Text('Selecciona el tratamiento de IVA'),
                   items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(value: 'taxable', child: Text('Taxable')),
+                    DropdownMenuItem(value: 'taxable', child: Text('Gravado')),
                     DropdownMenuItem(
                       value: 'zero-rated',
-                      child: Text('Zero-rated'),
+                      child: Text('Tasa 0%'),
                     ),
-                    DropdownMenuItem(value: 'exempt', child: Text('Exempt')),
+                    DropdownMenuItem(value: 'exempt', child: Text('Exento')),
                   ],
                   onChanged: locked ? null : _changeIvaTreatment,
                 ),
               ),
               const SizedBox(height: 12),
               if (_ivaTreatment == 'exempt')
-                const Text('IVA rate: Not required')
+                const Text('Tasa de IVA: No requerida')
               else
                 Semantics(
                   container: true,
                   liveRegion: _ivaRateError != null,
                   label: _ivaRateError == null
                       ? null
-                      : 'IVA rate error: $_ivaRateError',
+                      : 'Error en la tasa de IVA: $_ivaRateError',
                   child: TextFormField(
                     key: const ValueKey<String>('pricing-iva-rate'),
                     controller: _ivaRate,
@@ -1589,9 +1594,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     decoration: _requiredErrorDecoration(
                       context,
                       const InputDecoration(
-                        labelText: 'IVA rate (%)',
+                        labelText: 'Tasa de IVA (%)',
                         helperText:
-                            'Taxable rate must be greater than 0 through 100.',
+                            'La tasa gravada debe ser mayor que 0 y hasta 100.',
                         border: _pricingFieldBorder,
                       ),
                       _ivaRateError,
@@ -1601,7 +1606,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               if (_pricingError case final String error) ...<Widget>[
                 const SizedBox(height: 12),
                 Semantics(
-                  label: 'Product pricing error',
+                  label: 'Error en el precio del producto',
                   liveRegion: true,
                   child: ExcludeSemantics(child: Text(error)),
                 ),
@@ -1615,7 +1620,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: _pricingPending ? null : _submitPricing,
                     child: _pricingPending
                         ? Semantics(
-                            label: 'Saving product pricing',
+                            label: 'Guardando precio del producto',
                             liveRegion: true,
                             child: const SizedBox.square(
                               dimension: 20,
@@ -1625,7 +1630,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                         : Text(
                             _pricingUncertain
                                 ? 'Reintentar misma solicitud'
-                                : 'Save price / IVA',
+                                : 'Guardar precio / IVA',
                           ),
                   ),
                   OutlinedButton(
@@ -1973,7 +1978,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     context,
                     const InputDecoration(
                       labelText: 'Unit cost (MXN)',
-                      helperText: 'Exact MXN amount with at most two decimals.',
+                      helperText:
+                          'Monto exacto en MXN con máximo dos decimales.',
                       border: _pricingFieldBorder,
                     ),
                     _intakeCostError,
@@ -2249,15 +2255,15 @@ String _formatBasisPoints(int basisPoints) {
 }
 
 String _priceModeLabel(String value) => switch (value) {
-  'iva-included' => 'IVA included',
-  'iva-additional-on-invoice' => 'IVA additional on invoice',
+  'iva-included' => 'IVA incluido',
+  'iva-additional-on-invoice' => 'IVA adicional en factura',
   _ => throw StateError('validated price mode became invalid'),
 };
 
 String _ivaTreatmentLabel(String value) => switch (value) {
-  'taxable' => 'Taxable',
-  'zero-rated' => 'Zero-rated',
-  'exempt' => 'Exempt',
+  'taxable' => 'Gravado',
+  'zero-rated' => 'Tasa 0%',
+  'exempt' => 'Exento',
   _ => throw StateError('validated IVA treatment became invalid'),
 };
 
@@ -2391,7 +2397,7 @@ class _PricingSuccess extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
-    label: 'Product pricing succeeded',
+    label: 'Precio del producto guardado',
     child: ColoredBox(
       color: Theme.of(context).colorScheme.primaryContainer,
       child: Padding(
@@ -2401,7 +2407,9 @@ class _PricingSuccess extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.check_circle_outline),
             const SizedBox(width: 8),
-            Flexible(child: Text('Pricing saved. Audit ${result.auditId}')),
+            Flexible(
+              child: Text('Precio guardado. Auditoría ${result.auditId}'),
+            ),
           ],
         ),
       ),
@@ -2706,16 +2714,18 @@ class _ProductDetails extends StatelessWidget {
         if (product.pricing case final CatalogPricing pricing) ...<Widget>[
           const SizedBox(height: 4),
           Text(
-            'Listed price: ${formatCentavos(pricing.listedPriceCentavos)} '
+            'Precio de lista: ${formatCentavos(pricing.listedPriceCentavos)} '
             '${pricing.currency}',
           ),
           const SizedBox(height: 4),
-          Text('Price mode: ${_priceModeLabel(pricing.priceMode)}'),
-          const SizedBox(height: 4),
-          Text('IVA treatment: ${_ivaTreatmentLabel(pricing.ivaTreatment)}'),
+          Text('Modo de precio: ${_priceModeLabel(pricing.priceMode)}'),
           const SizedBox(height: 4),
           Text(
-            'IVA rate: ${pricing.ivaRateBasisPoints == null ? 'Not required' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
+            'Tratamiento de IVA: ${_ivaTreatmentLabel(pricing.ivaTreatment)}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Tasa de IVA: ${pricing.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
           ),
         ],
         if (role == InventoryRole.administrator &&
@@ -2738,7 +2748,7 @@ class _ProductDetails extends StatelessWidget {
             key: ValueKey<String>('configure-price-${product.internalCode}'),
             onPressed: () => onConfigurePricing!(product),
             icon: const Icon(Icons.price_change_outlined),
-            label: const Text('Edit price / IVA'),
+            label: const Text('Editar precio / IVA'),
           ),
         ],
         if (onRecordIntake != null) ...<Widget>[

@@ -237,7 +237,7 @@ void main() {
           );
       Finder banner() => find.textContaining(switch (category) {
         'creation' => 'Producto creado',
-        'pricing' => 'Pricing saved. Audit',
+        'pricing' => 'Precio guardado. Auditoría',
         _ => 'Intake recorded. Entry',
       });
       Future<void> begin(WidgetTester tester) async {
@@ -280,7 +280,7 @@ void main() {
           FilledButton,
           switch (category) {
             'creation' => 'Crear',
-            'pricing' => 'Save price / IVA',
+            'pricing' => 'Guardar precio / IVA',
             _ => 'Record intake',
           },
         );
@@ -368,7 +368,7 @@ void main() {
           expect(find.textContaining('resultado es incierto'), findsNothing);
           if (category != 'creation') {
             expect(find.text('Coffee'), findsOneWidget);
-            expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
+            expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
             expect(find.text('Cost unavailable'), findsOneWidget);
             expect(find.textContaining('Sin entrada registrada'), findsWidgets);
           } else {
@@ -391,20 +391,29 @@ void main() {
             await tester.pump(const Duration(seconds: 5));
             final Finder save = find.widgetWithText(
               FilledButton,
-              'Save price / IVA',
+              'Guardar precio / IVA',
             );
             await tester.ensureVisible(save);
             await tester.tap(save);
             await tester.pump();
             await accept(tester);
             expect(banner(), findsOneWidget);
-            expect(find.textContaining('Pricing saved. Audit'), findsOneWidget);
+            expect(
+              find.textContaining('Precio guardado. Auditoría'),
+              findsOneWidget,
+            );
             await tester.pump(const Duration(seconds: 5));
             expect(banner(), findsNothing);
-            expect(find.textContaining('Pricing saved. Audit'), findsOneWidget);
+            expect(
+              find.textContaining('Precio guardado. Auditoría'),
+              findsOneWidget,
+            );
             await tester.pump(const Duration(seconds: 5));
-            expect(find.textContaining('Pricing saved. Audit'), findsNothing);
-            expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
+            expect(
+              find.textContaining('Precio guardado. Auditoría'),
+              findsNothing,
+            );
+            expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
             expect(requests, hasLength(2));
             await tester.pumpWidget(const SizedBox.shrink());
           },
@@ -611,7 +620,7 @@ void main() {
           expect(find.text(state.$3), findsOneWidget);
           expect(find.bySemanticsLabel(state.$3), findsOneWidget);
           expect(
-            find.text('Listed price: 129.00 MXN'),
+            find.text('Precio de lista: 129.00 MXN'),
             product.pricing == null ? findsNothing : findsOneWidget,
           );
           expect(
@@ -717,7 +726,7 @@ void main() {
       expect(find.text('Coffee'), findsOneWidget);
       expect(find.text('Stock: 0.00 kg'), findsOneWidget);
       expect(find.text('Agotado'), findsOneWidget);
-      expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
+      expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
       expect(find.textContaining('Latest unit cost:'), findsNothing);
       expect(find.text('Cost unavailable'), findsNothing);
       expect(find.text('No cost recorded'), findsNothing);
@@ -1063,7 +1072,7 @@ void main() {
           expect(find.textContaining('Demo Branch'), findsNothing);
           expect(find.textContaining('Sin entrada registrada'), findsNothing);
           expect(find.text('Record stock intake'), findsNothing);
-          expect(find.text('Edit price / IVA'), findsNothing);
+          expect(find.text('Editar precio / IVA'), findsNothing);
           expect(find.textContaining('cost'), findsNothing);
           expect(mutations, 0);
         },
@@ -1263,10 +1272,10 @@ void main() {
       find.bySemanticsLabel('Código QR de Coffee. Código PRD-COFFEE-001'),
       findsOneWidget,
     );
-    expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
-    expect(find.text('Price mode: IVA included'), findsOneWidget);
-    expect(find.text('IVA treatment: Taxable'), findsOneWidget);
-    expect(find.text('IVA rate: 16%'), findsOneWidget);
+    expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
+    expect(find.text('Modo de precio: IVA incluido'), findsOneWidget);
+    expect(find.text('Tratamiento de IVA: Gravado'), findsOneWidget);
+    expect(find.text('Tasa de IVA: 16%'), findsOneWidget);
     expect(find.textContaining('acquisition'), findsNothing);
     expect(find.textContaining('admin'), findsNothing);
   });
@@ -1603,7 +1612,7 @@ void main() {
     expect(find.text('Unit: kg (precision 2)'), findsOneWidget);
     expect(find.text('Quantity: kg (precision 2)'), findsNothing);
     expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
-    expect(find.text('Edit price / IVA'), findsOneWidget);
+    expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
   });
 
@@ -2335,12 +2344,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Listed price: 129.00 MXN'), findsOneWidget);
-    expect(find.text('Price mode: IVA included'), findsOneWidget);
-    expect(find.text('IVA treatment: Taxable'), findsOneWidget);
-    expect(find.text('IVA rate: 16%'), findsOneWidget);
+    expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
+    expect(find.text('Modo de precio: IVA incluido'), findsOneWidget);
+    expect(find.text('Tratamiento de IVA: Gravado'), findsOneWidget);
+    expect(find.text('Tasa de IVA: 16%'), findsOneWidget);
     expect(find.text('Agotado'), findsOneWidget);
-    expect(find.text('Edit price / IVA'), findsNothing);
+    expect(find.text('Editar precio / IVA'), findsNothing);
     expect(find.text('Configure price / IVA'), findsNothing);
     expect(find.textContaining('audit'), findsNothing);
     expect(pricingCalls, 0);
@@ -2405,7 +2414,7 @@ void main() {
       '16',
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Guardar precio / IVA'));
     await tester.pumpAndSettle();
 
     expect(requests, hasLength(1));
@@ -2417,7 +2426,10 @@ void main() {
       'ivaTreatment': 'taxable',
       'ivaRatePercent': '16',
     });
-    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+    expect(
+      find.text('Precio guardado. Auditoría pricing-key-1'),
+      findsOneWidget,
+    );
     expect(loads, 2);
   });
 
@@ -2446,7 +2458,9 @@ void main() {
         const ValueKey<String>('pricing-iva-rate'),
       );
       await tester.enterText(rateField, '');
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
 
       expect(requests, isEmpty);
@@ -2457,12 +2471,12 @@ void main() {
             )
             .decoration
             ?.errorText,
-        'IVA rate is required for taxable products.',
+        'La tasa de IVA es obligatoria para productos gravados.',
       );
       expect(
         find.bySemanticsLabel(
           RegExp(
-            'IVA rate.*required for taxable products',
+            'tasa de IVA.*obligatoria para productos gravados',
             caseSensitive: false,
           ),
         ),
@@ -2472,19 +2486,21 @@ void main() {
       await tester.enterText(rateField, '16');
       await tester.pump();
       expect(
-        find.text('IVA rate is required for taxable products.'),
+        find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
       );
 
       await tester.enterText(rateField, '');
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey<String>('pricing-treatment')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Zero-rated').last);
+      await tester.tap(find.text('Tasa 0%').last);
       await tester.pumpAndSettle();
       expect(
-        find.text('IVA rate is required for taxable products.'),
+        find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
       );
 
@@ -2495,7 +2511,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        find.text('IVA rate is required for taxable products.'),
+        find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
       );
       expect(requests, isEmpty);
@@ -2580,11 +2596,11 @@ void main() {
         const ValueKey<String>('pricing-listed-price'),
       );
       await tester.enterText(priceField, '');
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
 
       expect(requests, isEmpty);
       expect(pricingIds, 0);
-      expect(find.text('Edit price / IVA'), findsOneWidget);
+      expect(find.text('Editar precio / IVA'), findsOneWidget);
       expect(find.text('Configure price / IVA'), findsNothing);
       expect(
         tester
@@ -2593,39 +2609,42 @@ void main() {
             )
             .decoration
             ?.errorText,
-        'Listed price is required.',
+        'El precio de lista es obligatorio.',
       );
       expect(
         find.bySemanticsLabel(
-          RegExp('listed price.*required', caseSensitive: false),
+          RegExp('precio de lista.*obligatorio', caseSensitive: false),
         ),
         findsOneWidget,
       );
 
       await tester.enterText(priceField, 'invalid');
       await tester.pump();
-      expect(find.text('Listed price is required.'), findsNothing);
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       expect(requests, isEmpty);
       expect(pricingIds, 1);
-      expect(find.bySemanticsLabel('Product pricing error'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Error en el precio del producto'),
+        findsOneWidget,
+      );
 
       await tester.enterText(priceField, '');
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
 
       await tester.enterText(priceField, '');
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(tea.internalCode);
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
 
       await tester.enterText(priceField, '');
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       await tester.pumpWidget(
         app(
           const EmulatorSession(
@@ -2636,16 +2655,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
       await openPricing(_coffee.internalCode);
 
       await tester.enterText(priceField, '');
-      await tapPricingButton(FilledButton, 'Save price / IVA');
+      await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       authoritative = restored;
       await tapPricingButton(OutlinedButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
       expect(find.text('Reintentar misma solicitud'), findsOneWidget);
       expect(requests, isEmpty);
     },
@@ -2696,13 +2715,15 @@ void main() {
       await tester.enterText(rateField, '');
       await tester.pump();
       expect(find.byIcon(Icons.error_outline), findsNothing);
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
       expect(
-        find.text('IVA rate is required for taxable products.'),
+        find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
       );
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
       expect(pricingIds, 0);
       expect(requests, isEmpty);
@@ -2737,36 +2758,49 @@ void main() {
 
       expectRequiredFeedback(
         priceField,
-        'Listed price is required.',
-        RegExp('listed price.*required', caseSensitive: false),
+        'El precio de lista es obligatorio.',
+        RegExp('precio de lista.*obligatorio', caseSensitive: false),
       );
       expectRequiredFeedback(
         rateField,
-        'IVA rate is required for taxable products.',
-        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+        'La tasa de IVA es obligatoria para productos gravados.',
+        RegExp(
+          'tasa de IVA.*obligatoria para productos gravados',
+          caseSensitive: false,
+        ),
       );
       await tester.enterText(priceField, '129.00');
       await tester.pump();
-      expect(find.text('Listed price is required.'), findsNothing);
+      expect(find.text('El precio de lista es obligatorio.'), findsNothing);
       expectRequiredFeedback(
         rateField,
-        'IVA rate is required for taxable products.',
-        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+        'La tasa de IVA es obligatoria para productos gravados.',
+        RegExp(
+          'tasa de IVA.*obligatoria para productos gravados',
+          caseSensitive: false,
+        ),
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
       expect(pricingIds, 0);
       expect(requests, isEmpty);
       await tester.enterText(rateField, '16');
       await tester.pump();
       expect(find.byIcon(Icons.error_outline), findsNothing);
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pumpAndSettle();
       expect(pricingIds, 1);
       expect(requests, hasLength(1));
       expect(requests.single.listedPriceMxn, '129.00');
       expect(requests.single.ivaRatePercent, '16');
-      expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+      expect(
+        find.text('Precio guardado. Auditoría pricing-key-1'),
+        findsOneWidget,
+      );
       semantics.dispose();
     },
   );
@@ -2866,12 +2900,14 @@ void main() {
         const ValueKey<String>('pricing-listed-price'),
       );
       await tester.enterText(priceField, '');
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
       expectStrongErrorPresentation(
         'pricing-listed-price',
-        'Listed price is required.',
-        RegExp('listed price.*required', caseSensitive: false),
+        'El precio de lista es obligatorio.',
+        RegExp('precio de lista.*obligatorio', caseSensitive: false),
       );
 
       // Entering a price clears the visual error along with the message.
@@ -2890,12 +2926,17 @@ void main() {
         const ValueKey<String>('pricing-iva-rate'),
       );
       await tester.enterText(rateField, '');
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pump();
       expectStrongErrorPresentation(
         'pricing-iva-rate',
-        'IVA rate is required for taxable products.',
-        RegExp('IVA rate.*required for taxable products', caseSensitive: false),
+        'La tasa de IVA es obligatoria para productos gravados.',
+        RegExp(
+          'tasa de IVA.*obligatoria para productos gravados',
+          caseSensitive: false,
+        ),
       );
       semantics.dispose();
     },
@@ -2937,7 +2978,9 @@ void main() {
       }
 
       Future<void> save() async {
-        await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+        await tester.tap(
+          find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+        );
         await tester.pumpAndSettle();
       }
 
@@ -2963,9 +3006,9 @@ void main() {
       }
 
       final Map<String, String> messages = <String, String>{
-        'pricing-listed-price': 'Listed price is required.',
-        'pricing-mode': 'Price mode is required.',
-        'pricing-treatment': 'IVA treatment is required.',
+        'pricing-listed-price': 'El precio de lista es obligatorio.',
+        'pricing-mode': 'El modo de precio es obligatorio.',
+        'pricing-treatment': 'El tratamiento de IVA es obligatorio.',
       };
       await open();
       for (final String key in messages.keys) {
@@ -3007,7 +3050,9 @@ void main() {
           isTrue,
         );
         expect(
-          find.bySemanticsLabel(RegExp('error: ${RegExp.escape(entry.value)}')),
+          find.bySemanticsLabel(
+            RegExp('^Error en .*: ${RegExp.escape(entry.value)}'),
+          ),
           findsOneWidget,
         );
       }
@@ -3024,13 +3069,13 @@ void main() {
         decoration('pricing-treatment').errorText,
         messages['pricing-treatment'],
       );
-      await select('pricing-mode', 'IVA additional on invoice');
+      await select('pricing-mode', 'IVA adicional en factura');
       expect(decoration('pricing-mode').errorText, isNull);
       expect(
         decoration('pricing-treatment').errorText,
         messages['pricing-treatment'],
       );
-      await select('pricing-treatment', 'Taxable');
+      await select('pricing-treatment', 'Gravado');
       expect(decoration('pricing-treatment').errorText, isNull);
       await tester.enterText(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
@@ -3047,9 +3092,9 @@ void main() {
       );
       expect(
         decoration('pricing-iva-rate').errorText,
-        'IVA rate is required for taxable products.',
+        'La tasa de IVA es obligatoria para productos gravados.',
       );
-      await select('pricing-treatment', 'Zero-rated');
+      await select('pricing-treatment', 'Tasa 0%');
       expect(decoration('pricing-iva-rate').errorText, isNull);
       expect(
         tester
@@ -3070,14 +3115,14 @@ void main() {
       );
       await save();
       expect(decoration('pricing-iva-rate').errorText, isNull);
-      await select('pricing-treatment', 'Exempt');
+      await select('pricing-treatment', 'Exento');
       await save();
       expect(
         find.byKey(const ValueKey<String>('pricing-iva-rate')),
         findsNothing,
       );
       expect(
-        find.text('IVA rate is required for taxable products.'),
+        find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
       );
       expect(
@@ -3092,9 +3137,9 @@ void main() {
       for (final String key in messages.keys) {
         expect(decoration(key).errorText, isNull);
       }
-      expect(find.text('Select price mode'), findsOneWidget);
-      expect(find.text('Select IVA treatment'), findsOneWidget);
-      await select('pricing-treatment', 'Taxable');
+      expect(find.text('Selecciona el modo de precio'), findsOneWidget);
+      expect(find.text('Selecciona el tratamiento de IVA'), findsOneWidget);
+      await select('pricing-treatment', 'Gravado');
       await save();
       expect(
         decoration('pricing-listed-price').errorText,
@@ -3104,7 +3149,7 @@ void main() {
       expect(decoration('pricing-treatment').errorText, isNull);
       expect(
         decoration('pricing-iva-rate').errorText,
-        'IVA rate is required for taxable products.',
+        'La tasa de IVA es obligatoria para productos gravados.',
       );
       await tester.enterText(
         find.byKey(const ValueKey<String>('pricing-iva-rate')),
@@ -3154,19 +3199,22 @@ void main() {
           ?.text,
       isEmpty,
     );
-    expect(find.text('Select price mode'), findsOneWidget);
-    expect(find.text('Select IVA treatment'), findsOneWidget);
+    expect(find.text('Selecciona el modo de precio'), findsOneWidget);
+    expect(find.text('Selecciona el tratamiento de IVA'), findsOneWidget);
     expect(find.text('16'), findsNothing);
-    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Guardar precio / IVA'));
     await tester.pump();
-    expect(find.text('Listed price is required.'), findsOneWidget);
-    expect(find.text('Price mode is required.'), findsOneWidget);
-    expect(find.text('IVA treatment is required.'), findsOneWidget);
+    expect(find.text('El precio de lista es obligatorio.'), findsOneWidget);
+    expect(find.text('El modo de precio es obligatorio.'), findsOneWidget);
+    expect(find.text('El tratamiento de IVA es obligatorio.'), findsOneWidget);
     expect(
-      find.text('IVA rate is required for taxable products.'),
+      find.text('La tasa de IVA es obligatoria para productos gravados.'),
       findsNothing,
     );
-    expect(find.bySemanticsLabel('Product pricing error'), findsNothing);
+    expect(
+      find.bySemanticsLabel('Error en el precio del producto'),
+      findsNothing,
+    );
   });
 
   testWidgets('uncertain pricing locks payload and retries the same UUID', (
@@ -3203,7 +3251,7 @@ void main() {
       find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Guardar precio / IVA'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -3274,7 +3322,9 @@ void main() {
         find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pumpAndSettle();
 
       expect(requests.single.idempotencyKey, 'pricing-new-faux');
@@ -3288,7 +3338,7 @@ void main() {
             ?.text,
         stored.listedPriceMxn,
       );
-      expect(find.text('IVA rate: Not required'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
 
       final Finder retry = find.widgetWithText(
         FilledButton,
@@ -3302,7 +3352,7 @@ void main() {
       expect(requests[1], same(stored));
       expect(requests[1].idempotencyKey, 'pricing-original-a');
       expect(
-        find.text('Pricing saved. Audit pricing-original-a'),
+        find.text('Precio guardado. Auditoría pricing-original-a'),
         findsOneWidget,
       );
     },
@@ -3329,7 +3379,9 @@ void main() {
         find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save price / IVA'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
+      );
       await tester.pumpAndSettle();
 
       expect(calls, 1);
@@ -3374,7 +3426,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('pricing-treatment')));
       await tester.pumpAndSettle();
       await tester.tap(
-        find.text(treatment == 'zero-rated' ? 'Zero-rated' : 'Exempt').last,
+        find.text(treatment == 'zero-rated' ? 'Tasa 0%' : 'Exento').last,
       );
       await tester.pumpAndSettle();
 
@@ -3385,13 +3437,16 @@ void main() {
         expect(rate.enabled, isFalse);
         expect(rate.controller?.text, '0');
       } else {
-        expect(find.text('IVA rate: Not required'), findsOneWidget);
+        expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
         expect(
           find.byKey(const ValueKey<String>('pricing-iva-rate')),
           findsNothing,
         );
       }
-      final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+      final Finder save = find.widgetWithText(
+        FilledButton,
+        'Guardar precio / IVA',
+      );
       await tester.ensureVisible(save);
       await tester.tap(save);
       await tester.pumpAndSettle();
@@ -3429,14 +3484,20 @@ void main() {
       find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
     );
     await tester.pumpAndSettle();
-    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    final Finder save = find.widgetWithText(
+      FilledButton,
+      'Guardar precio / IVA',
+    );
     await tester.ensureVisible(save);
     await tester.tap(save);
     await tester.tap(save, warnIfMissed: false);
     await tester.pump();
 
     expect(calls, 1);
-    expect(find.bySemanticsLabel('Saving product pricing'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Guardando precio del producto'),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<TextFormField>(
@@ -3507,17 +3568,26 @@ void main() {
       find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
     );
     await tester.pumpAndSettle();
-    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    final Finder save = find.widgetWithText(
+      FilledButton,
+      'Guardar precio / IVA',
+    );
     await tester.ensureVisible(save);
     await tester.tap(save);
     await tester.pumpAndSettle();
 
     expect(mutations, 1);
-    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
-    expect(find.text('Listed price: 200.00 MXN'), findsOneWidget);
-    expect(find.text('Price mode: IVA additional on invoice'), findsOneWidget);
-    expect(find.text('IVA treatment: Exempt'), findsOneWidget);
-    expect(find.text('IVA rate: Not required'), findsOneWidget);
+    expect(
+      find.text('Precio guardado. Auditoría pricing-key-1'),
+      findsOneWidget,
+    );
+    expect(find.text('Precio de lista: 200.00 MXN'), findsOneWidget);
+    expect(
+      find.text('Modo de precio: IVA adicional en factura'),
+      findsOneWidget,
+    );
+    expect(find.text('Tratamiento de IVA: Exento'), findsOneWidget);
+    expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
   });
 
   testWidgets('pricing refresh failure keeps success without resubmission', (
@@ -3556,12 +3626,18 @@ void main() {
       find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
     );
     await tester.pumpAndSettle();
-    final Finder save = find.widgetWithText(FilledButton, 'Save price / IVA');
+    final Finder save = find.widgetWithText(
+      FilledButton,
+      'Guardar precio / IVA',
+    );
     await tester.ensureVisible(save);
     await tester.tap(save);
     await tester.pumpAndSettle();
 
-    expect(find.text('Pricing saved. Audit pricing-key-1'), findsOneWidget);
+    expect(
+      find.text('Precio guardado. Auditoría pricing-key-1'),
+      findsOneWidget,
+    );
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(mutations, 1);
   });
@@ -3586,8 +3662,8 @@ void main() {
     tester.view.viewInsets = const FakeViewPadding(bottom: 220);
     await tester.pump();
 
-    expect(find.text('Listed price (MXN)'), findsOneWidget);
-    expect(find.text('Save price / IVA'), findsOneWidget);
+    expect(find.text('Precio de lista (MXN)'), findsOneWidget);
+    expect(find.text('Guardar precio / IVA'), findsOneWidget);
     expect(tester.takeException(), isNull);
     tester.view.resetViewInsets();
     await tester.binding.setSurfaceSize(null);
@@ -4494,7 +4570,7 @@ void main() {
 
     void expectEmptyPricingFormFor(WidgetTester tester, String code) {
       expect(
-        find.widgetWithText(FilledButton, 'Save price / IVA'),
+        find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
         findsOneWidget,
       );
       expect(find.text(code), findsWidgets);
@@ -4507,8 +4583,8 @@ void main() {
             ?.text,
         isEmpty,
       );
-      expect(find.text('Select price mode'), findsOneWidget);
-      expect(find.text('Select IVA treatment'), findsOneWidget);
+      expect(find.text('Selecciona el modo de precio'), findsOneWidget);
+      expect(find.text('Selecciona el tratamiento de IVA'), findsOneWidget);
     }
 
     testWidgets(
@@ -4545,16 +4621,19 @@ void main() {
         expect(find.textContaining('is required.'), findsNothing);
         final Finder save = find.widgetWithText(
           FilledButton,
-          'Save price / IVA',
+          'Guardar precio / IVA',
         );
         await tester.ensureVisible(save);
         await tester.tap(save);
         await tester.pump();
-        expect(find.text('Listed price is required.'), findsOneWidget);
-        expect(find.text('Price mode is required.'), findsOneWidget);
-        expect(find.text('IVA treatment is required.'), findsOneWidget);
+        expect(find.text('El precio de lista es obligatorio.'), findsOneWidget);
+        expect(find.text('El modo de precio es obligatorio.'), findsOneWidget);
         expect(
-          find.text('IVA rate is required for taxable products.'),
+          find.text('El tratamiento de IVA es obligatorio.'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('La tasa de IVA es obligatoria para productos gravados.'),
           findsNothing,
         );
         expect(pricingIds, 0);
