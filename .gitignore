@@ -2,6 +2,9 @@
 .atl/
 .codegraph/
 
+# ODD run logs and emulator evidence
+odd/runtime/
+
 # macOS Finder metadata
 .DS_Store
 
