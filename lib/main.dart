@@ -64,8 +64,8 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final AdministratorMovementsLoader? emulatorMovementsLoader;
   final TransferGatewayLoader? emulatorTransferLoader;
 
-  /// Seller transfer-notice backend loader; production wiring uses the
-  /// emulator-only default. Demo and disconnected modes never receive it.
+  /// Seller transfer-notice backend loader; null uses the selected connected
+  /// mode's bootstrap. Demo and disconnected modes never receive it.
   final TransferNoticeBackendSessionLoader? emulatorTransferNoticeLoader;
 
   @override
