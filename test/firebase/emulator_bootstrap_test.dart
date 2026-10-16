@@ -209,6 +209,50 @@ void main() {
       }
     });
 
+    test('only an opted-in Android target resolves the USB device route', () {
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: false,
+          target: TargetPlatform.android,
+          isIosSimulator: false,
+          androidUsbReverse: true,
+        ),
+        EmulatorClientPlatform.androidUsbDevice,
+      );
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: false,
+          target: TargetPlatform.android,
+          isIosSimulator: false,
+        ),
+        EmulatorClientPlatform.android,
+      );
+      for (final TargetPlatform target in <TargetPlatform>[
+        TargetPlatform.iOS,
+        TargetPlatform.macOS,
+      ]) {
+        expect(
+          DemoEmulatorBootstrap.platformFor(
+            isWeb: false,
+            target: target,
+            isIosSimulator: false,
+            androidUsbReverse: true,
+          ),
+          EmulatorClientPlatform.unsupported,
+          reason: '$target',
+        );
+      }
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: true,
+          target: TargetPlatform.android,
+          isIosSimulator: false,
+          androidUsbReverse: true,
+        ),
+        EmulatorClientPlatform.web,
+      );
+    });
+
     test('current platform asks the real simulator probe by default', () {
       expect(
         identical(
@@ -562,6 +606,37 @@ void main() {
           'functions:127.0.0.1:5001',
           'gateway',
         ]);
+      },
+    );
+
+    test(
+      'a USB-reversed Android device reaches every emulator on its loopback',
+      () async {
+        final List<String> endpoints = <String>[];
+        FirebaseOptions? options;
+        await DemoEmulatorBootstrap.startProductCreation<String>(
+          platform: EmulatorClientPlatform.androidUsbDevice,
+          initializeApp: (FirebaseOptions value) async => options = value,
+          connectAuthEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFirestoreEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFunctionsEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          createGateway: () => 'gateway',
+        );
+        expect(endpoints, <String>[
+          '127.0.0.1:9099',
+          '127.0.0.1:8080',
+          '127.0.0.1:5001',
+        ]);
+        expect(
+          options,
+          DemoEmulatorBootstrap.optionsFor(EmulatorClientPlatform.android),
+        );
       },
     );
 

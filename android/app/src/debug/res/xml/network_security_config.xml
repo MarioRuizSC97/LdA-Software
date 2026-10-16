@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only: lets the app reach the local Firebase emulators that
-     the Android emulator exposes on the host loopback alias 10.0.2.2 over
-     plain HTTP. Every other host keeps the platform default (cleartext
-     denied), and release/profile builds never include this file. -->
+<!-- Debug builds only: lets the app reach the local Firebase emulators over
+     plain HTTP, either through the Android emulator's host alias 10.0.2.2 or,
+     on a physical device, through ports forwarded with `adb reverse` to the
+     device loopback 127.0.0.1. Every other host keeps the platform default
+     (cleartext denied), and release/profile builds never include this file. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
 </network-security-config>

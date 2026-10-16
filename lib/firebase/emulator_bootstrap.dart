@@ -26,7 +26,15 @@ import 'emulator_transfer_gateway.dart';
 import 'emulator_transfer_notice_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
 
-enum EmulatorClientPlatform { android, ios, web, unsupported }
+/// Where the app runs relative to the host's local emulators.
+///
+/// [androidUsbDevice] is a physical Android device whose emulator ports are
+/// forwarded to the host with `adb reverse`, so it reaches them on its own
+/// loopback instead of the Android emulator's 10.0.2.2 alias.
+enum EmulatorClientPlatform { android, androidUsbDevice, ios, web, unsupported }
+
+/// Opt-in for [EmulatorClientPlatform.androidUsbDevice]; off by default.
+const bool _androidUsbReverse = bool.fromEnvironment('LDA_ANDROID_USB_REVERSE');
 
 typedef AuthEmulatorConnect = Future<void> Function(String host, int port);
 typedef FirestoreEmulatorConnect = Future<void> Function(String host, int port);
@@ -171,6 +179,7 @@ class DemoEmulatorBootstrap {
       switch (platform) {
         EmulatorClientPlatform.ios => emulatorDemoIosOptions,
         EmulatorClientPlatform.android ||
+        EmulatorClientPlatform.androidUsbDevice ||
         EmulatorClientPlatform.web => emulatorDemoOptions,
         EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
       };
@@ -184,6 +193,7 @@ class DemoEmulatorBootstrap {
     isWeb: kIsWeb,
     target: defaultTargetPlatform,
     isIosSimulator: !kIsWeb && iosSimulatorProbe(),
+    androidUsbReverse: _androidUsbReverse,
   );
 
   @visibleForTesting
@@ -191,9 +201,12 @@ class DemoEmulatorBootstrap {
     required bool isWeb,
     required TargetPlatform target,
     required bool isIosSimulator,
+    bool androidUsbReverse = false,
   }) {
     if (isWeb) return EmulatorClientPlatform.web;
     return switch (target) {
+      TargetPlatform.android when androidUsbReverse =>
+        EmulatorClientPlatform.androidUsbDevice,
       TargetPlatform.android => EmulatorClientPlatform.android,
       // Simulator only: a physical device cannot reach the host loopback.
       TargetPlatform.iOS when isIosSimulator => EmulatorClientPlatform.ios,
@@ -329,7 +342,13 @@ class DemoEmulatorBootstrap {
             .putIfAbsent(
               app.name,
               () => FirestoreEmulatorConnection((String host, int port) async {
-                firestore.useFirestoreEmulator(host, port);
+                // The bootstrap already chose the per-platform host; the
+                // SDK's own Android remap would undo the USB device route.
+                firestore.useFirestoreEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
               }),
             );
         return connection.ensureConnected(host, port);
@@ -392,7 +411,13 @@ class DemoEmulatorBootstrap {
             .putIfAbsent(
               app.name,
               () => FirestoreEmulatorConnection((String host, int port) async {
-                firestore.useFirestoreEmulator(host, port);
+                // The bootstrap already chose the per-platform host; the
+                // SDK's own Android remap would undo the USB device route.
+                firestore.useFirestoreEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
               }),
             );
         return connection.ensureConnected(host, port);
@@ -456,7 +481,13 @@ class DemoEmulatorBootstrap {
             .putIfAbsent(
               app.name,
               () => FirestoreEmulatorConnection((String host, int port) async {
-                firestore.useFirestoreEmulator(host, port);
+                // The bootstrap already chose the per-platform host; the
+                // SDK's own Android remap would undo the USB device route.
+                firestore.useFirestoreEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
               }),
             );
         return connection.ensureConnected(host, port);
@@ -713,7 +744,13 @@ class DemoEmulatorBootstrap {
             .putIfAbsent(
               app.name,
               () => FirestoreEmulatorConnection((String host, int port) async {
-                firestore.useFirestoreEmulator(host, port);
+                // The bootstrap already chose the per-platform host; the
+                // SDK's own Android remap would undo the USB device route.
+                firestore.useFirestoreEmulator(
+                  host,
+                  port,
+                  automaticHostMapping: false,
+                );
               }),
             );
         return connection.ensureConnected(host, port);
@@ -768,6 +805,8 @@ class DemoEmulatorBootstrap {
 
   static String _hostFor(EmulatorClientPlatform platform) => switch (platform) {
     EmulatorClientPlatform.android => '10.0.2.2',
+    // `adb reverse` forwards each emulator port from the device loopback.
+    EmulatorClientPlatform.androidUsbDevice => '127.0.0.1',
     EmulatorClientPlatform.web => '127.0.0.1',
     // The iOS simulator shares the host network stack.
     EmulatorClientPlatform.ios => '127.0.0.1',

@@ -90,8 +90,34 @@ Physically separated costs and server-owned inventory writes are mandatory
 schema constraints for the next implementation phase, not field filtering that
 these rules can provide.
 
+## Running against the local emulators
+
+Start the demo emulators first, then build with
+`--dart-define=LDA_LOCAL_EMULATORS=true`:
+
+- **Android emulator**: no extra setup. The app reaches the host through the
+  emulator alias `10.0.2.2`.
+- **iOS simulator**: no extra setup. The simulator shares the host loopback
+  `127.0.0.1`.
+- **Physical Android device over USB**: forward the emulator ports to the
+  device, then add `--dart-define=LDA_ANDROID_USB_REVERSE=true` so the app
+  uses the device loopback `127.0.0.1` instead of `10.0.2.2`:
+
+  ```sh
+  for port in 9099 8080 5001; do adb reverse tcp:$port tcp:$port; done
+  flutter run -d <device-id> \
+    --dart-define=LDA_LOCAL_EMULATORS=true \
+    --dart-define=LDA_ANDROID_USB_REVERSE=true
+  ```
+
+Plain HTTP to the emulators is allowed only in debug builds and only for
+`10.0.2.2` and `127.0.0.1`
+(`android/app/src/debug/res/xml/network_security_config.xml`).
+
 ## Current platform limitations
 
-- Android builds require the missing Android command-line tools and accepted SDK licenses.
-- iOS builds and device testing are not validated because a complete Xcode installation and CocoaPods are unavailable.
-- Browser execution and browser testing are not validated because Chrome is unavailable. The widget test above runs in Flutter's test environment, not in a browser.
+Validated on 2026-10-16: demo seller sign-in and the live catalog on the iOS
+27 simulator, the Android emulator, and a physical Android 12 device over USB.
+Not yet validated: physical iOS devices, release signing, and store builds
+(TestFlight / Play). Android command-line tools are still missing; Gradle
+builds work without them.
