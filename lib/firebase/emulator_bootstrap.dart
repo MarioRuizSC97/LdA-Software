@@ -31,10 +31,33 @@ import 'emulator_stock_intake_gateway.dart';
 /// [androidUsbDevice] is a physical Android device whose emulator ports are
 /// forwarded to the host with `adb reverse`, so it reaches them on its own
 /// loopback instead of the Android emulator's 10.0.2.2 alias.
-enum EmulatorClientPlatform { android, androidUsbDevice, ios, web, unsupported }
+/// [iosLanDevice] is an iPhone (or, for verification, the simulator) that
+/// reaches the emulators through the host's private LAN address, because a
+/// physical iPhone has no `adb reverse` equivalent.
+enum EmulatorClientPlatform {
+  android,
+  androidUsbDevice,
+  ios,
+  iosLanDevice,
+  web,
+  unsupported,
+}
 
 /// Opt-in for [EmulatorClientPlatform.androidUsbDevice]; off by default.
 const bool _androidUsbReverse = bool.fromEnvironment('LDA_ANDROID_USB_REVERSE');
+
+/// Opt-in for [EmulatorClientPlatform.iosLanDevice]: the host's private LAN
+/// IPv4 address. Empty by default.
+const String _iosLanHostDefine = String.fromEnvironment(
+  'LDA_IOS_EMULATOR_HOST',
+);
+
+/// 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 only.
+final RegExp _privateIpv4 = RegExp(
+  r'^(?:10\.(?:\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})'
+  r'|172\.(?:1[6-9]|2\d|3[01])\.(?:\d{1,3})\.(?:\d{1,3})'
+  r'|192\.168\.(?:\d{1,3})\.(?:\d{1,3}))$',
+);
 
 typedef AuthEmulatorConnect = Future<void> Function(String host, int port);
 typedef FirestoreEmulatorConnect = Future<void> Function(String host, int port);
@@ -177,7 +200,8 @@ class DemoEmulatorBootstrap {
   /// time, so iOS gets an iOS-format appId for the same demo project.
   static FirebaseOptions optionsFor(EmulatorClientPlatform platform) =>
       switch (platform) {
-        EmulatorClientPlatform.ios => emulatorDemoIosOptions,
+        EmulatorClientPlatform.ios ||
+        EmulatorClientPlatform.iosLanDevice => emulatorDemoIosOptions,
         EmulatorClientPlatform.android ||
         EmulatorClientPlatform.androidUsbDevice => emulatorDemoAndroidOptions,
         EmulatorClientPlatform.web => emulatorDemoOptions,
@@ -194,7 +218,13 @@ class DemoEmulatorBootstrap {
     target: defaultTargetPlatform,
     isIosSimulator: !kIsWeb && iosSimulatorProbe(),
     androidUsbReverse: _androidUsbReverse,
+    iosLanHost: iosLanHost,
   );
+
+  /// The host's private LAN address for [EmulatorClientPlatform.iosLanDevice].
+  /// Tests may replace it and must restore it; production never reassigns it.
+  @visibleForTesting
+  static String iosLanHost = _iosLanHostDefine;
 
   @visibleForTesting
   static EmulatorClientPlatform platformFor({
@@ -202,6 +232,7 @@ class DemoEmulatorBootstrap {
     required TargetPlatform target,
     required bool isIosSimulator,
     bool androidUsbReverse = false,
+    String iosLanHost = '',
   }) {
     if (isWeb) return EmulatorClientPlatform.web;
     return switch (target) {
@@ -209,6 +240,8 @@ class DemoEmulatorBootstrap {
         EmulatorClientPlatform.androidUsbDevice,
       TargetPlatform.android => EmulatorClientPlatform.android,
       // Simulator only: a physical device cannot reach the host loopback.
+      TargetPlatform.iOS when iosLanHost.isNotEmpty =>
+        EmulatorClientPlatform.iosLanDevice,
       TargetPlatform.iOS when isIosSimulator => EmulatorClientPlatform.ios,
       _ => EmulatorClientPlatform.unsupported,
     };
@@ -803,15 +836,38 @@ class DemoEmulatorBootstrap {
     }
   }
 
-  static String _hostFor(EmulatorClientPlatform platform) => switch (platform) {
+  static String _hostFor(EmulatorClientPlatform platform) => hostFor(platform);
+
+  /// The emulator host for [platform]. The iOS LAN route accepts only a
+  /// private IPv4 address and otherwise fails closed before any connection.
+  @visibleForTesting
+  static String hostFor(
+    EmulatorClientPlatform platform, {
+    String? iosLanHost,
+  }) => switch (platform) {
     EmulatorClientPlatform.android => '10.0.2.2',
     // `adb reverse` forwards each emulator port from the device loopback.
     EmulatorClientPlatform.androidUsbDevice => '127.0.0.1',
     EmulatorClientPlatform.web => '127.0.0.1',
     // The iOS simulator shares the host network stack.
     EmulatorClientPlatform.ios => '127.0.0.1',
+    EmulatorClientPlatform.iosLanDevice => _privateLanHost(
+      iosLanHost ?? DemoEmulatorBootstrap.iosLanHost,
+    ),
     EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
   };
+
+  static String _privateLanHost(String host) {
+    final bool octetsValid = host
+        .split('.')
+        .every((String octet) => (int.tryParse(octet) ?? 256) <= 255);
+    if (!_privateIpv4.hasMatch(host) || !octetsValid) {
+      throw UnsupportedError(
+        'LDA_IOS_EMULATOR_HOST must be a private LAN IPv4 address.',
+      );
+    }
+    return host;
+  }
 
   static UnsupportedError _unsupportedPlatform() => UnsupportedError(
     'Local Firebase emulators are supported only on Android, iOS and web.',

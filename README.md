@@ -110,6 +110,14 @@ Start the demo emulators first, then build with
     --dart-define=LDA_ANDROID_USB_REVERSE=true
   ```
 
+- **Physical iPhone over Wi-Fi** (partial): an iPhone cannot reach the Mac's
+  loopback, so pass the Mac's private LAN address with
+  `--dart-define=LDA_IOS_EMULATOR_HOST=<192.168.x.y>`. Only 10/8, 172.16/12
+  and 192.168/16 addresses are accepted. The emulators must accept
+  connections on that address. Sign-in and the live catalog work this way.
+  **Functions callables do not**: the native iOS Functions SDK refuses to send
+  the Auth token over HTTP to a non-loopback host (`unauthenticated`).
+
 Plain HTTP to the emulators is allowed only in debug builds and only for
 `10.0.2.2` and `127.0.0.1`
 (`android/app/src/debug/res/xml/network_security_config.xml`).

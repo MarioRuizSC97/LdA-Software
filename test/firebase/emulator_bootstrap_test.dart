@@ -197,6 +197,126 @@ void main() {
       );
     });
 
+    test('a configured LAN host routes iOS through the LAN device route', () {
+      for (final bool simulator in <bool>[false, true]) {
+        expect(
+          DemoEmulatorBootstrap.platformFor(
+            isWeb: false,
+            target: TargetPlatform.iOS,
+            isIosSimulator: simulator,
+            iosLanHost: '192.168.1.20',
+          ),
+          EmulatorClientPlatform.iosLanDevice,
+          reason: 'simulator: $simulator',
+        );
+      }
+      // Without the opt-in a physical iPhone stays unsupported.
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: false,
+          target: TargetPlatform.iOS,
+          isIosSimulator: false,
+        ),
+        EmulatorClientPlatform.unsupported,
+      );
+      expect(
+        DemoEmulatorBootstrap.platformFor(
+          isWeb: false,
+          target: TargetPlatform.android,
+          isIosSimulator: false,
+          iosLanHost: '192.168.1.20',
+        ),
+        EmulatorClientPlatform.android,
+      );
+      expect(
+        DemoEmulatorBootstrap.optionsFor(EmulatorClientPlatform.iosLanDevice),
+        emulatorDemoIosOptions,
+      );
+    });
+
+    test('the iOS LAN route accepts only private IPv4 hosts', () {
+      for (final String host in <String>[
+        '10.0.0.5',
+        '172.16.4.2',
+        '172.31.255.254',
+        '192.168.1.20',
+      ]) {
+        expect(
+          DemoEmulatorBootstrap.hostFor(
+            EmulatorClientPlatform.iosLanDevice,
+            iosLanHost: host,
+          ),
+          host,
+        );
+      }
+      for (final String host in <String>[
+        '',
+        '8.8.8.8',
+        '172.32.0.1',
+        '192.169.1.1',
+        '127.0.0.1',
+        '192.168.1',
+        '192.168.1.256',
+        'my-mac.local',
+        'http://192.168.1.20',
+      ]) {
+        expect(
+          () => DemoEmulatorBootstrap.hostFor(
+            EmulatorClientPlatform.iosLanDevice,
+            iosLanHost: host,
+          ),
+          throwsUnsupportedError,
+          reason: host,
+        );
+      }
+    });
+
+    test('the iOS LAN route reaches every emulator on the LAN host', () async {
+      final String previous = DemoEmulatorBootstrap.iosLanHost;
+      try {
+        DemoEmulatorBootstrap.iosLanHost = '192.168.1.20';
+        final List<String> endpoints = <String>[];
+        await DemoEmulatorBootstrap.startProductCreation<String>(
+          platform: EmulatorClientPlatform.iosLanDevice,
+          initializeApp: (_) async {},
+          connectAuthEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFirestoreEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          connectFunctionsEmulator: (String host, int port) async {
+            endpoints.add('$host:$port');
+          },
+          createGateway: () => 'gateway',
+        );
+        expect(endpoints, <String>[
+          '192.168.1.20:9099',
+          '192.168.1.20:8080',
+          '192.168.1.20:5001',
+        ]);
+      } finally {
+        DemoEmulatorBootstrap.iosLanHost = previous;
+      }
+    });
+
+    test('the iOS LAN route fails closed without a configured host', () async {
+      expect(DemoEmulatorBootstrap.iosLanHost, isEmpty);
+      var initialized = false;
+      await expectLater(
+        DemoEmulatorBootstrap.startProductCreation<String>(
+          platform: EmulatorClientPlatform.iosLanDevice,
+          initializeApp: (_) async => initialized = true,
+          connectAuthEmulator: (_, _) async {},
+          connectFirestoreEmulator: (_, _) async {},
+          connectFunctionsEmulator: (_, _) async {},
+          createGateway: () => 'gateway',
+        ),
+        throwsUnsupportedError,
+      );
+      expect(initialized, isFalse);
+    });
+
     test('current platform still resolves Android from the target', () {
       try {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
