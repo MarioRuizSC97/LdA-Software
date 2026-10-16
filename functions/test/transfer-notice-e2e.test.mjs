@@ -999,6 +999,70 @@ test('runIsolatedNoticeE2E tears the CLI down when disposable seeding fails', as
   assert.match(result[1], /failure/);
 });
 
+for (const seedSucceeds of [false, true]) {
+  for (const fault of ['result write', 'log close', 'unsubscribe']) {
+    test(`finalization preserves the primary failure and completes cleanup: ${fault}, seed=${seedSucceeds}`, async () => {
+      const uncaughtBefore = process.listenerCount('uncaughtException');
+      const rejectionBefore = process.listenerCount('unhandledRejection');
+      const closeAttempts = [];
+      let unsubscribeAttempts = 0;
+      let resultWriteAttempts = 0;
+      const finalizationError = new Error(`${fault} failed`);
+      const { state, deps } = lifecycleHarness({
+        seedSucceeds,
+        webBuildDeps: {
+          openLog: (path) => ({
+            write: () => {},
+            close: async () => {
+              closeAttempts.push(String(path));
+              if (fault === 'log close') throw finalizationError;
+            },
+          }),
+          registerTerminate: () => () => {
+            unsubscribeAttempts += 1;
+            if (fault === 'unsubscribe') throw finalizationError;
+          },
+          writeFile: (path, contents) => {
+            if (String(path).endsWith('result.json')) {
+              resultWriteAttempts += 1;
+              if (fault === 'result write') throw finalizationError;
+            }
+            state.writtenFiles.set(String(path), String(contents));
+          },
+        },
+      });
+      await assert.rejects(
+        () => runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps }),
+        (error) => {
+          if (seedSucceeds) assert.equal(error.message, finalizationError.message);
+          else assert.match(error.message, /provisioning failed/);
+          return true;
+        },
+      );
+      assert.ok(state.cli.signals.includes('SIGTERM'));
+      assert.equal(closeAttempts.length, 3, 'every owned log must get one close attempt');
+      assert.equal(new Set(closeAttempts).size, 3);
+      assert.equal(unsubscribeAttempts, 1);
+      assert.equal(resultWriteAttempts, 1);
+      assert.equal(process.listenerCount('uncaughtException'), uncaughtBefore);
+      assert.equal(process.listenerCount('unhandledRejection'), rejectionBefore);
+      const result = [...state.writtenFiles.entries()].find(([path]) => path.endsWith('result.json'));
+      if (fault === 'result write') assert.equal(result, undefined, 'a failed disk write cannot guarantee an artifact');
+      else {
+        assert.ok(result);
+        const evidence = JSON.parse(result[1]);
+        assert.equal(evidence.exit, 'failure');
+        assert.equal(evidence.label, 'notice-e2e-run-failed');
+        if (seedSucceeds) assert.equal(evidence.error, finalizationError.message);
+        else assert.match(evidence.error, /provisioning failed/);
+      }
+      assert.equal(state.proxyClosed, seedSucceeds ? 1 : 0);
+      assert.equal(state.webServerClosed, seedSucceeds ? 1 : 0);
+      assert.equal(state.browserCloses.length, seedSucceeds ? 4 : 0);
+    });
+  }
+}
+
 test('the crash handler tears down owned processes and only then exits non-zero', async () => {
   const calls = [];
   let release;

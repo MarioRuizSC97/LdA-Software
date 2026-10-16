@@ -1110,17 +1110,36 @@ export async function runIsolatedNoticeE2E({ argv, env = process.env, deps = {} 
     process.removeListener('unhandledRejection', onUncaught);
     failure ??= await assertPortsReleased(d, { note });
     failure ??= assertFingerprintsUnchanged(d, before);
-    d.writeFile(join(paths.runDir, 'result.json'), `${JSON.stringify({
-      label: failure ? 'notice-e2e-run-failed' : 'notice-e2e-run',
-      exit: failure ? 'failure' : 'success',
-      runId: paths.runId,
-      webBuild: { path: webBuildPath, sha256: webBuild.sourceTreeSha256 },
-      transferId,
-      stages,
-      error: failure ? failure.message : null,
-    }, null, 2)}\n`, { mode: 0o600 });
-    for (const sink of Object.values(logs)) await sink.close?.();
-    latch.unsubscribe();
+    // Finalization faults must not replace the run's first failure or prevent
+    // the remaining resources from getting their own cleanup attempt.
+    const recordFinalizationFailure = (error) => {
+      failure ??= error instanceof RunnerError ? error : new RunnerError(error?.message ?? String(error));
+    };
+    for (const sink of Object.values(logs)) {
+      try {
+        await sink.close?.();
+      } catch (error) {
+        recordFinalizationFailure(error);
+      }
+    }
+    try {
+      latch.unsubscribe();
+    } catch (error) {
+      recordFinalizationFailure(error);
+    }
+    try {
+      d.writeFile(join(paths.runDir, 'result.json'), `${JSON.stringify({
+        label: failure ? 'notice-e2e-run-failed' : 'notice-e2e-run',
+        exit: failure ? 'failure' : 'success',
+        runId: paths.runId,
+        webBuild: { path: webBuildPath, sha256: webBuild.sourceTreeSha256 },
+        transferId,
+        stages,
+        error: failure ? failure.message : null,
+      }, null, 2)}\n`, { mode: 0o600 });
+    } catch (error) {
+      recordFinalizationFailure(error);
+    }
     if (failure) throw failure;
   }
   return Object.freeze(summary);

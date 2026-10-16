@@ -143,6 +143,13 @@ unchanged. If the process dies on an uncaught exception or an unhandled
 rejection, a crash handler runs the same teardown (once) and exits non-zero, so a
 crash cannot leave an emulator or a browser behind.
 
+Finalization attempts to close every owned log and remove the termination
+subscription even if another finalization step fails. The first run failure is
+preserved; if the run otherwise succeeded, a log-close or subscription-removal
+failure makes the run fail instead. `result.json` is written after these attempts
+so it includes that outcome when the write succeeds. If writing the result fails,
+the runner still rejects with the first failure, but cannot guarantee the artifact.
+
 ## 8. Reusing the environment for other browser tests
 
 * The fixture is disposable data only: extend `NOTICE_FIXTURE` / the seed script
