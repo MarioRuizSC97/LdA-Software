@@ -14,6 +14,14 @@ const DEPLOYED = Object.freeze({
   FIREBASE_CONFIG: JSON.stringify({ projectId: 'lda-inventory-dev-mx' }),
 });
 
+// The emulator markers the strictest guards (sales, sellerProfiles) pin.
+const DEMO_EMULATOR = Object.freeze({
+  GCLOUD_PROJECT: 'demo-lda-inventory',
+  FUNCTIONS_EMULATOR: 'true',
+  FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
+  FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
+});
+
 const GUARDS = Object.freeze({
   catalog: assertLocalCatalogEmulator,
   inventory: assertLocalInventoryEmulator,
@@ -50,6 +58,11 @@ test('the deployed runtime is recognized only with agreeing, emulator-free marke
 for (const [area, guard] of Object.entries(GUARDS)) {
   test(`${area} guard accepts the deployed project`, () => {
     assert.doesNotThrow(() => guard(DEPLOYED));
+    assert.doesNotThrow(() => guard({ GCLOUD_PROJECT: 'lda-inventory-dev-mx' }));
+  });
+
+  test(`${area} guard still accepts the demo emulator`, () => {
+    assert.doesNotThrow(() => guard(DEMO_EMULATOR));
   });
 
   test(`${area} guard still refuses every untrusted runtime`, () => {
