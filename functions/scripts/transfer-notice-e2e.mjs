@@ -66,7 +66,7 @@ import {
   startIsolatedBrowser,
 } from './transfer-notice-e2e-browser.mjs';
 
-import { hashSourceTree as currentSourceTree } from './build-isolated-web-bundle.mjs';
+import { hashSourceTree as currentSourceTree, hashWebOutput as currentWebOutput } from './build-isolated-web-bundle.mjs';
 
 const MODULE_PATH = fileURLToPath(import.meta.url);
 export const FUNCTIONS_ROOT = resolve(dirname(MODULE_PATH), '..');
@@ -154,8 +154,9 @@ Options:
   --web-build <path>   Repo-contained path to the isolated Flutter web build
                        (the folder produced with LDA_LOCAL_EMULATORS=true and
                        its sibling build-manifest.json). The default build/web
-                       is never accepted. Recorded lib/** inventory/source hashes
-                       and main.dart.js hash must match current files before run.
+                       is never accepted. Recorded lib/web, pubspec/lock, declared
+                       local asset/font inputs and all output hashes must match.
+                       Unsupported asset YAML, symlinks and path deps are refused.
 
 Frozen isolation contract:
   Auth 9099->8299, Firestore 8080->8280, Functions 5001->5201,
@@ -383,6 +384,7 @@ export function assertWebBuild(webBuild, {
   readFile = defaultReadFile,
   repoRoot = REPOSITORY_ROOT,
   hashSourceTree = currentSourceTree,
+  hashWebOutput = currentWebOutput,
   readMainBytes = readFileSync,
 } = {}) {
   const stat = statPath(webBuild);
@@ -412,25 +414,33 @@ export function assertWebBuild(webBuild, {
     throw new RunnerError(`the web build manifest records buildExitCode=${JSON.stringify(manifest.buildExitCode)}`);
   }
   const isHash = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-  if (!Array.isArray(manifest.sourceFiles)
-      || !manifest.sourceFiles.every(file => file && typeof file.path === 'string' && isHash(file.sha256))
-      || !isHash(manifest.sourceTreeSha256) || !isHash(manifest.webMainSha256)) {
+  const isInventory = value => Array.isArray(value)
+    && value.every(file => file && typeof file.path === 'string' && isHash(file.sha256));
+  if (!isInventory(manifest.sourceFiles) || !isInventory(manifest.webFiles)
+      || !isHash(manifest.sourceTreeSha256) || !isHash(manifest.webMainSha256)
+      || !isHash(manifest.webTreeSha256)) {
     throw new RunnerError('the web build manifest has missing or malformed freshness evidence; rebuild the isolated bundle');
   }
   let source;
+  let web;
   let mainHash;
   try {
     source = hashSourceTree({ repositoryRoot: repoRoot });
+    web = hashWebOutput(webBuild);
     mainHash = createHash('sha256').update(readMainBytes(join(webBuild, 'main.dart.js'))).digest('hex');
   } catch (error) {
     throw new RunnerError(`the web build freshness check could not read its inputs: ${error?.message ?? error}`);
   }
   const inventory = manifest.sourceFiles.map(({ path, sha256 }) => ({ path, sha256 }));
   if (source.treeSha256 !== manifest.sourceTreeSha256 || JSON.stringify(source.files) !== JSON.stringify(inventory)) {
-    throw new RunnerError('the isolated web build is stale: lib source files differ from its manifest; rebuild the isolated bundle');
+    throw new RunnerError('the isolated web build is stale: source/configuration/asset inputs differ from its manifest; rebuild the isolated bundle');
   }
   if (mainHash !== manifest.webMainSha256) {
     throw new RunnerError('the isolated main.dart.js hash differs from its manifest; rebuild the isolated bundle');
+  }
+  const webInventory = manifest.webFiles.map(({ path, sha256 }) => ({ path, sha256 }));
+  if (web.treeSha256 !== manifest.webTreeSha256 || JSON.stringify(web.files) !== JSON.stringify(webInventory)) {
+    throw new RunnerError('the isolated web build is stale: output files differ from its manifest; rebuild the isolated bundle');
   }
   return Object.freeze({
     path: webBuild,
@@ -441,6 +451,7 @@ export function assertWebBuild(webBuild, {
     buildExitCode: manifest.buildExitCode,
     sourceTreeSha256: manifest.sourceTreeSha256 ?? null,
     webMainSha256: manifest.webMainSha256 ?? null,
+    webTreeSha256: manifest.webTreeSha256,
   });
 }
 

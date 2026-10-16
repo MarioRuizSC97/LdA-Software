@@ -78,21 +78,35 @@ flutter build web --release --no-pub --no-web-resources-cdn \
 
 `--dart-define=LDA_LOCAL_EMULATORS=true` is what makes the application talk to
 the emulator endpoints. The manifest records `dartDefines`, `buildExitCode`,
-per-file source hashes, `sourceTreeSha256` and `webMainSha256`; the runner
+per-file input/output hashes, `sourceTreeSha256`, `webTreeSha256` and
+`webMainSha256`; the runner
 (`assertWebBuild`) accepts the bundle only when `build-manifest.json` exists,
 declares `LDA_LOCAL_EMULATORS=true` and records `buildExitCode: 0`. Before any
 processes or run artifacts are created, it also requires valid SHA-256 evidence,
-recomputes the current `lib/**` inventory and source-tree hash using the same
-helper as the generator, and checks the raw `main.dart.js` bytes against the
-recorded hash. Added, edited or deleted source files and changed output are
+recomputes `lib/**`, `web/**`, `pubspec.yaml`, `pubspec.lock`, and the actual
+source contents of declared local assets/fonts/shaders using the same helper as
+the generator. It also checks every emitted web file and the raw `main.dart.js`
+bytes against the recorded inventories/hashes. Added, edited or deleted source files and changed output are
 refused; `--dry-run` reports the same validation errors without starting services.
 Validation never repairs a manifest or rebuilds a bundle. A stale or incomplete
 manifest requires a newly authorized isolated build, not a manifest edit.
 
-This freshness check covers only `lib/**` and `main.dart.js`, not `web/`, assets,
-dependency/configuration files or changes made after preflight. It verifies
-consistency with the recorded evidence, not that an untrusted manifest proves
-which compiler inputs produced a bundle.
+Asset inventory supports simple two-space-indented Flutter block declarations:
+`assets:` and `shaders:` lists of local path strings, and font families with nested
+`fonts:`/`asset:` entries (optional weight/style). Declared directories are scanned
+recursively; file assets include image resolution variants. Unsupported YAML
+(including aliases, quoted keys, inline nonempty lists and alternate map forms),
+non-local/escaping paths, symbolic links, path dependencies and
+`pubspec_overrides.yaml` are refused rather than silently omitted. No parser is
+installed. Newly unsupported declarations need explicit inventory support first.
+
+The generator checks input hashes before and after compilation and refuses a
+manifest if they differ. Old manifests without full output evidence are refused.
+Dependency evidence covers declarations and the lockfile, **not** package-cache
+bytes, SDK/compiler provenance, or assets from dependency packages. Validation
+also does not cover changes after preflight or prove which compiler inputs an
+untrusted manifest actually used. Backend/rules files are run inputs, not web
+bundle inputs, and are not included in this web-source inventory.
 
 ## 4. Run the isolated flow
 

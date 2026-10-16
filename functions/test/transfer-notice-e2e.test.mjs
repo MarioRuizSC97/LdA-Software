@@ -86,6 +86,7 @@ const MAIN_BYTES = Buffer.from('verified bundle\n');
 const WEB_MAIN_SHA256 = createHash('sha256').update(MAIN_BYTES).digest('hex');
 const FRESHNESS_DEPS = Object.freeze({
   hashSourceTree: () => ({ files: SOURCE_FILES, treeSha256: SOURCE_TREE_SHA256 }),
+  hashWebOutput: () => ({ files: [], treeSha256: 'c'.repeat(64) }),
   readMainBytes: () => MAIN_BYTES,
 });
 const MANIFEST = JSON.stringify({
@@ -95,6 +96,8 @@ const MANIFEST = JSON.stringify({
   webResourcesCdn: false,
   sourceFiles: SOURCE_FILES,
   sourceTreeSha256: SOURCE_TREE_SHA256,
+  webFiles: [],
+  webTreeSha256: 'c'.repeat(64),
   webMainSha256: WEB_MAIN_SHA256,
 });
 
@@ -162,7 +165,7 @@ test('assertWebBuild requires the manifest, the define and a clean build', () =>
   assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({ statPath: () => null })), /missing/);
 });
 
-for (const field of ['sourceFiles', 'sourceTreeSha256', 'webMainSha256']) {
+for (const field of ['sourceFiles', 'sourceTreeSha256', 'webMainSha256', 'webFiles', 'webTreeSha256']) {
   test(`assertWebBuild refuses missing freshness evidence: ${field}`, () => {
     const manifest = JSON.parse(MANIFEST);
     delete manifest[field];
@@ -176,6 +179,8 @@ test('assertWebBuild refuses malformed freshness evidence', () => {
     { sourceFiles: [{ path: 'lib/main.dart', sha256: 'abc' }] },
     { sourceTreeSha256: 'abc' },
     { webMainSha256: null },
+    { webFiles: [{ path: 'assets/file', sha256: 'abc' }] },
+    { webTreeSha256: null },
   ]) {
     assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({
       readFile: () => JSON.stringify({ ...JSON.parse(MANIFEST), ...change }),

@@ -7,7 +7,7 @@
  * runner's own assertWebBuild contract, because that is what gates a real run.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -30,6 +30,14 @@ function tempRepository() {
   writeFileSync(join(root, 'lib', 'auth', 'emulator_login.dart'), 'void main() {}\n');
   writeFileSync(join(root, 'lib', 'main.dart'), 'void main() {}\n');
   writeFileSync(join(root, 'flutter'), '');
+  mkdirSync(join(root, 'web'));
+  writeFileSync(join(root, 'web', 'index.html'), '<html></html>');
+  mkdirSync(join(root, 'assets', 'images'), { recursive: true });
+  writeFileSync(join(root, 'assets', 'images', 'icon.bin'), 'image');
+  writeFileSync(join(root, 'assets', 'font.ttf'), 'font');
+  writeFileSync(join(root, 'pubspec.yaml'),
+    'name: fixture\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/images/\n  fonts:\n    - family: Fixture\n      fonts:\n        - asset: assets/font.ttf\n');
+  writeFileSync(join(root, 'pubspec.lock'), 'packages: {}\n');
   return root;
 }
 
@@ -40,6 +48,8 @@ function fakeFlutterBuild({ status = 0 } = {}) {
     if (status === 0) {
       const webDir = args[args.indexOf('--output') + 1];
       for (const file of REQUIRED_BUNDLE_FILES) writeFileSync(join(webDir, file), `${file} body\n`);
+      mkdirSync(join(webDir, 'assets'));
+      writeFileSync(join(webDir, 'assets', 'image.bin'), 'built asset');
     }
     return { status, stdout: '', stderr: status === 0 ? '' : 'compilation failed\n', flutterVersion: '3.47.5' };
   };
@@ -72,7 +82,10 @@ test('the source tree hash is sorted, complete and deterministic', () => {
   try {
     const first = hashSourceTree({ repositoryRoot: root });
     const second = hashSourceTree({ repositoryRoot: root });
-    assert.deepEqual(first.files.map((file) => file.path), ['lib/auth/emulator_login.dart', 'lib/main.dart']);
+    assert.deepEqual(first.files.map((file) => file.path), [
+      'assets/font.ttf', 'assets/images/icon.bin', 'lib/auth/emulator_login.dart',
+      'lib/main.dart', 'pubspec.lock', 'pubspec.yaml', 'web/index.html',
+    ]);
     for (const file of first.files) assert.equal(file.sha256.length, 64);
     assert.equal(first.treeSha256, second.treeSha256);
     writeFileSync(join(root, 'lib', 'main.dart'), 'void main() { /* changed */ }\n');
@@ -99,7 +112,7 @@ test('the generated bundle and manifest satisfy the runner contract', () => {
     assert.equal(result.manifest.webResourcesCdn, false);
     assert.equal(result.manifest.output, result.webDir);
     assert.equal(result.manifest.webMainSha256.length, 64);
-    assert.equal(result.manifest.sourceFiles.length, 2);
+    assert.equal(result.manifest.sourceFiles.length, 7);
     assert.equal(result.outDir, outDir, 'the stamp directory is the one requested');
 
     // The frozen arguments are the contract the guide documents.
@@ -116,7 +129,11 @@ test('the generated bundle and manifest satisfy the runner contract', () => {
   }
 });
 
-for (const mutation of ['edit', 'add', 'delete', 'bundle', 'inventory']) {
+for (const mutation of [
+  'edit', 'add', 'delete', 'bundle', 'inventory', 'web-edit', 'web-add', 'web-delete',
+  'pubspec', 'lock', 'asset-edit', 'asset-add', 'asset-delete', 'font',
+  'output-edit', 'output-add', 'output-delete',
+]) {
   test(`the runner refuses changed bundle freshness evidence: ${mutation}`, () => {
     const root = tempRepository();
     try {
@@ -135,6 +152,18 @@ for (const mutation of ['edit', 'add', 'delete', 'bundle', 'inventory']) {
       if (mutation === 'inventory') {
         writeFileSync(result.manifestPath, JSON.stringify({ ...result.manifest, sourceFiles: [] }));
       }
+      if (mutation === 'web-edit') writeFileSync(join(root, 'web', 'index.html'), 'changed');
+      if (mutation === 'web-add') writeFileSync(join(root, 'web', 'added.html'), 'added');
+      if (mutation === 'web-delete') rmSync(join(root, 'web', 'index.html'));
+      if (mutation === 'pubspec') writeFileSync(join(root, 'pubspec.yaml'), `${readFileSync(join(root, 'pubspec.yaml'))}\n# changed\n`);
+      if (mutation === 'lock') writeFileSync(join(root, 'pubspec.lock'), 'packages: {changed: true}\n');
+      if (mutation === 'asset-edit') writeFileSync(join(root, 'assets', 'images', 'icon.bin'), 'changed');
+      if (mutation === 'asset-add') writeFileSync(join(root, 'assets', 'images', 'added.bin'), 'added');
+      if (mutation === 'asset-delete') rmSync(join(root, 'assets', 'images', 'icon.bin'));
+      if (mutation === 'font') writeFileSync(join(root, 'assets', 'font.ttf'), 'changed');
+      if (mutation === 'output-edit') writeFileSync(join(result.webDir, 'assets', 'image.bin'), 'changed');
+      if (mutation === 'output-add') writeFileSync(join(result.webDir, 'assets', 'added.bin'), 'added');
+      if (mutation === 'output-delete') rmSync(join(result.webDir, 'assets', 'image.bin'));
       const manifestBefore = readFileSync(result.manifestPath);
       const bundleBefore = readFileSync(join(result.webDir, 'main.dart.js'));
       assert.throws(() => assertWebBuild(result.webDir, { repoRoot: root }),
@@ -146,6 +175,88 @@ for (const mutation of ['edit', 'add', 'delete', 'bundle', 'inventory']) {
     }
   });
 }
+
+for (const unsupported of ['alias', 'escape', 'glob', 'quoted-key', 'package-asset', 'path-dependency', 'overrides', 'symlink', 'missing-font']) {
+  test(`unsupported freshness inputs are refused before building: ${unsupported}`, () => {
+    const root = tempRepository();
+    try {
+      const pubspec = join(root, 'pubspec.yaml');
+      let text = readFileSync(pubspec, 'utf8');
+      if (unsupported === 'alias') text = text.replace('  assets:', '  assets: &shared');
+      if (unsupported === 'escape') text = text.replace('assets/images/', '../outside/');
+      if (unsupported === 'glob') text = text.replace('assets/images/', 'assets/*.png');
+      if (unsupported === 'quoted-key') text = text.replace('  assets:', '  "assets":');
+      if (unsupported === 'package-asset') {
+        text = text.replace('assets/images/', 'packages/dependency/');
+        mkdirSync(join(root, 'packages', 'dependency'), { recursive: true });
+        writeFileSync(join(root, 'packages', 'dependency', 'local.txt'), 'not the resolved package asset');
+      }
+      if (unsupported === 'path-dependency') text += 'dependencies:\n  local:\n    path: .\n';
+      writeFileSync(pubspec, text);
+      if (unsupported === 'overrides') writeFileSync(join(root, 'pubspec_overrides.yaml'), 'dependency_overrides: {}\n');
+      if (unsupported === 'symlink') symlinkSync(join(root, 'lib', 'main.dart'), join(root, 'assets', 'images', 'linked'));
+      if (unsupported === 'missing-font') rmSync(join(root, 'assets', 'font.ttf'));
+      const { calls, spawnSync } = fakeFlutterBuild();
+      const outDir = join(root, BUNDLE_ROOT_RELATIVE, 'unsupported');
+      assert.throws(() => buildIsolatedWebBundle({
+        flutterPath: join(root, 'flutter'), outDir, repositoryRoot: root, deps: { spawnSync },
+      }), /unsupported|missing/);
+      assert.deepEqual(calls, [], 'unsupported inputs must not start Flutter');
+      assert.equal(existsSync(outDir), false, 'unsupported inputs must not create build artifacts');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('a project without declared assets keeps the existing source/build contract', () => {
+  const root = tempRepository();
+  try {
+    writeFileSync(join(root, 'pubspec.yaml'), 'name: fixture\nflutter:\n  uses-material-design: true\n');
+    const { spawnSync } = fakeFlutterBuild();
+    const result = buildIsolatedWebBundle({
+      flutterPath: join(root, 'flutter'), outDir: join(root, BUNDLE_ROOT_RELATIVE, 'no-assets'),
+      repositoryRoot: root, deps: { spawnSync },
+    });
+    assert.equal(result.manifest.sourceFiles.length, 5);
+    assertWebBuild(result.webDir, { repoRoot: root });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a quoted file asset includes resolution variant source bytes', () => {
+  const root = tempRepository();
+  try {
+    const pubspec = join(root, 'pubspec.yaml');
+    writeFileSync(pubspec, readFileSync(pubspec, 'utf8').replace('    - assets/images/', "    - 'assets/images/icon.bin'"));
+    mkdirSync(join(root, 'assets', 'images', '2.0x'));
+    const variant = join(root, 'assets', 'images', '2.0x', 'icon.bin');
+    writeFileSync(variant, 'variant');
+    const { spawnSync } = fakeFlutterBuild();
+    const result = buildIsolatedWebBundle({
+      flutterPath: join(root, 'flutter'), outDir: join(root, BUNDLE_ROOT_RELATIVE, 'variant'),
+      repositoryRoot: root, deps: { spawnSync },
+    });
+    assert.ok(result.manifest.sourceFiles.some(file => file.path === 'assets/images/2.0x/icon.bin'));
+    assertWebBuild(result.webDir, { repoRoot: root });
+    writeFileSync(variant, 'changed');
+    assert.throws(() => assertWebBuild(result.webDir, { repoRoot: root }), /stale/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a source change during compilation refuses provenance', () => {
+  const root = tempRepository();
+  try {
+    const build = fakeFlutterBuild();
+    const outDir = join(root, BUNDLE_ROOT_RELATIVE, 'concurrent-source');
+    assert.throws(() => buildIsolatedWebBundle({
+      flutterPath: join(root, 'flutter'), outDir, repositoryRoot: root,
+      deps: { spawnSync: (...args) => {
+        writeFileSync(join(root, 'assets', 'font.ttf'), 'changed during compilation');
+        return build.spawnSync(...args);
+      } },
+    }), /changed during/);
+    assert.equal(existsSync(join(outDir, 'build-manifest.json')), false);
+    assert.equal(build.calls.length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('a failed or repeated build never leaves a usable manifest', () => {
   const root = tempRepository();
