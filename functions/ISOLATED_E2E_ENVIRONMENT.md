@@ -161,8 +161,11 @@ to `connectTimeoutMs: 10000`. Overrides must be integer milliseconds in
 `1..120000`; invalid values are rejected before listening or dialing.
 A pending connection that expires returns HTTP `504 Gateway Timeout` and destroys
 the upstream socket without retrying. The deadline is cleared on connection,
-error or closure. Established tunnels and streamed HTTP/Firestore responses do
-not acquire an overall or idle deadline from this option.
+error or closure. If the client ends its connection before the tunnel is
+established, the pending upstream dial is destroyed rather than left waiting for
+the deadline. Closing the proxy also aborts pending dials. Established tunnels
+and streamed HTTP/Firestore responses do not acquire an overall or idle deadline
+from this option.
 
 ## 7. Cleanup, and cleanup after a crash
 

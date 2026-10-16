@@ -37,6 +37,10 @@ function closeServer(server) {
   return new Promise(resolve => server.close(() => resolve()));
 }
 
+// Keep test failure bounds independent of mocked production deadlines.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+
 // Bounded waiter: fails instead of hanging if the wrapped promise never
 // settles. The losing timer is unref'd so it never keeps the process alive.
 function bounded(promise, label = 'timed out waiting for test event', ms = 5000) {
@@ -44,10 +48,10 @@ function bounded(promise, label = 'timed out waiting for test event', ms = 5000)
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(label)), ms);
+      timer = realSetTimeout(() => reject(new Error(label)), ms);
       timer.unref();
     }),
-  ]).finally(() => clearTimeout(timer));
+  ]).finally(() => realClearTimeout(timer));
 }
 
 function nextChunk(stream, ms = 5000) {
@@ -292,7 +296,7 @@ test('EI-02 R3: denies CONNECT before dialing unless exact gstatic authority wit
   assert.equal(hits, 0, 'HTTP upstream must never be dialed for CONNECT denials');
 });
 
-for (const connectTimeoutMs of [undefined, 25]) {
+for (const connectTimeoutMs of [undefined, 1, 25, 120000]) {
   test(`CONNECT establishment expires at its deadline (${connectTimeoutMs ?? 'default'} ms)`, async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const upstream = new net.Socket(); // An owned dial that never connects.
@@ -323,6 +327,51 @@ for (const connectTimeoutMs of [undefined, 25]) {
     assert.equal(result.status, 504);
     assert.equal(dialCount, 1, 'a timeout must not retry or dial another destination');
     result.socket.destroy();
+    await proxy.close();
+    await proxy.close();
+  });
+}
+
+for (const cancelledBy of ['client', 'proxy']) {
+  test(`a pending CONNECT is cleaned up when cancelled by the ${cancelledBy}`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const upstream = new net.Socket();
+    const upstreamClosed = once(upstream, 'close');
+    let markDialed;
+    const dialed = new Promise(resolve => { markDialed = resolve; });
+    let dialCount = 0;
+    startIsolatedBrowserProxy._setConnectDialForTests(() => { dialCount += 1; return upstream; });
+    t.after(() => startIsolatedBrowserProxy._setConnectDialForTests(null));
+    const proxy = await startIsolatedBrowserProxy({
+      routes: { [AUTH_SOURCE]: 5201 }, allowStaticCdn: true, connectTimeoutMs: 25,
+      onRequest: event => { if (event.kind === 'connect') markDialed(); },
+    });
+    t.after(() => proxy.close());
+    const client = net.connect({ host: '127.0.0.1', port: proxy.port });
+    const responses = [];
+    const errors = [];
+    client.on('data', chunk => responses.push(chunk));
+    client.on('error', error => errors.push(error));
+    t.after(() => client.destroy());
+    await once(client, 'connect');
+    const clientClosed = once(client, 'close');
+    client.write(`CONNECT ${CONNECT_AUTHORITY} HTTP/1.1\r\nHost: ${CONNECT_AUTHORITY}\r\n\r\n`);
+    await dialed;
+    assert.equal(upstream.destroyed, false, 'the dial must still be pending before cancellation');
+    t.mock.timers.tick(24);
+    assert.equal(upstream.destroyed, false);
+    if (cancelledBy === 'client') client.destroy();
+    else await proxy.close();
+    await bounded(upstreamClosed, 'pending upstream survived CONNECT cancellation');
+    await bounded(clientClosed, 'CONNECT client survived cancellation');
+    assert.equal(upstream.destroyed, true);
+    assert.equal(client.destroyed, true);
+    t.mock.timers.tick(2);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(Buffer.concat(responses).toString(), '', 'cancelled setup must not emit a late CONNECT response');
+    assert.equal(dialCount, 1, 'cancellation must not retry the upstream dial');
+    assert.deepEqual(errors, []);
+    t.mock.timers.reset();
     await proxy.close();
     await proxy.close();
   });

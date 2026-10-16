@@ -228,6 +228,11 @@ async function startListening({ routeBySource, allowStaticCdn, onRequest, connec
       teardown();
     });
     clientSocket.once('error', teardown);
+    clientSocket.once('end', () => {
+      // CONNECT sockets can remain half-open after the client sends FIN.
+      // Before establishment there is no tunnel left to finish connecting.
+      if (!established) teardown();
+    });
     clientSocket.once('close', () => {
       clearConnectDeadline();
       upstream.destroy();
