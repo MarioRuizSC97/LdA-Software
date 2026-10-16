@@ -135,6 +135,17 @@ the repository rules are in force (a `200` would mean they are not).
 * **Data:** disposable identities and records created by the run itself. No demo
   data is read or written, and the demo build is never served or overwritten.
 
+### CONNECT establishment deadline
+
+The proxy bounds only the initial connection to the allowed static CDN:
+`startIsolatedBrowserProxy({ routes, allowStaticCdn, connectTimeoutMs })` defaults
+to `connectTimeoutMs: 10000`. Overrides must be integer milliseconds in
+`1..120000`; invalid values are rejected before listening or dialing.
+A pending connection that expires returns HTTP `504 Gateway Timeout` and destroys
+the upstream socket without retrying. The deadline is cleared on connection,
+error or closure. Established tunnels and streamed HTTP/Firestore responses do
+not acquire an overall or idle deadline from this option.
+
 ## 7. Cleanup, and cleanup after a crash
 
 A run tears down every browser, the proxy, the web server and the CLI, then

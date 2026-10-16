@@ -292,7 +292,44 @@ test('EI-02 R3: denies CONNECT before dialing unless exact gstatic authority wit
   assert.equal(hits, 0, 'HTTP upstream must never be dialed for CONNECT denials');
 });
 
+for (const connectTimeoutMs of [undefined, 25]) {
+  test(`CONNECT establishment expires at its deadline (${connectTimeoutMs ?? 'default'} ms)`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const upstream = new net.Socket(); // An owned dial that never connects.
+    let markDialed;
+    const dialed = new Promise(resolve => { markDialed = resolve; });
+    let dialCount = 0;
+    startIsolatedBrowserProxy._setConnectDialForTests(() => {
+      dialCount += 1;
+      return upstream;
+    });
+    t.after(() => startIsolatedBrowserProxy._setConnectDialForTests(null));
+    const proxy = await startIsolatedBrowserProxy({
+      routes: { [AUTH_SOURCE]: 5201 },
+      allowStaticCdn: true,
+      ...(connectTimeoutMs === undefined ? {} : { connectTimeoutMs }),
+      onRequest: event => { if (event.kind === 'connect') markDialed(); },
+    });
+    t.after(() => proxy.close());
+    const pending = connectTunnel(proxy.port, CONNECT_AUTHORITY);
+    await dialed;
+    const deadline = connectTimeoutMs ?? 10000;
+    t.mock.timers.tick(deadline - 1);
+    assert.equal(upstream.destroyed, false, 'the pending dial must survive until its deadline');
+    t.mock.timers.tick(1);
+    assert.equal(upstream.destroyed, true, 'the expired dial must be destroyed');
+    t.mock.timers.reset();
+    const result = await bounded(pending);
+    assert.equal(result.status, 504);
+    assert.equal(dialCount, 1, 'a timeout must not retry or dial another destination');
+    result.socket.destroy();
+    await proxy.close();
+    await proxy.close();
+  });
+}
+
 test('EI-02 R4: tunnels exact www.gstatic.com:443 when allowStaticCdn is true (injected dial seam)', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const standin = net.createServer(socket => {
     socket.write('hello-from-owned-standin');
     socket.on('data', chunk => socket.write(Buffer.from(chunk).toString().toUpperCase()));
@@ -320,6 +357,9 @@ test('EI-02 R4: tunnels exact www.gstatic.com:443 when allowStaticCdn is true (i
     received += chunk.toString();
   }
 
+  t.mock.timers.tick(10001);
+  assert.equal(tunnel.socket.destroyed, false, 'an established tunnel must outlive the connection deadline');
+  t.mock.timers.reset();
   tunnel.socket.write('ping');
   let reply = '';
   while (!reply.includes('PING')) {
@@ -344,10 +384,18 @@ test('EI-02 R5: invalid options fail with TypeError before any listen or dial', 
     ...PROTECTED_DEMO_PORTS.map(port => [{ routes: { [AUTH_SOURCE]: port } }, `protected demo target ${port}`]),
     [{ routes: { [AUTH_SOURCE]: 5201 }, allowStaticCdn: 'yes' }, 'non-boolean flag'],
     [{ routes: { [AUTH_SOURCE]: 5201 }, onRequest: 'log' }, 'non-function onRequest'],
+    ...[0, -1, 0.5, NaN, Infinity, '25', null, 120001].map(connectTimeoutMs => [
+      { routes: { [AUTH_SOURCE]: 5201 }, connectTimeoutMs }, 'invalid CONNECT deadline',
+    ]),
   ];
   for (const [options, label] of invalid) {
     await assert.rejects(
-      startIsolatedBrowserProxy(options),
+      startIsolatedBrowserProxy(options).then(async proxy => {
+        // A regression that unexpectedly accepts invalid options must not leak
+        // the server while assert.rejects reports the validation failure.
+        await proxy.close();
+        return proxy;
+      }),
       error => { assert.ok(error instanceof TypeError, label); return true; },
       label,
     );

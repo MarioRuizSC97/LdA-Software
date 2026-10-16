@@ -2,7 +2,8 @@
  * EI-02 — strict owned-loopback browser proxy for isolated E2E runs.
  *
  * Public contract (frozen, task log L11/L12): the only export is
- * `startIsolatedBrowserProxy({routes, allowStaticCdn = false, onRequest = () => {}})`,
+ * `startIsolatedBrowserProxy({routes, allowStaticCdn = false,
+ *   onRequest = () => {}, connectTimeoutMs = 10000})`,
  * which resolves to `{port, close}` after binding an ephemeral 127.0.0.1 port.
  *
  * Security posture:
@@ -33,6 +34,7 @@ import net from 'node:net';
 const ALLOWED_SOURCE_PORTS = new Set([9099, 8080, 5001, 7358]);
 const PROTECTED_DEMO_PORTS = new Set([9099, 8080, 5001, 4000, 4400, 4500, 9199]);
 const CONNECT_AUTHORITY = 'www.gstatic.com:443';
+const DEFAULT_CONNECT_TIMEOUT_MS = 10000;
 const REJECT_BODY = 'not-allowlisted';
 const HOP_BY_HOP = new Set([
   'connection',
@@ -108,7 +110,7 @@ function forwardHeaders(sourceHeaders, host) {
   return filtered;
 }
 
-async function startListening({ routeBySource, allowStaticCdn, onRequest }) {
+async function startListening({ routeBySource, allowStaticCdn, onRequest, connectTimeoutMs }) {
   const owned = new Set();
   const track = socket => {
     // The ownership guard comes first: a reused keep-alive socket is tracked
@@ -194,11 +196,20 @@ async function startListening({ routeBySource, allowStaticCdn, onRequest }) {
     onRequest({ kind: 'connect', authority });
 
     let established = false;
+    const connectDeadline = setTimeout(() => {
+      if (established || clientSocket.destroyed) return;
+      clientSocket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
+      upstream.destroy();
+    }, connectTimeoutMs);
+    connectDeadline.unref();
+    const clearConnectDeadline = () => clearTimeout(connectDeadline);
     const teardown = () => {
+      clearConnectDeadline();
       clientSocket.destroy();
       upstream.destroy();
     };
     upstream.once('connect', () => {
+      clearConnectDeadline();
       established = true;
       if (clientSocket.destroyed) {
         upstream.destroy();
@@ -210,15 +221,20 @@ async function startListening({ routeBySource, allowStaticCdn, onRequest }) {
       upstream.pipe(clientSocket);
     });
     upstream.once('error', () => {
+      clearConnectDeadline();
       if (!established && clientSocket.writable && !clientSocket.destroyed) {
         clientSocket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
       }
       teardown();
     });
     clientSocket.once('error', teardown);
-    clientSocket.once('close', () => upstream.destroy());
+    clientSocket.once('close', () => {
+      clearConnectDeadline();
+      upstream.destroy();
+    });
     upstream.once('close', () => {
-      if (!clientSocket.destroyed) clientSocket.destroy();
+      clearConnectDeadline();
+      if (!clientSocket.destroyed && !clientSocket.writableEnded) clientSocket.destroy();
     });
   }
 
@@ -251,7 +267,12 @@ async function startListening({ routeBySource, allowStaticCdn, onRequest }) {
   return { port: server.address().port, close };
 }
 
-export async function startIsolatedBrowserProxy({ routes, allowStaticCdn = false, onRequest = () => {} } = {}) {
+export async function startIsolatedBrowserProxy({
+  routes,
+  allowStaticCdn = false,
+  onRequest = () => {},
+  connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
+} = {}) {
   const routeBySource = resolveRoutes(routes);
   if (typeof allowStaticCdn !== 'boolean') {
     throw new TypeError('allowStaticCdn must be a boolean');
@@ -259,7 +280,10 @@ export async function startIsolatedBrowserProxy({ routes, allowStaticCdn = false
   if (typeof onRequest !== 'function') {
     throw new TypeError('onRequest must be a function');
   }
-  return startListening({ routeBySource, allowStaticCdn, onRequest });
+  if (!Number.isInteger(connectTimeoutMs) || connectTimeoutMs < 1 || connectTimeoutMs > 120000) {
+    throw new TypeError('connectTimeoutMs must be an integer in 1..120000');
+  }
+  return startListening({ routeBySource, allowStaticCdn, onRequest, connectTimeoutMs });
 }
 
 Object.defineProperty(startIsolatedBrowserProxy, '_setConnectDialForTests', {
