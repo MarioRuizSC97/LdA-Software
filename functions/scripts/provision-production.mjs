@@ -11,7 +11,7 @@
  * `--apply` it only validates the plan and touches nothing. Every check runs
  * before the first write: a missing account, a branch whose stored data
  * differs, a branch code already used by another branch, or an account that
- * already has different claims refuses the whole apply with nothing written.
+ * already has other claims refuses the whole apply with nothing written.
  *
  * Usage:
  *   node scripts/provision-production.mjs --project lda-inventory-dev-mx \
@@ -116,8 +116,10 @@ export function validateProductionPlan(plan) {
     if (user.role === 'seller' && !branchIds.has(user.branchId)) {
       throw new Error(`seller ${user.email} needs a branchId listed in the plan branches`);
     }
-    if (emails.has(user.email)) throw new Error(`duplicate user email: ${user.email}`);
-    emails.add(user.email);
+    // Firebase Auth matches emails case-insensitively, so must the plan.
+    const normalized = user.email.toLowerCase();
+    if (emails.has(normalized)) throw new Error(`duplicate user email: ${user.email}`);
+    emails.add(normalized);
   }
   return plan;
 }
@@ -134,8 +136,8 @@ function sameClaims(current, wanted) {
   return role === wanted.role && branchId === wanted.branchId;
 }
 
-function hasNoRoleClaims(current) {
-  return current?.role === undefined && current?.branchId === undefined;
+function hasNoClaims(current) {
+  return current === undefined || current === null || Object.keys(current).length === 0;
 }
 
 /**
@@ -180,8 +182,11 @@ export async function applyProductionPlan(plan, { auth, firestore }) {
     const wanted = claimsFor(user);
     if (sameClaims(account.customClaims, wanted)) {
       userActions.push({ user, uid: account.uid, wanted, action: 'unchanged' });
-    } else if (hasNoRoleClaims(account.customClaims)) {
+    } else if (hasNoClaims(account.customClaims)) {
       userActions.push({ user, uid: account.uid, wanted, action: 'set' });
+    } else if (account.customClaims.role === undefined && account.customClaims.branchId === undefined) {
+      // setCustomUserClaims replaces every claim, so never drop unknown ones.
+      problems.push(`account ${user.email} has other custom claims; refusing to replace them`);
     } else {
       problems.push(`account ${user.email} already has a different role or branch; change it deliberately`);
     }

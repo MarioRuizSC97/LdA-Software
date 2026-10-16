@@ -124,8 +124,10 @@ npm run provision:production -- --project lda-inventory-dev-mx --plan my-plan.js
 
 Every check runs before the first write. A missing account, a branch whose
 stored name or code differs, a branch code already used by another branch,
-or an account that already has a different role or branch refuses the whole
-apply with nothing written. Re-running the same plan is a no-op. Any other
+an account that already has a different role or branch, or one with other
+custom claims (which `setCustomUserClaims` would erase) refuses the whole
+apply with nothing written. Emails are compared case-insensitively, as
+Firebase Auth does. Re-running the same plan is a no-op. Any other
 project, and `--apply` while a Firebase emulator variable is set, are
 refused.
 

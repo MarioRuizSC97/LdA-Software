@@ -107,36 +107,40 @@ test('a valid plan passes validation unchanged', () => {
 
 test('plan validation names every rule it enforces', () => {
   const cases = {
-    'branch id': { ...PLAN, branches: [{ id: 'Centro', name: 'Centro', code: 'CEN' }], users: [] },
-    'branch code': { ...PLAN, branches: [{ id: 'branch-centro', name: 'Centro', code: 'cen' }], users: [] },
-    'branch name': { ...PLAN, branches: [{ id: 'branch-centro', name: ' ', code: 'CEN' }], users: [] },
-    'duplicate branch id': {
+    'branch id': [/branch id must look like branch-centro/, { ...PLAN, branches: [{ id: 'Centro', name: 'Centro', code: 'CEN' }], users: [] }],
+    'branch code': [/code must be 2 to 4 uppercase letters/, { ...PLAN, branches: [{ id: 'branch-centro', name: 'Centro', code: 'cen' }], users: [] }],
+    'branch name': [/needs a name of 1 to 80 characters/, { ...PLAN, branches: [{ id: 'branch-centro', name: ' ', code: 'CEN' }], users: [] }],
+    'duplicate branch id': [/duplicate branch id: branch-centro/, {
       branches: [PLAN.branches[0], { ...PLAN.branches[1], id: 'branch-centro' }],
       users: [],
-    },
-    'duplicate branch code': {
+    }],
+    'duplicate branch code': [/duplicate branch code: CEN/, {
       branches: [PLAN.branches[0], { ...PLAN.branches[1], code: 'CEN' }],
       users: [],
-    },
-    'email': { ...PLAN, users: [{ email: 'not-an-email', role: 'administrator' }] },
-    'role': { ...PLAN, users: [{ email: 'a@example.com', role: 'owner' }] },
-    'administrator branch': {
+    }],
+    'email': [/user email is invalid/, { ...PLAN, users: [{ email: 'not-an-email', role: 'administrator' }] }],
+    'role': [/role must be administrator or seller/, { ...PLAN, users: [{ email: 'a@example.com', role: 'owner' }] }],
+    'administrator branch': [/must not have a branchId/, {
       ...PLAN,
       users: [{ email: 'a@example.com', role: 'administrator', branchId: 'branch-centro' }],
-    },
-    'seller branch': { ...PLAN, users: [{ email: 'a@example.com', role: 'seller' }] },
-    'unknown seller branch': {
+    }],
+    'seller branch': [/needs a branchId listed in the plan branches/, { ...PLAN, users: [{ email: 'a@example.com', role: 'seller' }] }],
+    'unknown seller branch': [/needs a branchId listed in the plan branches/, {
       ...PLAN,
       users: [{ email: 'a@example.com', role: 'seller', branchId: 'branch-sur' }],
-    },
-    'duplicate email': {
+    }],
+    'duplicate email': [/duplicate user email/, {
       ...PLAN,
       users: [PLAN.users[0], { ...PLAN.users[0] }],
-    },
-    'unknown field': { ...PLAN, users: [{ ...PLAN.users[0], password: 'secret' }] },
+    }],
+    'duplicate email in another case': [/duplicate user email/, {
+      ...PLAN,
+      users: [PLAN.users[0], { email: 'ADMIN@example.com', role: 'seller', branchId: 'branch-centro' }],
+    }],
+    'unknown field': [/unknown field: password/, { ...PLAN, users: [{ ...PLAN.users[0], password: 'secret' }] }],
   };
-  for (const [rule, plan] of Object.entries(cases)) {
-    assert.throws(() => validateProductionPlan(plan), Error, rule);
+  for (const [rule, [message, plan]] of Object.entries(cases)) {
+    assert.throws(() => validateProductionPlan(plan), message, rule);
   }
 });
 
@@ -260,4 +264,31 @@ test('the command refuses --apply while emulator variables are set', () => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /refusing --apply while emulator variables are set: FIRESTORE_EMULATOR_HOST/);
+});
+
+test('an account with other custom claims is refused, never overwritten', async () => {
+  const auth = new FakeAuth([
+    { uid: 'uid-admin', email: 'admin@example.com', customClaims: { beta: true } },
+    { uid: 'uid-seller', email: 'ventas.centro@example.com' },
+  ]);
+  const firestore = new FakeFirestore();
+  await assert.rejects(
+    applyProductionPlan(PLAN, { auth, firestore }),
+    /admin@example\.com has other custom claims/,
+  );
+  assert.deepEqual(firestore.creates, []);
+  assert.deepEqual(auth.claimWrites, []);
+});
+
+test('a lookup failure other than a missing account aborts before writing', async () => {
+  const auth = accounts();
+  auth.getUserByEmail = async () => {
+    const error = new Error('permission denied');
+    error.code = 'auth/insufficient-permission';
+    throw error;
+  };
+  const firestore = new FakeFirestore();
+  await assert.rejects(applyProductionPlan(PLAN, { auth, firestore }), /permission denied/);
+  assert.deepEqual(firestore.creates, []);
+  assert.deepEqual(auth.claimWrites, []);
 });
