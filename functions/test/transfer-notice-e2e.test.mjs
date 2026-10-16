@@ -532,6 +532,44 @@ test('startIsolatedBrowser refuses a missing binary before spawning', async () =
   assert.equal(spawnCalls.length, 0);
 });
 
+for (const failedMethod of ['Target.attachToTarget', 'Page.enable', 'Runtime.enable']) {
+  for (const closeFails of [false, true]) {
+    test(`openPage closes a partially initialized target: ${failedMethod}, closeFails=${closeFails}`, async () => {
+      const calls = [];
+      const primary = new BrowserError(`${failedMethod} initialization failed`);
+      const connection = {
+        send: async (method, params, sessionId) => {
+          calls.push({ method, params, sessionId });
+          if (method === failedMethod) throw primary;
+          if (method === 'Target.createTarget') return { targetId: 'owned-tab' };
+          if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          if (method === 'Target.closeTarget' && closeFails) throw new BrowserError('target close failed');
+          return {};
+        },
+        on: () => { assert.fail('page event subscriptions must not be installed before initialization succeeds'); },
+      };
+      await assert.rejects(() => openPage({ connection }), error => error === primary);
+      const methods = ['Target.createTarget', 'Target.attachToTarget', 'Page.enable', 'Runtime.enable'];
+      assert.deepEqual(calls.map(call => call.method), [
+        ...methods.slice(0, methods.indexOf(failedMethod) + 1), 'Target.closeTarget',
+      ]);
+      assert.deepEqual(calls.at(-1), {
+        method: 'Target.closeTarget', params: { targetId: 'owned-tab' }, sessionId: undefined,
+      });
+    });
+  }
+}
+
+test('openPage does not close a target when target creation itself fails', async () => {
+  const calls = [];
+  const primary = new BrowserError('target creation failed');
+  const connection = {
+    send: async method => { calls.push(method); throw primary; },
+  };
+  await assert.rejects(() => openPage({ connection }), error => error === primary);
+  assert.deepEqual(calls, ['Target.createTarget']);
+});
+
 test('openPage drives semantics and real CDP input through a fake connection', async () => {
   const dispatched = [];
   const inserted = [];

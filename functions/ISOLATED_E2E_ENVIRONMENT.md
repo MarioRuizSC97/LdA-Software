@@ -164,6 +164,11 @@ failure makes the run fail instead. `result.json` is written after these attempt
 so it includes that outcome when the write succeeds. If writing the result fails,
 the runner still rejects with the first failure, but cannot guarantee the artifact.
 
+If page initialization fails after creating a CDP target, `openPage` attempts to
+close that target and rethrows the original setup error. If CDP also refuses the
+close, the owned browser's teardown remains the fallback; target closure is not
+guaranteed on a broken connection.
+
 ## 8. Reusing the environment for other browser tests
 
 * The fixture is disposable data only: extend `NOTICE_FIXTURE` / the seed script

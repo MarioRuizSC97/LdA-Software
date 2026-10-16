@@ -334,10 +334,21 @@ async function probeVersion(d, port) {
 export async function openPage(browser, { url = 'about:blank', deps = {} } = {}) {
   const connection = browser.connection;
   const { targetId } = await connection.send('Target.createTarget', { url });
-  const { sessionId } = await connection.send('Target.attachToTarget', { targetId, flatten: true });
-  await connection.send('Page.enable', {}, sessionId);
-  await connection.send('Runtime.enable', {}, sessionId);
-  return createPage({ connection, sessionId, targetId, deps });
+  try {
+    const { sessionId } = await connection.send('Target.attachToTarget', { targetId, flatten: true });
+    await connection.send('Page.enable', {}, sessionId);
+    await connection.send('Runtime.enable', {}, sessionId);
+    return createPage({ connection, sessionId, targetId, deps });
+  } catch (error) {
+    // The page helper does not exist yet, so it cannot own failed setup cleanup.
+    // Keep the setup error even if the connection also refuses target closure.
+    try {
+      await connection.send('Target.closeTarget', { targetId });
+    } catch {
+      // Browser-level teardown remains the fallback when CDP is unavailable.
+    }
+    throw error;
+  }
 }
 
 // Reads the value the browser holds for the focused field, or null when the
