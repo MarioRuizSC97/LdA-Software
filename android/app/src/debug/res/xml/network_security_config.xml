@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: lets the app reach the local Firebase emulators that
+     the Android emulator exposes on the host loopback alias 10.0.2.2 over
+     plain HTTP. Every other host keeps the platform default (cleartext
+     denied), and release/profile builds never include this file. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
