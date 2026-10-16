@@ -187,6 +187,20 @@ void main() {
     expect(shell.environment, BackendEnvironment.production);
   });
 
+  testWidgets('production mode defaults to the production session loader', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(demoEnabled: false, productionEnabled: true),
+    );
+
+    final LocalEmulatorAuthApp app = tester.widget<LocalEmulatorAuthApp>(
+      find.byType(LocalEmulatorAuthApp),
+    );
+    expect(app.loader, same(ProductionFirebaseBootstrap.initialize));
+    expect(app.environment, BackendEnvironment.production);
+  });
+
   testWidgets('production mode defaults to the production loaders', (
     WidgetTester tester,
   ) async {

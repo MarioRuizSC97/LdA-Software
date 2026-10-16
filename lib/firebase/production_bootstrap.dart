@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 
 import '../auth/emulator_session.dart';
 import '../catalog/catalog_repository.dart';
@@ -33,10 +34,22 @@ abstract final class ProductionFirebaseBootstrap {
 
   static Future<FirebaseApp>? _app;
 
-  /// One shared start; a failed start is retried on the next load instead of
-  /// being cached.
-  static Future<FirebaseApp> _initializeApp() =>
-      _app ??= _createApp().catchError((Object error, StackTrace stackTrace) {
+  /// Creates or reuses the production app. Tests may replace it and must
+  /// restore it with [resetForTesting]; production never reassigns it.
+  @visibleForTesting
+  static Future<FirebaseApp> Function() createApp = _createApp;
+
+  @visibleForTesting
+  static void resetForTesting() {
+    _app = null;
+    createApp = _createApp;
+  }
+
+  /// One shared start for concurrent loads; a failed start is retried on the
+  /// next load instead of being cached.
+  @visibleForTesting
+  static Future<FirebaseApp> initializeApp() =>
+      _app ??= createApp().catchError((Object error, StackTrace stackTrace) {
         _app = null;
         Error.throwWithStackTrace(error, stackTrace);
       });
@@ -44,9 +57,22 @@ abstract final class ProductionFirebaseBootstrap {
   static Future<FirebaseApp> _createApp() async {
     final FirebaseOptions expected = options;
     for (final FirebaseApp app in Firebase.apps) {
-      if (app.name == appName) return app;
+      if (app.name != appName) continue;
+      verifyExistingOptions(app.options);
+      return app;
     }
     return Firebase.initializeApp(name: appName, options: expected);
+  }
+
+  /// Refuses an existing app with the production name but other options.
+  @visibleForTesting
+  static void verifyExistingOptions(FirebaseOptions actual) {
+    final FirebaseOptions expected = options;
+    if (actual.projectId != expected.projectId ||
+        actual.appId != expected.appId ||
+        actual.apiKey != expected.apiKey) {
+      throw StateError('The production Firebase app has unexpected options.');
+    }
   }
 
   static Future<T> _live<T>(
@@ -57,7 +83,7 @@ abstract final class ProductionFirebaseBootstrap {
     )
     create,
   ) async {
-    final FirebaseApp app = await _initializeApp();
+    final FirebaseApp app = await initializeApp();
     return await create(
       FirebaseAuth.instanceFor(app: app),
       FirebaseFirestore.instanceFor(app: app),
