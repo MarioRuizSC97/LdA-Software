@@ -114,6 +114,28 @@ Plain HTTP to the emulators is allowed only in debug builds and only for
 `10.0.2.2` and `127.0.0.1`
 (`android/app/src/debug/res/xml/network_security_config.xml`).
 
+## Native smoke test
+
+`integration_test/native_smoke_test.dart` signs in as the demo seller, waits
+for the live catalog and opens Correcciones, proving that a real Android or
+iOS runtime reaches Auth, Firestore and Functions. It only reads data. With
+the demo emulators running and seeded, pass the same defines as the route you
+are testing:
+
+```sh
+# iOS simulator or Android emulator
+flutter test integration_test/native_smoke_test.dart -d <device-id> \
+  --dart-define=LDA_LOCAL_EMULATORS=true
+
+# Physical Android device over USB (after the adb reverse loop above)
+flutter test integration_test/native_smoke_test.dart -d <device-id> \
+  --dart-define=LDA_LOCAL_EMULATORS=true \
+  --dart-define=LDA_ANDROID_USB_REVERSE=true
+```
+
+Without `LDA_LOCAL_EMULATORS=true` the test is skipped. Plain `flutter test`
+runs only `test/` and never this file.
+
 ## Current platform limitations
 
 Validated on 2026-10-16: demo seller sign-in and the live catalog on the iOS
