@@ -1072,6 +1072,7 @@ export async function runIsolatedNoticeE2E({ argv, env = process.env, deps = {} 
     await stopBrowser(admin, 'admin-browser-teardown');
 
     const readOutcome = await driveSellerMarkRead(seller1Page, { d, evidenceDir, stage: 'seller1-live-read' });
+    transferId ??= readOutcome.transferId;
     recordStage('seller1-live-read', 'read', `live unread notice marked read in the already-open session${readOutcome.transferId ? ` (${readOutcome.transferId})` : ''}`);
     await stopBrowser(seller1, 'seller1-browser-teardown');
     assertDeadline('fresh-session-stages');

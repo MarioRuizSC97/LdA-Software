@@ -1260,6 +1260,41 @@ test('runIsolatedNoticeE2E drives the full public-UI flow over fake doubles and 
   }
 });
 
+for (const failFreshSession of [false, true]) {
+  test(`the result retains the transfer ID observed in the seller notice: laterFailure=${failFreshSession}`, async () => {
+    const { state, deps } = lifecycleHarness({
+      webBuildDeps: {
+        writeFile: (path, contents) => { state.writtenFiles.set(String(path), String(contents)); },
+      },
+    });
+    const openPage = deps.openPage;
+    deps.openPage = async (...args) => {
+      if (failFreshSession && state.openPages === 2) throw new BrowserError('fresh session unavailable');
+      return openPage(...args);
+    };
+    if (failFreshSession) {
+      await assert.rejects(() => runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps }),
+        { message: 'fresh session unavailable' });
+    } else {
+      const summary = await runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps });
+      assert.equal(summary.ok, true);
+      assert.equal(summary.transferId, 't-1');
+    }
+    const result = [...state.writtenFiles.entries()].find(([path]) => path.endsWith('result.json'));
+    assert.ok(result);
+    const evidence = JSON.parse(result[1]);
+    assert.equal(evidence.transferId, 't-1');
+    assert.equal(evidence.exit, failFreshSession ? 'failure' : 'success');
+    assert.equal(evidence.error, failFreshSession ? 'fresh session unavailable' : null);
+    assert.match(evidence.stages.find(stage => stage.name === 'seller1-live-read').detail, /\(t-1\)/);
+    assert.ok(state.cli.signals.includes('SIGTERM'));
+    assert.equal(state.spawnCalls.length, 2);
+    assert.equal(state.proxyClosed, 1);
+    assert.equal(state.webServerClosed, 1);
+    assert.equal(state.browserCloses.length, failFreshSession ? 3 : 4);
+  });
+}
+
 test('the seed child env never carries cloud credentials even when the parent leaks them', () => {
   assert.throws(
     () => buildSeedEnvironment({ ...SAFE_ENV, GOOGLE_APPLICATION_CREDENTIALS: '/x' }, { runId: RUN_ID, runDir: '/run' }),

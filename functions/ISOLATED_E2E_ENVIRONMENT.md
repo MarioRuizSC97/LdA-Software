@@ -105,7 +105,7 @@ Everything is written under `.dart_tool/notice-e2e/<runId>/`:
 
 | File | Content |
 | --- | --- |
-| `result.json` | final label (`notice-e2e-run` / `notice-e2e-run-failed`), stages, error |
+| `result.json` | final label (`notice-e2e-run` / `notice-e2e-run-failed`), observed `transferId`, stages, error |
 | `stages.log` | timestamped stage log and spawn notes |
 | `evidence/` | screenshots and semantics dumps per stage, including the failing one |
 | `emulator-cli.log` | CLI output: which callables loaded, port bindings, shutdown |
@@ -134,6 +134,12 @@ the repository rules are in force (a `200` would mean they are not).
   `www.gstatic.com:443`; logs carry kind/authority/target port/method only.
 * **Data:** disposable identities and records created by the run itself. No demo
   data is read or written, and the demo build is never served or overwritten.
+
+The returned run summary and `result.json` retain the transfer ID reported by
+the administrator UI when available, otherwise the ID parsed from the live
+seller notice after it is marked read. Once observed, the ID is retained even
+if a later stage fails. It remains `null` if neither public UI stage supplies it;
+the harness never queries an SDK or seeds an ID to fill this field.
 
 ### CONNECT establishment deadline
 
