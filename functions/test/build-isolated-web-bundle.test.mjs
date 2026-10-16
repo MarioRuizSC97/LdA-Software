@@ -7,7 +7,7 @@
  * runner's own assertWebBuild contract, because that is what gates a real run.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -107,7 +107,7 @@ test('the generated bundle and manifest satisfy the runner contract', () => {
     assert.deepEqual(calls[0].args.slice(-2), ['--output', result.webDir]);
 
     // The runner must accept exactly what the generator produced.
-    const webBuild = assertWebBuild(result.webDir);
+    const webBuild = assertWebBuild(result.webDir, { repoRoot: root });
     assert.equal(webBuild.dartDefines.LDA_LOCAL_EMULATORS, 'true');
     assert.equal(webBuild.buildExitCode, 0);
     assert.equal(webBuild.sourceTreeSha256, result.manifest.sourceTreeSha256);
@@ -115,6 +115,37 @@ test('the generated bundle and manifest satisfy the runner contract', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const mutation of ['edit', 'add', 'delete', 'bundle', 'inventory']) {
+  test(`the runner refuses changed bundle freshness evidence: ${mutation}`, () => {
+    const root = tempRepository();
+    try {
+      const { spawnSync } = fakeFlutterBuild();
+      const result = buildIsolatedWebBundle({
+        flutterPath: join(root, 'flutter'),
+        outDir: join(root, BUNDLE_ROOT_RELATIVE, 'freshness'),
+        repositoryRoot: root, deps: { spawnSync },
+      });
+      assertWebBuild(result.webDir, { repoRoot: root });
+      const sourcePath = join(root, 'lib', 'main.dart');
+      if (mutation === 'edit') writeFileSync(sourcePath, 'changed source\n');
+      if (mutation === 'add') writeFileSync(join(root, 'lib', 'added.dart'), 'added source\n');
+      if (mutation === 'delete') rmSync(sourcePath);
+      if (mutation === 'bundle') writeFileSync(join(result.webDir, 'main.dart.js'), Buffer.from([0, 255, 128]));
+      if (mutation === 'inventory') {
+        writeFileSync(result.manifestPath, JSON.stringify({ ...result.manifest, sourceFiles: [] }));
+      }
+      const manifestBefore = readFileSync(result.manifestPath);
+      const bundleBefore = readFileSync(join(result.webDir, 'main.dart.js'));
+      assert.throws(() => assertWebBuild(result.webDir, { repoRoot: root }),
+        mutation === 'bundle' ? /main\.dart\.js.*hash/ : /stale/);
+      assert.deepEqual(readFileSync(result.manifestPath), manifestBefore, 'validation must not rewrite provenance');
+      assert.deepEqual(readFileSync(join(result.webDir, 'main.dart.js')), bundleBefore, 'validation must not rebuild or repair output');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('a failed or repeated build never leaves a usable manifest', () => {
   const root = tempRepository();

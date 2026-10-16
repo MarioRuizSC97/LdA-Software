@@ -11,6 +11,7 @@
  * real execution after the seam check).
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -79,12 +80,22 @@ const FIRESTORE_PID = 8101;
 const PROXY_PORT = 40001;
 const SAFE_ENV = Object.freeze({ HOME, PATH: '/usr/bin:/bin' });
 const WEB_BUILD = '/fake/repo/.dart_tool/notice-e2e-build/build-1/web';
+const SOURCE_FILES = Object.freeze([{ path: 'lib/main.dart', sha256: 'a'.repeat(64) }]);
+const SOURCE_TREE_SHA256 = 'b'.repeat(64);
+const MAIN_BYTES = Buffer.from('verified bundle\n');
+const WEB_MAIN_SHA256 = createHash('sha256').update(MAIN_BYTES).digest('hex');
+const FRESHNESS_DEPS = Object.freeze({
+  hashSourceTree: () => ({ files: SOURCE_FILES, treeSha256: SOURCE_TREE_SHA256 }),
+  readMainBytes: () => MAIN_BYTES,
+});
 const MANIFEST = JSON.stringify({
   dartDefines: { LDA_LOCAL_EMULATORS: 'true' },
   buildExitCode: 0,
   mode: 'release',
   webResourcesCdn: false,
-  sourceTreeSha256: 'abc',
+  sourceFiles: SOURCE_FILES,
+  sourceTreeSha256: SOURCE_TREE_SHA256,
+  webMainSha256: WEB_MAIN_SHA256,
 });
 
 // ---------------------------------------------------------------------------
@@ -137,7 +148,7 @@ function webBuildDeps(overrides = {}) {
     if (path === '/fake/repo/.dart_tool/notice-e2e-build/build-1/build-manifest.json') return { isFile: () => true };
     return null;
   };
-  return { statPath, readFile: () => MANIFEST, ...overrides };
+  return { statPath, readFile: () => MANIFEST, ...FRESHNESS_DEPS, ...overrides };
 }
 
 test('assertWebBuild requires the manifest, the define and a clean build', () => {
@@ -149,6 +160,52 @@ test('assertWebBuild requires the manifest, the define and a clean build', () =>
   assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({ readFile: () => '{"dartDefines":{"LDA_LOCAL_EMULATORS":"true"},"buildExitCode":1}' })), /buildExitCode/);
   assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({ readFile: () => 'not json' })), /build-manifest\.json is unreadable/);
   assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({ statPath: () => null })), /missing/);
+});
+
+for (const field of ['sourceFiles', 'sourceTreeSha256', 'webMainSha256']) {
+  test(`assertWebBuild refuses missing freshness evidence: ${field}`, () => {
+    const manifest = JSON.parse(MANIFEST);
+    delete manifest[field];
+    assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({ readFile: () => JSON.stringify(manifest) })), /freshness evidence/);
+  });
+}
+
+test('assertWebBuild refuses malformed freshness evidence', () => {
+  for (const change of [
+    { sourceFiles: null },
+    { sourceFiles: [{ path: 'lib/main.dart', sha256: 'abc' }] },
+    { sourceTreeSha256: 'abc' },
+    { webMainSha256: null },
+  ]) {
+    assert.throws(() => assertWebBuild(WEB_BUILD, webBuildDeps({
+      readFile: () => JSON.stringify({ ...JSON.parse(MANIFEST), ...change }),
+    })), /freshness evidence/);
+  }
+});
+
+test('a stale bundle is refused before processes or run artifacts are created', async () => {
+  const { state, deps } = lifecycleHarness({ webBuildDeps: {
+    hashSourceTree: () => ({ files: SOURCE_FILES, treeSha256: 'd'.repeat(64) }),
+  } });
+  await assert.rejects(() => runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps }), /stale/);
+  assert.deepEqual(state.spawnCalls, []);
+  assert.deepEqual(state.madeDirectories, []);
+  assert.equal(state.writtenFiles.size, 0);
+  assert.equal(state.proxyClosed, 0);
+  assert.equal(state.openPages, 0);
+});
+
+test('dry-run reports stale bundle evidence without starting services', async () => {
+  const plan = await buildDryRunPlan({
+    argv: ['--dry-run', '--web-build', WEB_BUILD], env: SAFE_ENV,
+    deps: {
+      ...webBuildDeps(), repoRoot: '/fake/repo', statFile: () => true,
+      hashSourceTree: () => ({ files: SOURCE_FILES, treeSha256: 'd'.repeat(64) }),
+      node: { execPath: PINNED_NODE, version: 'v24.21.0' },
+    },
+  });
+  assert.equal(plan.servicesStarted, false);
+  assert.match(plan.webBuild.error, /stale/);
 });
 
 // ---------------------------------------------------------------------------
@@ -1005,6 +1062,7 @@ function lifecycleHarness({
     repoRoot: '/fake/repo',
     node,
     timeouts: { ...{ cliReadyMs: 50, seedMs: 50, stageMs: 50, semanticStepMs: 20, totalMs: 500, pollMs: 1, termMs: 5, killMs: 5, portReleaseMs: 5 } },
+    ...FRESHNESS_DEPS,
     ...buildDeps,
   };
   return { state, deps };
@@ -1479,6 +1537,7 @@ test('buildDryRunPlan reports the intended run without services or secrets', asy
       statPath: (path) => (path === WEB_BUILD ? { isDirectory: () => true, isFile: () => false } : { isDirectory: () => false, isFile: () => true }),
       node: { execPath: PINNED_NODE, version: 'v24.21.0' },
       repoRoot: '/fake/repo',
+      ...FRESHNESS_DEPS,
     },
   });
   assert.equal(plan.label, 'no-app-e2e-dry-run');

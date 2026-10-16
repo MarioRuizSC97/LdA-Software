@@ -36,7 +36,7 @@
 import {
   execFile as nodeExecFile, spawn as nodeSpawn,
 } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   createWriteStream, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
@@ -65,6 +65,8 @@ import {
   openPage,
   startIsolatedBrowser,
 } from './transfer-notice-e2e-browser.mjs';
+
+import { hashSourceTree as currentSourceTree } from './build-isolated-web-bundle.mjs';
 
 const MODULE_PATH = fileURLToPath(import.meta.url);
 export const FUNCTIONS_ROOT = resolve(dirname(MODULE_PATH), '..');
@@ -152,7 +154,8 @@ Options:
   --web-build <path>   Repo-contained path to the isolated Flutter web build
                        (the folder produced with LDA_LOCAL_EMULATORS=true and
                        its sibling build-manifest.json). The default build/web
-                       is never accepted.
+                       is never accepted. Recorded lib/** inventory/source hashes
+                       and main.dart.js hash must match current files before run.
 
 Frozen isolation contract:
   Auth 9099->8299, Firestore 8080->8280, Functions 5001->5201,
@@ -375,7 +378,13 @@ export function resolveWebBuildPath(value, { repoRoot = REPOSITORY_ROOT } = {}) 
   return absolute;
 }
 
-export function assertWebBuild(webBuild, { statPath = defaultStatPath, readFile = defaultReadFile } = {}) {
+export function assertWebBuild(webBuild, {
+  statPath = defaultStatPath,
+  readFile = defaultReadFile,
+  repoRoot = REPOSITORY_ROOT,
+  hashSourceTree = currentSourceTree,
+  readMainBytes = readFileSync,
+} = {}) {
   const stat = statPath(webBuild);
   if (!stat || !stat.isDirectory()) {
     throw new RunnerError(`the isolated web build directory is missing at ${webBuild}`);
@@ -401,6 +410,27 @@ export function assertWebBuild(webBuild, { statPath = defaultStatPath, readFile 
   }
   if (manifest.buildExitCode !== 0) {
     throw new RunnerError(`the web build manifest records buildExitCode=${JSON.stringify(manifest.buildExitCode)}`);
+  }
+  const isHash = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  if (!Array.isArray(manifest.sourceFiles)
+      || !manifest.sourceFiles.every(file => file && typeof file.path === 'string' && isHash(file.sha256))
+      || !isHash(manifest.sourceTreeSha256) || !isHash(manifest.webMainSha256)) {
+    throw new RunnerError('the web build manifest has missing or malformed freshness evidence; rebuild the isolated bundle');
+  }
+  let source;
+  let mainHash;
+  try {
+    source = hashSourceTree({ repositoryRoot: repoRoot });
+    mainHash = createHash('sha256').update(readMainBytes(join(webBuild, 'main.dart.js'))).digest('hex');
+  } catch (error) {
+    throw new RunnerError(`the web build freshness check could not read its inputs: ${error?.message ?? error}`);
+  }
+  const inventory = manifest.sourceFiles.map(({ path, sha256 }) => ({ path, sha256 }));
+  if (source.treeSha256 !== manifest.sourceTreeSha256 || JSON.stringify(source.files) !== JSON.stringify(inventory)) {
+    throw new RunnerError('the isolated web build is stale: lib source files differ from its manifest; rebuild the isolated bundle');
+  }
+  if (mainHash !== manifest.webMainSha256) {
+    throw new RunnerError('the isolated main.dart.js hash differs from its manifest; rebuild the isolated bundle');
   }
   return Object.freeze({
     path: webBuild,
@@ -764,6 +794,7 @@ export async function startOwnedWebServer({ webBuild, port = APP_PORT, host = '1
 
 export async function buildDryRunPlan({ argv, env = process.env, deps = {} } = {}) {
   const d = {
+    repoRoot: REPOSITORY_ROOT,
     statFile: defaultStatFile,
     readFile: defaultReadFile,
     node: resolveNodeInfo(),

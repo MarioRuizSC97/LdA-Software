@@ -80,7 +80,19 @@ flutter build web --release --no-pub --no-web-resources-cdn \
 the emulator endpoints. The manifest records `dartDefines`, `buildExitCode`,
 per-file source hashes, `sourceTreeSha256` and `webMainSha256`; the runner
 (`assertWebBuild`) accepts the bundle only when `build-manifest.json` exists,
-declares `LDA_LOCAL_EMULATORS=true` and records `buildExitCode: 0`.
+declares `LDA_LOCAL_EMULATORS=true` and records `buildExitCode: 0`. Before any
+processes or run artifacts are created, it also requires valid SHA-256 evidence,
+recomputes the current `lib/**` inventory and source-tree hash using the same
+helper as the generator, and checks the raw `main.dart.js` bytes against the
+recorded hash. Added, edited or deleted source files and changed output are
+refused; `--dry-run` reports the same validation errors without starting services.
+Validation never repairs a manifest or rebuilds a bundle. A stale or incomplete
+manifest requires a newly authorized isolated build, not a manifest edit.
+
+This freshness check covers only `lib/**` and `main.dart.js`, not `web/`, assets,
+dependency/configuration files or changes made after preflight. It verifies
+consistency with the recorded evidence, not that an untrusted manifest proves
+which compiler inputs produced a bundle.
 
 ## 4. Run the isolated flow
 
