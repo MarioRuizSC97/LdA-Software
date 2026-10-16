@@ -276,7 +276,17 @@ export async function startIsolatedBrowser({
     await stop();
     throw new BrowserError(`refusing a non-loopback CDP endpoint: ${JSON.stringify(wsUrl ?? null)}`);
   }
-  const ws = new d.WebSocketImpl(wsUrl);
+  let ws;
+  try {
+    ws = new d.WebSocketImpl(wsUrl);
+  } catch (error) {
+    try {
+      await stop();
+    } catch {
+      // A teardown failure must not replace the original setup error.
+    }
+    throw error;
+  }
   try {
     await waitWebSocketOpen(ws, deadline, d.sleep, d.now);
   } catch (error) {

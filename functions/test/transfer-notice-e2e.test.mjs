@@ -589,6 +589,38 @@ test('startIsolatedBrowser refuses a missing binary before spawning', async () =
   assert.equal(spawnCalls.length, 0);
 });
 
+for (const stopFails of [false, true]) {
+  test(`startIsolatedBrowser cleans up after a WebSocket constructor failure: stopFails=${stopFails}`, async () => {
+    const primary = new Error('WebSocket construction failed');
+    // An undefined PID makes process.kill reject before any OS signal is sent.
+    const child = fakeChromeChild(undefined);
+    const signals = [];
+    const kill = child.kill;
+    child.kill = signal => {
+      signals.push(signal);
+      if (stopFails) throw new Error('owned browser stop failed');
+      return kill(signal);
+    };
+    let spawnCount = 0;
+    let constructorCount = 0;
+    const deps = {
+      ...browserTestDeps(),
+      spawn: () => { spawnCount += 1; return child; },
+      WebSocketImpl: class {
+        constructor() { constructorCount += 1; throw primary; }
+      },
+    };
+    await assert.rejects(
+      () => startIsolatedBrowser({ profileDir: '/run/profiles/a', proxyPort: PROXY_PORT, deps }),
+      error => error === primary,
+    );
+    assert.equal(spawnCount, 1);
+    assert.equal(constructorCount, 1);
+    assert.deepEqual(signals, ['SIGTERM'], 'setup failure must attempt owned-browser teardown exactly once');
+    assert.equal(child.signalCode, stopFails ? null : 'SIGTERM');
+  });
+}
+
 for (const failedMethod of ['Target.attachToTarget', 'Page.enable', 'Runtime.enable']) {
   for (const closeFails of [false, true]) {
     test(`openPage closes a partially initialized target: ${failedMethod}, closeFails=${closeFails}`, async () => {
