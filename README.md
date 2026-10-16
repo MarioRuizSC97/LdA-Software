@@ -107,6 +107,28 @@ variables (`functions/src/runtime-project.js`); any other project is refused.
 Callable CORS stays localhost-only until a production web origin is chosen;
 the Android and iOS apps are not subject to CORS.
 
+### Preparing the real project
+
+Real accounts are created by a person in the Firebase console (email and
+password); `functions/scripts/provision-production.mjs` then creates the
+branches and gives each listed account its `role`/`branchId` claims. Start
+from `functions/scripts/production-plan.example.json`:
+
+```sh
+cd functions
+# Validate only (default): reads the plan, touches nothing.
+npm run provision:production -- --project lda-inventory-dev-mx --plan my-plan.json
+# Write, with Application Default Credentials for the project.
+npm run provision:production -- --project lda-inventory-dev-mx --plan my-plan.json --apply
+```
+
+Every check runs before the first write. A missing account, a branch whose
+stored name or code differs, a branch code already used by another branch,
+or an account that already has a different role or branch refuses the whole
+apply with nothing written. Re-running the same plan is a no-op. Any other
+project, and `--apply` while a Firebase emulator variable is set, are
+refused.
+
 ## Running against the local emulators
 
 Start the demo emulators first, then build with
