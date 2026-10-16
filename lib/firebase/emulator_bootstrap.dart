@@ -169,8 +169,8 @@ class DemoEmulatorBootstrap {
   static final Map<String, FunctionsEmulatorConnection> _functionsConnections =
       <String, FunctionsEmulatorConnection>{};
 
-  /// The shared Android and web demo options. iOS uses
-  /// [emulatorDemoIosOptions]; call [optionsFor] for a specific platform.
+  /// The web demo options. iOS uses [emulatorDemoIosOptions] and Android
+  /// [emulatorDemoAndroidOptions]; call [optionsFor] for a specific platform.
   static const FirebaseOptions sharedOptions = emulatorDemoOptions;
 
   /// Native iOS FirebaseCore rejects the shared web-format appId at configure
@@ -179,7 +179,7 @@ class DemoEmulatorBootstrap {
       switch (platform) {
         EmulatorClientPlatform.ios => emulatorDemoIosOptions,
         EmulatorClientPlatform.android ||
-        EmulatorClientPlatform.androidUsbDevice ||
+        EmulatorClientPlatform.androidUsbDevice => emulatorDemoAndroidOptions,
         EmulatorClientPlatform.web => emulatorDemoOptions,
         EmulatorClientPlatform.unsupported => throw _unsupportedPlatform(),
       };

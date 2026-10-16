@@ -23,6 +23,17 @@ const emulatorDemoIosOptions = FirebaseOptions(
   projectId: 'demo-lda-inventory',
 );
 
+/// Native Android Firebase rejects callables ("Please set a valid API key")
+/// unless the apiKey has the same 39-character `A`-prefixed shape, so Android
+/// gets its own format-valid fake key and an Android-format appId. Same demo
+/// project and sender as [emulatorDemoOptions].
+const emulatorDemoAndroidOptions = FirebaseOptions(
+  apiKey: 'A-demo-lda-inventory-emulator-android-0',
+  appId: '1:1234567890:android:0dda0dda0dda0dda',
+  messagingSenderId: '1234567890',
+  projectId: 'demo-lda-inventory',
+);
+
 void validateDemoAuthApp(String name, FirebaseOptions options) {
   if (name != emulatorDemoAppName || options != emulatorDemoOptions) {
     throw StateError('Unexpected local Auth app/options.');

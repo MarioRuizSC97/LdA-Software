@@ -119,7 +119,7 @@ void main() {
       },
     );
 
-    test('Android and web keep the shared demo options', () async {
+    test('Android gets its own demo options and web the shared ones', () async {
       final List<FirebaseOptions> received = <FirebaseOptions>[];
       for (final EmulatorClientPlatform platform in <EmulatorClientPlatform>[
         EmulatorClientPlatform.android,
@@ -135,7 +135,7 @@ void main() {
       }
 
       expect(received, <FirebaseOptions>[
-        DemoEmulatorBootstrap.sharedOptions,
+        emulatorDemoAndroidOptions,
         DemoEmulatorBootstrap.sharedOptions,
       ]);
     });
@@ -336,6 +336,34 @@ void main() {
       expect(emulatorDemoIosOptions.appId, isNotEmpty);
     });
 
+    test('Android demo options satisfy the native API key format', () {
+      // The Android Functions SDK rejects a call with "Please set a valid API
+      // key" unless the key has the native Firebase shape: 39 base64
+      // url-safe characters starting with `A`.
+      final String apiKey = emulatorDemoAndroidOptions.apiKey;
+      expect(apiKey.length, 39);
+      expect(apiKey.startsWith('A'), isTrue);
+      expect(apiKey, matches(RegExp(r'^[A-Za-z0-9_-]+$')));
+      expect(apiKey, contains('demo'));
+      expect(emulatorDemoAndroidOptions.appId, contains(':android:'));
+      expect(emulatorDemoAndroidOptions.projectId, 'demo-lda-inventory');
+      expect(emulatorDemoAndroidOptions.messagingSenderId, isNotEmpty);
+      for (final EmulatorClientPlatform platform in <EmulatorClientPlatform>[
+        EmulatorClientPlatform.android,
+        EmulatorClientPlatform.androidUsbDevice,
+      ]) {
+        expect(
+          DemoEmulatorBootstrap.optionsFor(platform),
+          emulatorDemoAndroidOptions,
+          reason: platform.name,
+        );
+      }
+      expect(
+        DemoEmulatorBootstrap.optionsFor(EmulatorClientPlatform.web),
+        emulatorDemoOptions,
+      );
+    });
+
     group('trusted app gate', () {
       void verify(
         EmulatorClientPlatform platform, {
@@ -357,8 +385,8 @@ void main() {
         );
         verify(
           EmulatorClientPlatform.android,
-          explicit: emulatorDemoOptions,
-          app: emulatorDemoOptions,
+          explicit: emulatorDemoAndroidOptions,
+          app: emulatorDemoAndroidOptions,
         );
       });
 
@@ -366,7 +394,7 @@ void main() {
         final Map<EmulatorClientPlatform, FirebaseOptions> trusted =
             <EmulatorClientPlatform, FirebaseOptions>{
               EmulatorClientPlatform.ios: emulatorDemoIosOptions,
-              EmulatorClientPlatform.android: emulatorDemoOptions,
+              EmulatorClientPlatform.android: emulatorDemoAndroidOptions,
             };
         for (final MapEntry<EmulatorClientPlatform, FirebaseOptions> entry
             in trusted.entries) {
@@ -406,6 +434,14 @@ void main() {
           ),
           throwsStateError,
         );
+        expect(
+          () => verify(
+            EmulatorClientPlatform.android,
+            explicit: emulatorDemoOptions,
+            app: emulatorDemoOptions,
+          ),
+          throwsStateError,
+        );
       });
 
       test('rejects a mismatched app or app name', () {
@@ -420,8 +456,8 @@ void main() {
         expect(
           () => verify(
             EmulatorClientPlatform.android,
-            explicit: emulatorDemoOptions,
-            app: emulatorDemoOptions,
+            explicit: emulatorDemoAndroidOptions,
+            app: emulatorDemoAndroidOptions,
             appName: '[DEFAULT]',
           ),
           throwsStateError,
