@@ -1,0 +1,22 @@
+# Isolated E2E freshness and revalidation
+Sequence the CDP readiness deadline, expanded bundle freshness, and one fresh isolated business-flow validation.
+Base: fdc4b0659a655bb73733a7cff120d8046738debb; preserve the demo and concurrent mobile work. No push, installations, or automatic real-run retries.
+
+## Specs
+S1. User: "Dale con la primera y continuas con las siguientes 2 (o sea 2 y 3 :))". This accepts the three numbered follow-ups reproduced in L2, in that order.
+S2. User selected "Sí, commits separados" (`authorize-separate-followup-commits`) for these three blocks after verification, without push or PR.
+
+## Tasks
+- [ ] T1 | S1 item 1, S2 | parent: reproduce and bound CDP readiness fetch/body waits; safe tests and independent lifecycle verification | verification complete: 97/97 and independent PASS; commit: this work-unit commit
+- [ ] T2 | S1 item 2, S2 | parent after read-only scope map: expand bundle evidence to web, declared assets, and dependency inputs; document exact limits; safe tests and independent verification | pending; commit: authorized after verification
+- [ ] T3 | S1 item 3, S2 | parent: prepare a fresh isolated bundle, then one real isolated E2E; retain artifacts and inspect owned cleanup/demo listener fingerprints | pending; commit: authorized for verified evidence documentation
+
+## Log
+L1. Original request verbatim: "Dale con la primera y continuas con las siguientes 2 (o sea 2 y 3 :))".
+L2. Accepted numbered proposal, quoted as assistant context rather than new user wording: "1. **Siguiente recomendado:** reproducir la posible espera indefinida de la consulta CDP y añadir timeout si se confirma. 2. **Opcional:** ampliar la vigencia del bundle a `web/`, assets y dependencias. 3. **Más adelante:** nueva validación E2E real, con autorización específica."
+L3. Existing runtime/network permissions and isolation contract are recorded in odd/tasks/inventory-notice-e2e-isolation.md S6-S8 and L11. This request authorizes one new real validation after integration; historical attempts are not reusable permissions. Do not install/update tools, mutate the demo, bypass guards, or automatically retry a failed real run. Build prerequisites must use available authorized runtimes.
+L4. Initial main-worktree status clean at fdc4b06 on feat/inventory-mvp-seller-profiles-v2. Clean status does not establish exclusive ownership. Explorer mvb9k395-x-2do5 mapped only T2 and T3; T1 stays inline. Units share runner tests and therefore have no disjoint parallel writer surfaces. No builds or real runs yet. A multi-deliverable external-runtime validation needs durable tracking.
+L5. Commit authorization: user selected "Sí, commits separados" (`authorize-separate-followup-commits`). Separate verified work-unit commits are authorized; push and PR are not.
+L6. Scope map: current bundle evidence covers lib and main.dart.js only. Current pubspec has no live asset/font declarations. The completed asset-premise challenge (mvb9y495-y-ahky) confirmed that hashing only dependency declarations and emitted output cannot detect changed asset source bytes while an old bundle stays untouched. No YAML parser is already declared. T2 must hash actual declared local asset/font source contents, reject unsupported inventory constructs rather than under-hash, and document dependency/cache limits. No new parser dependencies or external cache inspection is authorized.
+L7. T1 observed RED: fetch/body stalls both failed with exit 1 after the tests' finite 500ms safety bounds. Added deadline-bounded fetch and JSON body race with AbortController and timer cleanup. GREEN: 2/2 focused tests, 97/97 safe suite, git diff --check, all exit 0. No Chrome or real browser process used. ASSESS returned unassessable because the newly created own task file is untracked; its returned plan requires independent high-risk verification. No native review due flag was returned.
+L8. Independent verifier mvba2r60-z-bmwo PASS for T1: 97/97 exit 0, stderr empty, no functional blockers. Parent final readback and whitespace check passed. Concurrent HEAD advanced to 7cdc7e7 through another owner's docs-only inventory-mvp.md commit; no T1 source drift. Verifier disclosed unauthorized temporary stdout/stderr files /tmp/lda-verify-t1.out and /tmp/lda-verify-t1.err; these were not inspected or removed by the parent. No build/E2E launched. T1 closes in its work-unit commit; its hash will be recorded in the next tracking update.

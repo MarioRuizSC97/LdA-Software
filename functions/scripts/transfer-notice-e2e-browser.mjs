@@ -258,7 +258,7 @@ export async function startIsolatedBrowser({
     }
     const port = await d.readDevToolsPort(profileDir).catch(() => null);
     if (port) {
-      const probed = await probeVersion(d, port).catch(() => null);
+      const probed = await probeVersion(d, port, deadline).catch(() => null);
       if (probed) {
         cdpPort = port;
         version = probed;
@@ -333,11 +333,28 @@ function waitWebSocketOpen(ws, deadline, sleep, now) {
   });
 }
 
-async function probeVersion(d, port) {
+async function probeVersion(d, port, deadline) {
   if (typeof d.fetchImpl !== 'function') return null;
-  const response = await d.fetchImpl(`http://127.0.0.1:${port}/json/version`);
-  if (!response?.ok) return null;
-  return await response.json();
+  const controller = new AbortController();
+  let timer;
+  const expired = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new BrowserError('the CDP version probe exceeded the browser readiness deadline'));
+    }, Math.max(1, deadline - d.now()));
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await d.fetchImpl(`http://127.0.0.1:${port}/json/version`, { signal: controller.signal });
+        if (!response?.ok) return null;
+        return await response.json();
+      })(),
+      expired,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Opens one page (tab) in the owned browser and returns the helper object.

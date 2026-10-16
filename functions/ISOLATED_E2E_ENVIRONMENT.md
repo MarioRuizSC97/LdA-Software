@@ -185,6 +185,10 @@ failure makes the run fail instead. `result.json` is written after these attempt
 so it includes that outcome when the write succeeds. If writing the result fails,
 the runner still rejects with the first failure, but cannot guarantee the artifact.
 
+The browser readiness deadline also bounds both the CDP version fetch and its
+JSON body. Expiry aborts that request and attempts owned-browser teardown; it
+does not add a timeout to an established CDP session or a Firestore stream.
+
 If the CDP WebSocket constructor throws during browser setup, the helper attempts
 owned-browser teardown and rethrows the original constructor error, even if that
 teardown also fails. This does not guarantee process termination when teardown fails.

@@ -589,6 +589,52 @@ test('startIsolatedBrowser refuses a missing binary before spawning', async () =
   assert.equal(spawnCalls.length, 0);
 });
 
+for (const stalledAt of ['fetch', 'body']) {
+  test(`startIsolatedBrowser bounds a stalled CDP version ${stalledAt}`, async () => {
+    const child = fakeChromeChild(undefined);
+    let release;
+    const stalled = new Promise(resolve => { release = resolve; });
+    let signal;
+    let requests = 0;
+    let constructors = 0;
+    const deps = {
+      ...browserTestDeps(),
+      timeouts: { openMs: 20 },
+      spawn: () => child,
+      fetchImpl: async (_url, options) => {
+        requests += 1;
+        signal = options?.signal;
+        if (stalledAt === 'fetch') await stalled;
+        return { ok: true, json: async () => {
+          if (stalledAt === 'body') await stalled;
+          return { webSocketDebuggerUrl: 'ws://127.0.0.1:9223/devtools/browser/abc' };
+        } };
+      },
+      WebSocketImpl: class { constructor() { constructors += 1; } },
+    };
+    let timer;
+    const guard = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('test safety guard expired before CDP teardown')), 500);
+    });
+    try {
+      await assert.rejects(
+        Promise.race([
+          startIsolatedBrowser({ profileDir: '/run/profiles/a', proxyPort: PROXY_PORT, deps }), guard,
+        ]),
+        /the owned browser did not expose a CDP endpoint within 20ms/,
+      );
+      assert.equal(signal?.aborted, true, 'the stalled fetch/body must receive cancellation');
+      assert.equal(requests, 1, 'the expired readiness deadline must not start another probe');
+      assert.equal(constructors, 0);
+      assert.deepEqual(child.signals, ['SIGTERM']);
+    } finally {
+      clearTimeout(timer);
+      release();
+      if (child.signalCode === null) child.kill();
+    }
+  });
+}
+
 for (const stopFails of [false, true]) {
   test(`startIsolatedBrowser cleans up after a WebSocket constructor failure: stopFails=${stopFails}`, async () => {
     const primary = new Error('WebSocket construction failed');
