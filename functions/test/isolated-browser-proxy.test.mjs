@@ -332,7 +332,7 @@ for (const connectTimeoutMs of [undefined, 1, 25, 120000]) {
   });
 }
 
-for (const cancelledBy of ['client', 'proxy']) {
+for (const cancelledBy of ['client', 'client FIN', 'proxy']) {
   test(`a pending CONNECT is cleaned up when cancelled by the ${cancelledBy}`, async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const upstream = new net.Socket();
@@ -347,7 +347,9 @@ for (const cancelledBy of ['client', 'proxy']) {
       onRequest: event => { if (event.kind === 'connect') markDialed(); },
     });
     t.after(() => proxy.close());
-    const client = net.connect({ host: '127.0.0.1', port: proxy.port });
+    const client = net.connect({
+      host: '127.0.0.1', port: proxy.port, allowHalfOpen: cancelledBy === 'client FIN',
+    });
     const responses = [];
     const errors = [];
     client.on('data', chunk => responses.push(chunk));
@@ -361,9 +363,14 @@ for (const cancelledBy of ['client', 'proxy']) {
     t.mock.timers.tick(24);
     assert.equal(upstream.destroyed, false);
     if (cancelledBy === 'client') client.destroy();
-    else await proxy.close();
+    else if (cancelledBy === 'client FIN') {
+      client.end();
+      assert.equal(client.writableEnded, true, 'the client must send a graceful FIN');
+      assert.equal(client.destroyed, false, 'the client must remain open for the proxy to close its read side');
+    } else await proxy.close();
     await bounded(upstreamClosed, 'pending upstream survived CONNECT cancellation');
-    await bounded(clientClosed, 'CONNECT client survived cancellation');
+    const [hadError] = await bounded(clientClosed, 'CONNECT client survived cancellation');
+    assert.equal(hadError, false, 'cancellation must close without a socket error');
     assert.equal(upstream.destroyed, true);
     assert.equal(client.destroyed, true);
     t.mock.timers.tick(2);
