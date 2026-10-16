@@ -999,6 +999,64 @@ test('runIsolatedNoticeE2E tears the CLI down when disposable seeding fails', as
   assert.match(result[1], /failure/);
 });
 
+test('a failed post-teardown probe still closes logs and records failure evidence', async () => {
+  const uncaughtBefore = process.listenerCount('uncaughtException');
+  const rejectionBefore = process.listenerCount('unhandledRejection');
+  const closeAttempts = [];
+  let unsubscribeAttempts = 0;
+  const { state, deps } = lifecycleHarness({
+    webBuildDeps: {
+      openLog: (path) => ({ write: () => {}, close: async () => { closeAttempts.push(String(path)); } }),
+      registerTerminate: () => () => { unsubscribeAttempts += 1; },
+      writeFile: (path, contents) => { state.writtenFiles.set(String(path), String(contents)); },
+    },
+  });
+  const readListeners = deps.readListeners;
+  deps.readListeners = async () => {
+    if (state.cli?.signalCode) throw new Error('post-teardown lsof unavailable');
+    return readListeners();
+  };
+  await assert.rejects(
+    () => runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps }),
+    { message: 'the socket ownership probe (lsof) failed: post-teardown lsof unavailable' },
+  );
+  assert.ok(state.cli.signals.includes('SIGTERM'));
+  assert.equal(state.proxyClosed, 1);
+  assert.equal(state.webServerClosed, 1);
+  assert.equal(state.browserCloses.length, 4);
+  assert.equal(closeAttempts.length, 3);
+  assert.equal(new Set(closeAttempts).size, 3);
+  assert.equal(unsubscribeAttempts, 1);
+  assert.equal(process.listenerCount('uncaughtException'), uncaughtBefore);
+  assert.equal(process.listenerCount('unhandledRejection'), rejectionBefore);
+  const result = [...state.writtenFiles.entries()].find(([path]) => path.endsWith('result.json'));
+  assert.ok(result, 'a probe failure must not bypass the result write');
+  const evidence = JSON.parse(result[1]);
+  assert.equal(evidence.exit, 'failure');
+  assert.equal(evidence.label, 'notice-e2e-run-failed');
+  assert.equal(evidence.error, 'the socket ownership probe (lsof) failed: post-teardown lsof unavailable');
+});
+
+test('post-teardown verification still rejects changed protected listener fingerprints', async () => {
+  const { state, deps } = lifecycleHarness({
+    webBuildDeps: {
+      writeFile: (path, contents) => { state.writtenFiles.set(String(path), String(contents)); },
+    },
+  });
+  const readListeners = deps.readListeners;
+  deps.readListeners = async () => {
+    const rows = await readListeners();
+    return state.cli?.signalCode ? rows.map((row) => ({ ...row, pid: row.pid + 1 })) : rows;
+  };
+  const message = 'protected demo listener fingerprints changed during the run; the isolated run cannot prove the current runtime is preserved';
+  await assert.rejects(() => runIsolatedNoticeE2E({ argv: RUN_ARGV, env: SAFE_ENV, deps }), { message });
+  const result = [...state.writtenFiles.entries()].find(([path]) => path.endsWith('result.json'));
+  assert.ok(result);
+  const evidence = JSON.parse(result[1]);
+  assert.equal(evidence.exit, 'failure');
+  assert.equal(evidence.error, message);
+});
+
 for (const seedSucceeds of [false, true]) {
   for (const fault of ['result write', 'log close', 'unsubscribe']) {
     test(`finalization preserves the primary failure and completes cleanup: ${fault}, seed=${seedSucceeds}`, async () => {

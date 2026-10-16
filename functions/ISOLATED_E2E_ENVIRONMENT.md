@@ -143,6 +143,9 @@ unchanged. If the process dies on an uncaught exception or an unhandled
 rejection, a crash handler runs the same teardown (once) and exits non-zero, so a
 crash cannot leave an emulator or a browser behind.
 
+A failed post-teardown port or fingerprint probe fails the run without skipping
+log closure, termination unsubscription or the result write. It never counts as
+proof that the owned ports were released or that the demo listeners are unchanged.
 Finalization attempts to close every owned log and remove the termination
 subscription even if another finalization step fails. The first run failure is
 preserved; if the run otherwise succeeded, a log-close or subscription-removal

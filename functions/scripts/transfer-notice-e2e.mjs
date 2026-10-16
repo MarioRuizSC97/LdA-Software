@@ -1108,13 +1108,17 @@ export async function runIsolatedNoticeE2E({ argv, env = process.env, deps = {} 
     await teardownOwned();
     process.removeListener('uncaughtException', onUncaught);
     process.removeListener('unhandledRejection', onUncaught);
-    failure ??= await assertPortsReleased(d, { note });
-    failure ??= assertFingerprintsUnchanged(d, before);
     // Finalization faults must not replace the run's first failure or prevent
     // the remaining resources from getting their own cleanup attempt.
     const recordFinalizationFailure = (error) => {
       failure ??= error instanceof RunnerError ? error : new RunnerError(error?.message ?? String(error));
     };
+    try {
+      failure ??= await assertPortsReleased(d, { note });
+      failure ??= assertFingerprintsUnchanged(d, before);
+    } catch (error) {
+      recordFinalizationFailure(error);
+    }
     for (const sink of Object.values(logs)) {
       try {
         await sink.close?.();
