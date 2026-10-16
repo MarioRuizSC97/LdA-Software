@@ -90,6 +90,18 @@ Physically separated costs and server-owned inventory writes are mandatory
 schema constraints for the next implementation phase, not field filtering that
 these rules can provide.
 
+## Production mode
+
+Build with `--dart-define=LDA_FIREBASE_PRODUCTION=true` to sign in against the
+real Firebase project `lda-inventory-dev-mx` (the options in
+`lib/firebase_options.dart`). It uses the same gateways and the same
+`role`/`branchId` custom claims as the emulator mode, never connects to the
+emulators, and shows connection copy without emulator wording. Combining it
+with `LDA_LOCAL_EMULATORS=true` is ambiguous, so the app stays offline.
+
+Writes go through Cloud Functions, which are not deployed yet (the project is
+on the Spark plan), so until they are only sign-in and reads can work.
+
 ## Running against the local emulators
 
 Start the demo emulators first, then build with

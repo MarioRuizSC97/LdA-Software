@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/app/backend_environment.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
@@ -247,9 +248,11 @@ Widget _app(
   ProductPricingGatewayLoader? productPricingGatewayLoader,
   StockIntakeGatewayLoader? stockIntakeGatewayLoader,
   GlobalKey<EmulatorLoginShellState>? shellKey,
+  BackendEnvironment environment = BackendEnvironment.localEmulator,
 }) => MaterialApp(
   home: EmulatorLoginShell(
     key: shellKey,
+    environment: environment,
     sessionGateway: gateway,
     catalogLoader: catalogLoader,
     productCreationGatewayLoader: productCreationGatewayLoader,
@@ -390,6 +393,79 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  group('production environment copy', () {
+    testWidgets('loading names the server, not the emulator', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          Completer<EmulatorSessionGateway>().future,
+          environment: BackendEnvironment.production,
+        ),
+      );
+
+      expect(find.text('Conectando con el servidor'), findsOneWidget);
+      expect(find.textContaining('emulador'), findsNothing);
+    });
+
+    testWidgets('login and its failure never mention the emulator', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          Future.value(_FakeGateway(loginError: StateError('network'))),
+          environment: BackendEnvironment.production,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Inicio de sesión'), findsOneWidget);
+      expect(
+        find.text('Los datos del catálogo no están conectados.'),
+        findsNothing,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-email')),
+        'seller@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-password')),
+        'secret',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No se pudo iniciar sesión.'), findsOneWidget);
+      expect(find.textContaining('emulador'), findsNothing);
+    });
+
+    testWidgets('the signed-in banner says the session started', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          Future.value(_FakeGateway(loginResult: _seller)),
+          environment: BackendEnvironment.production,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-email')),
+        'seller@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('login-password')),
+        'secret',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sesión iniciada'), findsOneWidget);
+      expect(find.text('Autenticado localmente'), findsNothing);
+      expect(find.text('Rol: Vendedor'), findsOneWidget);
+    });
   });
 
   testWidgets('shows login after an unauthenticated restore', (

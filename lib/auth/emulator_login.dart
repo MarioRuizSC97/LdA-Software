@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app/backend_environment.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
@@ -60,8 +61,12 @@ class EmulatorLoginShell extends StatefulWidget {
     this.transferNoticeBackendLoader,
     this.transferDraftJournal,
     this.retryLoader,
+    this.environment = BackendEnvironment.localEmulator,
     super.key,
   });
+
+  /// Which backend the connection copy names; behavior is identical.
+  final BackendEnvironment environment;
 
   final Future<EmulatorSessionGateway> sessionGateway;
   final CatalogSnapshotLoader catalogLoader;
@@ -1035,7 +1040,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const _LoadingView();
+    if (_loading) return _LoadingView(widget.environment);
     switch (_failure) {
       case _SessionFailure.bootstrap:
         return _SessionErrorView(
@@ -1068,6 +1073,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),
         session: session,
+        environment: widget.environment,
         catalogLoader: widget.catalogLoader,
         createProduct:
             _isExactAdministrator(session) &&
@@ -1138,6 +1144,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       onLoginStarted: _startLoginAttempt,
       onAuthenticated: _completeLoginAttempt,
       mayShowLoginFailure: _mayShowLoginFailure,
+      environment: widget.environment,
     );
   }
 }
@@ -1216,17 +1223,19 @@ class _TransferJournalNotice extends StatelessWidget {
 }
 
 class _LoadingView extends StatelessWidget {
-  const _LoadingView();
+  const _LoadingView(this.environment);
+
+  final BackendEnvironment environment;
 
   @override
-  Widget build(BuildContext context) => const Scaffold(
+  Widget build(BuildContext context) => Scaffold(
     body: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          CircularProgressIndicator(),
-          SizedBox(height: 16),
-          Text('Conectando con el emulador local de autenticación'),
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(environment.connectingLabel),
         ],
       ),
     ),
@@ -1285,8 +1294,10 @@ class _LoginView extends StatefulWidget {
     required this.onLoginStarted,
     required this.onAuthenticated,
     required this.mayShowLoginFailure,
+    required this.environment,
   });
 
+  final BackendEnvironment environment;
   final EmulatorSessionGateway gateway;
   final int authGeneration;
   final int Function() onLoginStarted;
@@ -1352,7 +1363,7 @@ class _LoginViewState extends State<_LoginView> {
       setState(() {
         _submitting = false;
         _errorAttempt = generation;
-        _error = 'No se pudo iniciar sesión en el emulador local.';
+        _error = widget.environment.loginFailure;
       });
     }
   }
@@ -1369,15 +1380,14 @@ class _LoginViewState extends State<_LoginView> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Text(
-                'Inicio de sesión en el emulador local',
+                widget.environment.loginTitle,
                 style: Theme.of(context).textTheme.headlineSmall,
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'Los datos del catálogo no están conectados.',
-                textAlign: TextAlign.center,
-              ),
+              if (widget.environment.loginNote case final String note) ...[
+                const SizedBox(height: 12),
+                Text(note, textAlign: TextAlign.center),
+              ],
               const SizedBox(height: 24),
               TextFormField(
                 key: const ValueKey<String>('login-email'),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app/backend_environment.dart';
 import 'auth/emulator_login.dart';
 import 'auth/emulator_session.dart';
 import 'catalog/catalog_load_diagnostics.dart';
@@ -9,16 +10,19 @@ import 'catalog/catalog_repository.dart';
 import 'firebase/emulator_bootstrap.dart';
 import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
+import 'firebase/production_bootstrap.dart';
 import 'movements/administrator_movements.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
 const bool _localEmulatorsEnabled = bool.fromEnvironment('LDA_LOCAL_EMULATORS');
+const bool _productionEnabled = bool.fromEnvironment('LDA_FIREBASE_PRODUCTION');
 
 void main() {
   runApp(
     const LdaInventoryBootstrap(
       demoEnabled: _demoCatalogEnabled,
       localEmulatorsEnabled: _localEmulatorsEnabled,
+      productionEnabled: _productionEnabled,
     ),
   );
 }
@@ -27,6 +31,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   const LdaInventoryBootstrap({
     required this.demoEnabled,
     this.localEmulatorsEnabled = false,
+    this.productionEnabled = false,
     this.emulatorLoader,
     this.emulatorCatalogLoader,
     this.emulatorProductCreationLoader,
@@ -42,6 +47,13 @@ class LdaInventoryBootstrap extends StatelessWidget {
 
   final bool demoEnabled;
   final bool localEmulatorsEnabled;
+
+  /// Connects to the real Firebase project. Combined with
+  /// [localEmulatorsEnabled] the choice is ambiguous, so the app stays offline.
+  final bool productionEnabled;
+
+  // The loader overrides below exist for tests and apply to whichever
+  // connected mode is selected; null uses that mode's own bootstrap.
   final EmulatorSessionGatewayLoader? emulatorLoader;
   final CatalogSnapshotLoader? emulatorCatalogLoader;
   final ProductCreationGatewayLoader? emulatorProductCreationLoader;
@@ -63,6 +75,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         catalogRepository: FixtureCatalogRepository(_catalogFixtures),
         statusLabel: 'Datos de demostración · Sin conexión',
       );
+    }
+    if (localEmulatorsEnabled && productionEnabled) {
+      return const CatalogSetupApp();
     }
     if (localEmulatorsEnabled) {
       return LocalEmulatorAuthApp(
@@ -93,6 +108,37 @@ class LdaInventoryBootstrap extends StatelessWidget {
             DemoEmulatorBootstrap.initializeTransferNoticeBackend,
       );
     }
+    if (productionEnabled) {
+      return LocalEmulatorAuthApp(
+        environment: BackendEnvironment.production,
+        loader: emulatorLoader ?? ProductionFirebaseBootstrap.initialize,
+        catalogLoader: emulatorCatalogLoader ?? _loadProductionCatalog,
+        productCreationGatewayLoader:
+            emulatorProductCreationLoader ??
+            ProductionFirebaseBootstrap.initializeProductCreationGateway,
+        productPricingGatewayLoader:
+            emulatorProductPricingLoader ??
+            ProductionFirebaseBootstrap.initializeProductPricingGateway,
+        stockIntakeGatewayLoader:
+            emulatorStockIntakeLoader ??
+            ProductionFirebaseBootstrap.initializeStockIntakeGateway,
+        saleGatewayLoader:
+            emulatorSaleLoader ??
+            ProductionFirebaseBootstrap.initializeSaleGateway,
+        correctionGatewayLoader:
+            emulatorCorrectionLoader ??
+            ProductionFirebaseBootstrap.initializeCorrectionGateway,
+        administratorMovementsLoader:
+            emulatorMovementsLoader ??
+            ProductionFirebaseBootstrap.initializeAdministratorMovements,
+        transferGatewayLoader:
+            emulatorTransferLoader ??
+            ProductionFirebaseBootstrap.initializeTransferGateway,
+        transferNoticeBackendLoader:
+            emulatorTransferNoticeLoader ??
+            ProductionFirebaseBootstrap.initializeTransferNoticeBackend,
+      );
+    }
     return const CatalogSetupApp();
   }
 }
@@ -113,8 +159,12 @@ class LocalEmulatorAuthApp extends StatefulWidget {
         DemoEmulatorBootstrap.initializeTransferGateway,
     this.transferNoticeBackendLoader =
         DemoEmulatorBootstrap.initializeTransferNoticeBackend,
+    this.environment = BackendEnvironment.localEmulator,
     super.key,
   });
+
+  /// Which backend the shell's connection copy names.
+  final BackendEnvironment environment;
 
   final EmulatorSessionGatewayLoader loader;
   final CatalogSnapshotLoader catalogLoader;
@@ -155,6 +205,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
     title: 'LDA Inventory',
     theme: _theme(),
     home: EmulatorLoginShell(
+      environment: widget.environment,
       sessionGateway: _gateway,
       retryLoader: _retry,
       catalogLoader: widget.catalogLoader,
@@ -174,6 +225,15 @@ Future<CatalogSnapshot> _loadLiveCatalog(EmulatorSession session) =>
     guardCatalogBootstrap(() async {
       final RoleScopedCatalogRepository repository =
           await DemoEmulatorBootstrap.initializeCatalogRepository(session);
+      return repository.fetchCatalog();
+    });
+
+Future<CatalogSnapshot> _loadProductionCatalog(EmulatorSession session) =>
+    guardCatalogBootstrap(() async {
+      final RoleScopedCatalogRepository repository =
+          await ProductionFirebaseBootstrap.initializeCatalogRepository(
+            session,
+          );
       return repository.fetchCatalog();
     });
 

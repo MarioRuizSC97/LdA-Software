@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app/backend_environment.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -124,6 +125,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     required this.session,
     required this.catalogLoader,
     required this.onLogout,
+    this.environment = BackendEnvironment.localEmulator,
     this.createProduct,
     this.createDraftId,
     this.unresolvedProductDraft,
@@ -146,6 +148,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   });
 
   final EmulatorSession session;
+
+  /// Which backend the session banner names.
+  final BackendEnvironment environment;
   final CatalogSnapshotLoader catalogLoader;
   final Future<void> Function() onLogout;
   final ProductCreationSubmit? createProduct;
@@ -901,7 +906,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            _SessionStatus(session: widget.session),
+            _SessionStatus(
+              session: widget.session,
+              environment: widget.environment,
+            ),
             if (_creationSuccess case final ProductCreationResult result)
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
@@ -2310,9 +2318,10 @@ String? _creationPrecisionFieldError(int? precision) {
 }
 
 class _SessionStatus extends StatelessWidget {
-  const _SessionStatus({required this.session});
+  const _SessionStatus({required this.session, required this.environment});
 
   final EmulatorSession session;
+  final BackendEnvironment environment;
 
   @override
   Widget build(BuildContext context) {
@@ -2324,7 +2333,7 @@ class _SessionStatus extends StatelessWidget {
     return Semantics(
       container: true,
       liveRegion: true,
-      label: 'Sesión local autenticada del catálogo',
+      label: environment.sessionSemanticsLabel,
       child: ColoredBox(
         color: colors.secondaryContainer,
         child: Padding(
@@ -2334,7 +2343,7 @@ class _SessionStatus extends StatelessWidget {
             spacing: 12,
             runSpacing: 4,
             children: <Widget>[
-              Text('Autenticado localmente', style: style),
+              Text(environment.signedInLabel, style: style),
               Text(session.email, style: style),
               Text('Rol: ${_roleDisplayName(session.role)}', style: style),
               if (session.branchId case final String branchId)

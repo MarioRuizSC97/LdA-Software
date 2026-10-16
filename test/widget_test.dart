@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/app/backend_environment.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -9,6 +10,7 @@ import 'package:lda_inventory/catalog/product_pricing.dart';
 import 'package:lda_inventory/firebase/emulator_bootstrap.dart';
 import 'package:lda_inventory/firebase/emulator_correction_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
+import 'package:lda_inventory/firebase/production_bootstrap.dart';
 import 'package:lda_inventory/main.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
@@ -163,6 +165,95 @@ void main() {
       find.byType(EmulatorLoginShell),
     );
     expect(shell.correctionGatewayLoader, same(_unexpectedCorrectionLoad));
+  });
+
+  testWidgets('production mode shows a login that never names the emulator', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        productionEnabled: true,
+        emulatorLoader: _loadUnauthenticatedGateway,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inicio de sesión'), findsOneWidget);
+    expect(find.textContaining('emulador'), findsNothing);
+    final EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+      find.byType(EmulatorLoginShell),
+    );
+    expect(shell.environment, BackendEnvironment.production);
+  });
+
+  testWidgets('production mode defaults to the production loaders', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        productionEnabled: true,
+        emulatorLoader: _loadUnauthenticatedGateway,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+      find.byType(EmulatorLoginShell),
+    );
+    expect(
+      shell.productCreationGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeProductCreationGateway),
+    );
+    expect(
+      shell.productPricingGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeProductPricingGateway),
+    );
+    expect(
+      shell.stockIntakeGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeStockIntakeGateway),
+    );
+    expect(
+      shell.saleGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeSaleGateway),
+    );
+    expect(
+      shell.correctionGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeCorrectionGateway),
+    );
+    expect(
+      shell.administratorMovementsLoader,
+      same(ProductionFirebaseBootstrap.initializeAdministratorMovements),
+    );
+    expect(
+      shell.transferGatewayLoader,
+      same(ProductionFirebaseBootstrap.initializeTransferGateway),
+    );
+    expect(
+      shell.transferNoticeBackendLoader,
+      same(ProductionFirebaseBootstrap.initializeTransferNoticeBackend),
+    );
+  });
+
+  testWidgets('production and local-emulator flags together stay offline', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const LdaInventoryBootstrap(
+        demoEnabled: false,
+        localEmulatorsEnabled: true,
+        productionEnabled: true,
+        emulatorLoader: _unexpectedEmulatorLoad,
+        emulatorProductCreationLoader: _unexpectedFunctionsLoad,
+        emulatorProductPricingLoader: _unexpectedPricingLoad,
+        emulatorStockIntakeLoader: _unexpectedStockIntakeLoad,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Catálogo sin conexión'), findsOneWidget);
+    expect(find.byType(EmulatorLoginShell), findsNothing);
   });
 
   testWidgets('fixture mode stays disconnected when both flags are enabled', (
