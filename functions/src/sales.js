@@ -1,5 +1,6 @@
 import { createQuantitySpec, formatQuantity, parseQuantity } from './quantity.js';
 import { addStockMovement } from './quantity.js';
+import { isDeployedProjectRuntime } from './runtime-project.js';
 
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 const PRICING_FIELDS = [
@@ -223,6 +224,8 @@ export class SaleError extends Error {
 
 /** Sale-only, pure guard shared by service and callable before any SDK work. */
 export function assertLocalSalesEmulator(environment = process.env) {
+  // The deployed production project is trusted as-is; see runtime-project.js.
+  if (isDeployedProjectRuntime(environment)) return;
   const projectId = 'demo-lda-inventory';
   let valid = environment?.GCLOUD_PROJECT === projectId
     && environment?.FUNCTIONS_EMULATOR === 'true'

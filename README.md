@@ -100,7 +100,12 @@ emulators, and shows connection copy without emulator wording. Combining it
 with `LDA_LOCAL_EMULATORS=true` is ambiguous, so the app stays offline.
 
 Writes go through Cloud Functions, which are not deployed yet (the project is
-on the Spark plan), so until they are only sign-in and reads can work.
+on the Spark plan), so until they are only sign-in and reads can work. Every
+callable already accepts exactly two runtimes: the `demo-lda-inventory`
+emulator and a deployed `lda-inventory-dev-mx` runtime with no emulator
+variables (`functions/src/runtime-project.js`); any other project is refused.
+Callable CORS stays localhost-only until a production web origin is chosen;
+the Android and iOS apps are not subject to CORS.
 
 ## Running against the local emulators
 

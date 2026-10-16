@@ -1,3 +1,5 @@
+import { isDeployedProjectRuntime } from './runtime-project.js';
+
 const DEMO_PROJECT_ID = 'demo-lda-inventory';
 const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MONEY_PATTERN = /^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$/;
@@ -31,6 +33,8 @@ export class PricingError extends Error {
 
 /** Fail closed before Admin SDK initialization outside the dedicated emulator. */
 export function assertLocalPricingEmulator(environment = process.env) {
+  // The deployed production project is trusted as-is; see runtime-project.js.
+  if (isDeployedProjectRuntime(environment)) return;
   if (
     environment.GCLOUD_PROJECT !== DEMO_PROJECT_ID
     || environment.FUNCTIONS_EMULATOR !== 'true'

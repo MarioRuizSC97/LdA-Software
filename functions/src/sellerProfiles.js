@@ -1,3 +1,5 @@
+import { isDeployedProjectRuntime } from './runtime-project.js';
+
 const DEMO_PROJECT_ID = 'demo-lda-inventory';
 const FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 const AUTH_EMULATOR_HOST = '127.0.0.1:9099';
@@ -38,6 +40,8 @@ export class SellerProfileError extends Error {
  * this service reads trusted identities. Environment values are never echoed.
  */
 export function assertLocalSellerProfilesEmulator(environment = process.env) {
+  // The deployed production project is trusted as-is; see runtime-project.js.
+  if (isDeployedProjectRuntime(environment)) return;
   let valid = environment?.GCLOUD_PROJECT === DEMO_PROJECT_ID
     && environment?.FUNCTIONS_EMULATOR === 'true'
     && environment?.FIRESTORE_EMULATOR_HOST === FIRESTORE_EMULATOR_HOST

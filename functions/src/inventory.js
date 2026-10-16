@@ -3,6 +3,7 @@ import {
   createQuantitySpec,
   parseQuantity,
 } from './quantity.js';
+import { isDeployedProjectRuntime } from './runtime-project.js';
 
 export const CALCULATION_POLICY_VERSION = 'mxn-unit-cost-truncate-v1';
 
@@ -25,6 +26,8 @@ export class InventoryError extends Error {
  * cannot accidentally connect Admin Firestore to a cloud project.
  */
 export function assertLocalInventoryEmulator(environment = process.env) {
+  // The deployed production project is trusted as-is; see runtime-project.js.
+  if (isDeployedProjectRuntime(environment)) return;
   if (
     environment.GCLOUD_PROJECT !== DEMO_PROJECT_ID
     || environment.FUNCTIONS_EMULATOR !== 'true'

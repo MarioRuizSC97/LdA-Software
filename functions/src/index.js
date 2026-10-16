@@ -42,8 +42,9 @@ export const LOCAL_WEB_ORIGINS = [
 ];
 
 /**
- * Emulator-only callable. The guard runs before Admin SDK initialization so a
- * copied or accidentally deployed function cannot connect to cloud Firestore.
+ * Trusted-runtime callable: the demo emulator or the deployed production
+ * project only (see runtime-project.js). The guard runs before Admin SDK
+ * initialization, so a function copied to any other project never connects.
  */
 export const createProduct = onCall(
   { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
@@ -182,9 +183,9 @@ export const stockIntake = onCall(
 );
 
 /**
- * Emulator-only administrator transfer callable. The inventory guard runs before
- * Admin SDK initialization, so a copied or deployed function can never move
- * cloud stock. Domain failures are InventoryErrors and keep their code; any
+ * Trusted-runtime administrator transfer callable. The inventory guard runs
+ * before Admin SDK initialization, so a function copied to any other project
+ * can never move stock. Domain failures are InventoryErrors and keep their code; any
  * other error is masked as an internal fault.
  */
 export const transferInventory = onCall(
@@ -218,9 +219,10 @@ export const transferInventory = onCall(
 );
 
 /**
- * Emulator-only seller callable for destination transfer notice acknowledgements
- * (DN-01). The inventory guard runs before Admin SDK initialization, so a
- * copied or deployed function can never write cloud markers. Identity and
+ * Trusted-runtime seller callable for destination transfer notice
+ * acknowledgements (DN-01). The inventory guard runs before Admin SDK
+ * initialization, so a function copied to any other project can never write
+ * markers. Identity and
  * branch come from the verified token only; the service validates the private
  * transfer audit server-side before writing the per-seller marker.
  */
@@ -255,7 +257,7 @@ export const markTransferNoticeRead = onCall(
 );
 
 /**
- * Emulator-only seller callable. The sales guard runs before Admin SDK
+ * Trusted-runtime seller callable. The sales guard runs before Admin SDK
  * initialization; the service receives the whole request, so only trusted
  * request.auth assigns the seller and branch. Services translate calculation
  * errors into SaleError, so anything else is an internal fault and is masked.
@@ -333,7 +335,7 @@ export const previewSaleExchange = saleCorrectionCallable(
 );
 
 /**
- * Emulator-only administrator callable. The guard runs before Admin SDK
+ * Trusted-runtime administrator callable. The guard runs before Admin SDK
  * initialization, and Admin Auth is imported lazily after it, so a failed
  * guard never loads the Auth SDK and the other callables never depend on it.
  * The branch always comes from the target's trusted Auth claims.
