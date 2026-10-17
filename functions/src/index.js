@@ -1,5 +1,6 @@
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as logger from 'firebase-functions/logger';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import {
@@ -36,6 +37,19 @@ import {
   createSellerProfileService,
 } from './sellerProfiles.js';
 
+/**
+ * Logs an unexpected failure (error class, code and message only, never the
+ * request) and returns the generic internal error the client sees.
+ */
+export function unexpectedFailure(error, clientMessage, log = logger) {
+  log.error('callable failed unexpectedly', {
+    errorName: error?.name,
+    errorCode: error?.code,
+    errorMessage: error?.message,
+  });
+  return new HttpsError('internal', clientMessage);
+}
+
 export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
   /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
@@ -68,10 +82,7 @@ export const createProduct = onCall(
       if (error instanceof CatalogError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'product creation is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'product creation is temporarily unavailable');
     }
   },
 );
@@ -98,10 +109,7 @@ export const setProductPrice = onCall(
       if (error instanceof PricingError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'product pricing is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'product pricing is temporarily unavailable');
     }
   },
 );
@@ -126,10 +134,7 @@ export const submitSale = onCall(
       return await submit(request);
     } catch (error) {
       if (error instanceof SaleError) throw reasonedHttpsError(error);
-      throw new HttpsError(
-        'internal',
-        'sale submission is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'sale submission is temporarily unavailable');
     }
   },
 );
@@ -174,10 +179,7 @@ export const stockIntake = onCall(
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'stock intake is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'stock intake is temporarily unavailable');
     }
   },
 );
@@ -210,10 +212,7 @@ export const transferInventory = onCall(
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'inventory transfer is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'inventory transfer is temporarily unavailable');
     }
   },
 );
@@ -248,10 +247,7 @@ export const markTransferNoticeRead = onCall(
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'transfer notice acknowledgement is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'transfer notice acknowledgement is temporarily unavailable');
     }
   },
 );
@@ -288,7 +284,7 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
         return await operation(request);
       } catch (error) {
         if (error instanceof SaleError) throw reasonedHttpsError(error);
-        throw new HttpsError('internal', unavailableMessage);
+        throw unexpectedFailure(error, unavailableMessage);
       }
     },
   );
@@ -364,10 +360,7 @@ export const setSellerProfile = onCall(
       return await setProfile(request);
     } catch (error) {
       if (error instanceof SellerProfileError) throw reasonedHttpsError(error);
-      throw new HttpsError(
-        'internal',
-        'seller profile update is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'seller profile update is temporarily unavailable');
     }
   },
 );

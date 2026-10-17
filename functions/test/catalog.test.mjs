@@ -344,3 +344,20 @@ test('local callable distinguishes its guard from unexpected infrastructure fail
     );
   });
 });
+
+test('an unexpected callable failure is logged without request data and stays generic for the client', async () => {
+  const { unexpectedFailure } = await import('../src/index.js');
+  const entries = [];
+  const log = { error: (message, fields) => entries.push({ message, fields }) };
+  const cause = Object.assign(new Error('7 PERMISSION_DENIED: missing permission'), { code: 7 });
+
+  const failure = unexpectedFailure(cause, 'product creation is temporarily unavailable', log);
+
+  assert.ok(failure instanceof HttpsError);
+  assert.equal(failure.code, 'internal');
+  assert.equal(failure.message, 'product creation is temporarily unavailable');
+  assert.deepEqual(entries, [{
+    message: 'callable failed unexpectedly',
+    fields: { errorName: 'Error', errorCode: 7, errorMessage: '7 PERMISSION_DENIED: missing permission' },
+  }]);
+});
