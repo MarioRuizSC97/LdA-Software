@@ -64,6 +64,11 @@ test('keeps the default unit lane pure and appends both mocked unit targets', ()
     true,
     'the destination notice acknowledgement unit must ride the default pure unit lane',
   );
+  assert.equal(
+    unitFiles.includes('test/repository-hygiene.test.mjs'),
+    true,
+    'the secret-ignore hygiene checks must ride the default pure unit lane',
+  );
   assert.deepEqual(
     unitFiles.filter((file) => file.includes('emulator')),
     [],
