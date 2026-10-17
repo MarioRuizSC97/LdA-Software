@@ -872,7 +872,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       appBar: AppBar(
         // Navigation lives in the leading slot: it has its own width, so it
         // never crowds the action row or adds height above a form on a
-        // narrow phone. "Volver" appears only while a panel is open.
+        // narrow phone. "Volver" (left) appears only while a panel is open;
+        // "Inicio" sits to its right.
         leadingWidth: _openPanelClosers().isEmpty ? null : 104,
         leading: ListenableBuilder(
           listenable: Listenable.merge(<Listenable>[?sale]),
@@ -882,12 +883,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                IconButton(
-                  key: const ValueKey<String>('shell-home'),
-                  tooltip: 'Inicio',
-                  onPressed: enabled ? _goHome : null,
-                  icon: const Icon(Icons.home_outlined),
-                ),
                 if (panelOpen)
                   IconButton(
                     key: const ValueKey<String>('panel-back'),
@@ -895,6 +890,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: enabled ? _goBack : null,
                     icon: const Icon(Icons.arrow_back),
                   ),
+                IconButton(
+                  key: const ValueKey<String>('shell-home'),
+                  tooltip: 'Inicio',
+                  onPressed: enabled ? _goHome : null,
+                  icon: const Icon(Icons.home_outlined),
+                ),
               ],
             );
           },
