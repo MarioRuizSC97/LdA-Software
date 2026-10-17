@@ -35,15 +35,17 @@ bind or serve either.
 
 These are the only runtimes a run may use. Everything is read-only and nothing is
 ever installed or downloaded; changing any path needs a new operator
-authorization.
+authorization. In the paths below, `$HOME` denotes the operator's existing home
+directory: this notation hides a personal username, not a change to the
+previously authorized runtime locations.
 
 | Runtime | Authorized path |
 | --- | --- |
-| Pinned Node (v24.21.0) | `/Users/luismarioruiz/.local/share/lda-node24/runtime/bin/node` |
-| firebase-tools CLI | `/Users/luismarioruiz/.local/share/lda-firebase-tools/` |
-| Cached Firestore jar (1.22.0) | `/Users/luismarioruiz/.cache/firebase/emulators/cloud-firestore-emulator-v1.22.0.jar` |
+| Pinned Node (v24.21.0) | `$HOME/.local/share/lda-node24/runtime/bin/node` |
+| firebase-tools CLI | `$HOME/.local/share/lda-firebase-tools/` |
+| Cached Firestore jar (1.22.0) | `$HOME/.cache/firebase/emulators/cloud-firestore-emulator-v1.22.0.jar` |
 | Java | `/usr/bin/java` |
-| Flutter SDK | `/Users/luismarioruiz/develop/flutter/` |
+| Flutter SDK | `$HOME/develop/flutter/` |
 | Chrome for Testing 155.0.8059.79 | `.dart_tool/e2e-browser/` (project-local, disposable profiles) |
 
 Network egress is limited to `www.gstatic.com:443` (static Flutter/Firebase
@@ -59,7 +61,7 @@ other than the isolated routing. Build it with the generator:
 
 ```sh
 node functions/scripts/build-isolated-web-bundle.mjs \
-  --flutter /Users/luismarioruiz/develop/flutter/bin/flutter
+  --flutter "$HOME/develop/flutter/bin/flutter"
 ```
 
 It writes a fresh pair, never `build/web`:

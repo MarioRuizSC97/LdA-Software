@@ -32,3 +32,32 @@ functions/.npm-cache/
 # IDE metadata
 .idea/
 *.iml
+
+# Prevent accidental adds, not content scanning: tracked files remain tracked.
+# Templates must contain placeholders only; git add -f bypasses these rules.
+# Local environment secrets (only sanitized templates belong in Git)
+.env*
+!.env.example
+!.env.sample
+!.env.template
+
+# Private service-account / local authentication files
+*service-account*.json
+*serviceAccount*.json
+*firebase-adminsdk*.json
+application_default_credentials.json
+
+# Private keys and signing material (public client Firebase config stays tracked)
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
