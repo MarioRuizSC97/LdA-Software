@@ -1,0 +1,9 @@
+{
+  "branches": [
+    { "id": "branch-centro", "name": "Sucursal Centro", "code": "CEN" }
+  ],
+  "users": [
+    { "email": "admin@example.com", "role": "administrator" },
+    { "email": "ventas.centro@example.com", "role": "seller", "branchId": "branch-centro" }
+  ]
+}

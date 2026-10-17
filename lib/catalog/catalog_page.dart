@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app/backend_environment.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -124,6 +125,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     required this.session,
     required this.catalogLoader,
     required this.onLogout,
+    this.environment = BackendEnvironment.localEmulator,
     this.createProduct,
     this.createDraftId,
     this.unresolvedProductDraft,
@@ -146,6 +148,9 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   });
 
   final EmulatorSession session;
+
+  /// Which backend the session banner names.
+  final BackendEnvironment environment;
   final CatalogSnapshotLoader catalogLoader;
   final Future<void> Function() onLogout;
   final ProductCreationSubmit? createProduct;
@@ -243,10 +248,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   int _pricingGeneration = 0;
   int _intakeGeneration = 0;
   SaleCartController? _sale;
+  bool _saleReceiptShown = false;
   bool _cartVisible = false;
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
   bool _transferVisible = false;
+  bool _transferPending = false;
   bool _noticesVisible = false;
   TransferNoticeController? _noticeController;
   int _transferGeneration = 0;
@@ -420,6 +427,56 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     });
   }
 
+  void _closeCart() => setState(() => _cartVisible = false);
+
+  /// The open body panels, topmost first, each closed by the same action as
+  /// its own "Cerrar". A sale receipt covers the panels below it, so while one
+  /// is shown only the panels drawn above it are listed.
+  List<VoidCallback> _openPanelClosers() {
+    final bool receiptShown = _sale?.lastReceipt != null;
+    return <VoidCallback>[
+      if (_movements != null && _movementsVisible) _closeMovements,
+      if (_corrections != null && _correctionsVisible) _closeCorrections,
+      if (_transfer != null && _transferVisible) _closeTransfer,
+      if (widget.session.role == InventoryRole.seller &&
+          _noticeController != null &&
+          _noticesVisible)
+        _closeNotices,
+      if (!receiptShown) ...<VoidCallback>[
+        if (_sale != null && _cartVisible) _closeCart,
+        if (_creationVisible) _closeCreation,
+        if (_pricingProduct != null) _closePricing,
+        if (_intakeProduct != null) _closeIntake,
+      ],
+    ];
+  }
+
+  /// Navigation is disabled exactly when the open panel's own "Cerrar" is:
+  /// while a creation, pricing, intake, transfer or sale request is in flight.
+  /// Correcciones and transfer notices keep "Cerrar" enabled, and so does this.
+  bool get _navigationBlocked =>
+      _creationPending ||
+      _pricingPending ||
+      _intakePending ||
+      _transferPending ||
+      (_sale?.isSubmitting ?? false);
+
+  /// "Volver": closes the topmost panel and reveals the one below it.
+  void _goBack() {
+    if (_navigationBlocked) return;
+    final List<VoidCallback> closers = _openPanelClosers();
+    if (closers.isNotEmpty) closers.first();
+  }
+
+  /// "Inicio": closes every open panel and returns to the catalog. Retained
+  /// uncertain drafts stay stored and are offered again when reopened.
+  void _goHome() {
+    if (_navigationBlocked) return;
+    for (final VoidCallback close in _openPanelClosers()) {
+      close();
+    }
+  }
+
   /// A settled transfer moved stock in two branches, so the page re-runs the
   /// catalog load it is already authorized to perform and keeps its current
   /// view: no new query path, no extra read, and the ledger parser untouched.
@@ -446,7 +503,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         for (final CatalogItem item in source?.items ?? const <CatalogItem>[])
           item.product,
       ],
-      submitTransfer: submit,
+      submitTransfer: (TransferDraft draft) async {
+        setState(() => _transferPending = true);
+        try {
+          return await submit(draft);
+        } finally {
+          if (mounted) setState(() => _transferPending = false);
+        }
+      },
       unresolvedDraft: widget.unresolvedTransferDraft!,
       onClose: _closeTransfer,
       // The receipt and its Spanish banner belong to the form; the page only
@@ -540,6 +604,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             onReceiptPending: _saleReceiptPending,
           )
         : null;
+    _saleReceiptShown = _sale?.lastReceipt != null;
+    _sale?.addListener(_onSaleChanged);
+  }
+
+  /// A receipt shown or cleared changes which panels navigation can close,
+  /// and so the width of the leading navigation slot: rebuild the page then.
+  void _onSaleChanged() {
+    final bool shown = _sale?.lastReceipt != null;
+    if (!mounted || shown == _saleReceiptShown) return;
+    setState(() => _saleReceiptShown = shown);
   }
 
   /// A cart action found a committed sale the seller has not acknowledged:
@@ -808,6 +882,36 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
+        // Navigation lives in the leading slot: it has its own width, so it
+        // never crowds the action row or adds height above a form on a
+        // narrow phone. "Volver" (left) appears only while a panel is open;
+        // "Inicio" sits to its right.
+        leadingWidth: _openPanelClosers().isEmpty ? null : 104,
+        leading: ListenableBuilder(
+          listenable: Listenable.merge(<Listenable>[?sale]),
+          builder: (BuildContext context, Widget? child) {
+            final bool panelOpen = _openPanelClosers().isNotEmpty;
+            final bool enabled = panelOpen && !_navigationBlocked;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (panelOpen)
+                  IconButton(
+                    key: const ValueKey<String>('panel-back'),
+                    tooltip: 'Volver',
+                    onPressed: enabled ? _goBack : null,
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                IconButton(
+                  key: const ValueKey<String>('shell-home'),
+                  tooltip: 'Inicio',
+                  onPressed: enabled ? _goHome : null,
+                  icon: const Icon(Icons.home_outlined),
+                ),
+              ],
+            );
+          },
+        ),
         title: const Text('LDA Inventory'),
         actions: <Widget>[
           if (corrections != null && !compactBar)
@@ -901,7 +1005,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            _SessionStatus(session: widget.session),
+            _SessionStatus(
+              session: widget.session,
+              environment: widget.environment,
+            ),
             if (_creationSuccess case final ProductCreationResult result)
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
@@ -2310,9 +2417,10 @@ String? _creationPrecisionFieldError(int? precision) {
 }
 
 class _SessionStatus extends StatelessWidget {
-  const _SessionStatus({required this.session});
+  const _SessionStatus({required this.session, required this.environment});
 
   final EmulatorSession session;
+  final BackendEnvironment environment;
 
   @override
   Widget build(BuildContext context) {
@@ -2324,7 +2432,7 @@ class _SessionStatus extends StatelessWidget {
     return Semantics(
       container: true,
       liveRegion: true,
-      label: 'Sesión local autenticada del catálogo',
+      label: environment.sessionSemanticsLabel,
       child: ColoredBox(
         color: colors.secondaryContainer,
         child: Padding(
@@ -2334,7 +2442,7 @@ class _SessionStatus extends StatelessWidget {
             spacing: 12,
             runSpacing: 4,
             children: <Widget>[
-              Text('Autenticado localmente', style: style),
+              Text(environment.signedInLabel, style: style),
               Text(session.email, style: style),
               Text('Rol: ${_roleDisplayName(session.role)}', style: style),
               if (session.branchId case final String branchId)

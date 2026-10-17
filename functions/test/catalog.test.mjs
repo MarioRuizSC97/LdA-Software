@@ -344,3 +344,51 @@ test('local callable distinguishes its guard from unexpected infrastructure fail
     );
   });
 });
+
+test('an unexpected callable failure is logged without request data and stays generic for the client', async () => {
+  const { unexpectedFailure } = await import('../src/index.js');
+  const entries = [];
+  const log = { error: (message, fields) => entries.push({ message, fields }) };
+  const cause = Object.assign(new Error('7 PERMISSION_DENIED: missing permission'), { code: 7 });
+
+  const failure = unexpectedFailure(cause, 'product creation is temporarily unavailable', log);
+
+  assert.ok(failure instanceof HttpsError);
+  assert.equal(failure.code, 'internal');
+  assert.equal(failure.message, 'product creation is temporarily unavailable');
+  assert.deepEqual(entries, [{
+    message: 'callable failed unexpectedly',
+    fields: { errorName: 'Error', errorCode: 7, errorMessage: '7 PERMISSION_DENIED: missing permission' },
+  }]);
+});
+
+test('the default Admin app is created even when another named app already exists', async () => {
+  const { ensureDefaultApp } = await import('../src/index.js');
+  const admin = (names) => {
+    const apps = names.map((name) => ({ name }));
+    return {
+      initialized: 0,
+      getApps: () => apps,
+      initializeApp() {
+        this.initialized += 1;
+        apps.push({ name: '[DEFAULT]' });
+      },
+    };
+  };
+
+  // firebase-functions creates its own named app to verify ID tokens in a
+  // deployed runtime, before any callable body runs.
+  const deployed = admin(['__FIREBASE_FUNCTIONS_SDK__']);
+  ensureDefaultApp(deployed);
+  assert.equal(deployed.initialized, 1);
+  ensureDefaultApp(deployed);
+  assert.equal(deployed.initialized, 1, 'a second call must not create another default app');
+
+  const emulator = admin([]);
+  ensureDefaultApp(emulator);
+  assert.equal(emulator.initialized, 1);
+
+  const warm = admin(['[DEFAULT]']);
+  ensureDefaultApp(warm);
+  assert.equal(warm.initialized, 0);
+});

@@ -90,6 +90,47 @@ Physically separated costs and server-owned inventory writes are mandatory
 schema constraints for the next implementation phase, not field filtering that
 these rules can provide.
 
+## Production mode
+
+Build with `--dart-define=LDA_FIREBASE_PRODUCTION=true` to sign in against the
+real Firebase project `lda-inventory-dev-mx` (the options in
+`lib/firebase_options.dart`). It uses the same gateways and the same
+`role`/`branchId` custom claims as the emulator mode, never connects to the
+emulators, and shows connection copy without emulator wording. Combining it
+with `LDA_LOCAL_EMULATORS=true` is ambiguous, so the app stays offline.
+
+Writes go through Cloud Functions, which are not deployed yet (the project is
+on the Spark plan), so until they are only sign-in and reads can work. Every
+callable already accepts exactly two runtimes: the `demo-lda-inventory`
+emulator and a deployed `lda-inventory-dev-mx` runtime with no emulator
+variables (`functions/src/runtime-project.js`); any other project is refused.
+Callable CORS stays localhost-only until a production web origin is chosen;
+the Android and iOS apps are not subject to CORS.
+
+### Preparing the real project
+
+Real accounts are created by a person in the Firebase console (email and
+password); `functions/scripts/provision-production.mjs` then creates the
+branches and gives each listed account its `role`/`branchId` claims. Start
+from `functions/scripts/production-plan.example.json`:
+
+```sh
+cd functions
+# Validate only (default): reads the plan, touches nothing.
+npm run provision:production -- --project lda-inventory-dev-mx --plan my-plan.json
+# Write, with Application Default Credentials for the project.
+npm run provision:production -- --project lda-inventory-dev-mx --plan my-plan.json --apply
+```
+
+Every check runs before the first write. A missing account, a branch whose
+stored name or code differs, a branch code already used by another branch,
+an account that already has a different role or branch, or one with other
+custom claims (which `setCustomUserClaims` would erase) refuses the whole
+apply with nothing written. Emails are compared case-insensitively, as
+Firebase Auth does. Re-running the same plan is a no-op. Any other
+project, and `--apply` while a Firebase emulator variable is set, are
+refused.
+
 ## Running against the local emulators
 
 Start the demo emulators first, then build with

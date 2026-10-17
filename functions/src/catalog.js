@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { createQuantitySpec } from './quantity.js';
+import { isDeployedProjectRuntime } from './runtime-project.js';
 
 const DEMO_PROJECT_ID = 'demo-lda-inventory';
 const INTERNAL_CODE_PATTERN = /^[A-Z][A-Z0-9-]{7,63}$/;
@@ -20,6 +21,8 @@ export class CatalogError extends Error {
 
 /** Fail closed before Admin SDK initialization outside the dedicated emulator. */
 export function assertLocalCatalogEmulator(environment = process.env) {
+  // The deployed production project is trusted as-is; see runtime-project.js.
+  if (isDeployedProjectRuntime(environment)) return;
   if (
     environment.GCLOUD_PROJECT !== DEMO_PROJECT_ID
     || environment.FUNCTIONS_EMULATOR !== 'true'

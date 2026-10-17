@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 
 import '../auth/emulator_session.dart';
 import '../catalog/catalog_repository.dart';
-import '../catalog/firestore_catalog_repository.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
 import 'emulator_auth_routing.dart';
@@ -18,13 +17,11 @@ import 'emulator_platform_stub.dart'
 import '../movements/administrator_movements.dart';
 import '../transfers/transfer_notice_controller.dart';
 import 'emulator_correction_gateway.dart';
-import 'emulator_product_creation_gateway.dart';
-import 'emulator_product_pricing_gateway.dart';
 import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_transfer_gateway.dart';
-import 'emulator_transfer_notice_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
+import 'live_firebase_gateways.dart';
 
 /// Where the app runs relative to the host's local emulators.
 ///
@@ -340,7 +337,7 @@ class DemoEmulatorBootstrap {
         );
         return connection.ensureConnected(host, port);
       },
-      createGateway: () => FirebaseEmulatorSessionGateway(auth),
+      createGateway: () => LiveFirebaseGateways.session(auth),
     );
   }
 
@@ -386,25 +383,11 @@ class DemoEmulatorBootstrap {
             );
         return connection.ensureConnected(host, port);
       },
-      createCatalog: () {
-        final FirebaseFirestoreCatalogReadSource source =
-            FirebaseFirestoreCatalogReadSource(firestore);
-        final ActiveSessionChecker sessionChecker =
-            _firebaseActiveSessionChecker(auth);
-        return switch (session.role) {
-          InventoryRole.administrator =>
-            FirestoreCatalogRepository.administrator(
-              source: source,
-              session: session,
-              sessionChecker: sessionChecker,
-            ),
-          InventoryRole.seller => FirestoreCatalogRepository.seller(
-            source: source,
-            session: session,
-            sessionChecker: sessionChecker,
-          ),
-        };
-      },
+      createCatalog: () => LiveFirebaseGateways.catalog(
+        auth: auth,
+        firestore: firestore,
+        session: session,
+      ),
     );
   }
 
@@ -470,10 +453,10 @@ class DemoEmulatorBootstrap {
             );
         return connection.ensureConnected(host, port);
       },
-      createGateway: () => EmulatorProductCreationGateway(
-        expectedSession: session,
-        sessionChecker: _firebaseActiveSessionChecker(auth),
-        invoke: firebaseProductCreationCallable(functions),
+      createGateway: () => LiveFirebaseGateways.productCreation(
+        auth: auth,
+        functions: functions,
+        session: session,
       ),
     );
   }
@@ -540,10 +523,10 @@ class DemoEmulatorBootstrap {
             );
         return connection.ensureConnected(host, port);
       },
-      createGateway: () => EmulatorProductPricingGateway(
-        expectedSession: session,
-        sessionChecker: _firebaseActiveSessionChecker(auth),
-        invoke: firebaseProductPricingCallable(functions),
+      createGateway: () => LiveFirebaseGateways.productPricing(
+        auth: auth,
+        functions: functions,
+        session: session,
       ),
     );
   }
@@ -573,10 +556,10 @@ class DemoEmulatorBootstrap {
   ) {
     return _initializeLiveFunctionsGateway<EmulatorStockIntakeGateway>(
       (FirebaseAuth auth, FirebaseFunctions functions) =>
-          EmulatorStockIntakeGateway(
-            expectedSession: session,
-            sessionChecker: _firebaseActiveSessionChecker(auth),
-            invoke: firebaseStockIntakeCallable(functions),
+          LiveFirebaseGateways.stockIntake(
+            auth: auth,
+            functions: functions,
+            session: session,
           ),
     );
   }
@@ -589,10 +572,10 @@ class DemoEmulatorBootstrap {
   ) {
     return _initializeLiveFunctionsGateway<EmulatorTransferGateway>(
       (FirebaseAuth auth, FirebaseFunctions functions) =>
-          EmulatorTransferGateway(
-            expectedSession: session,
-            sessionChecker: _firebaseActiveSessionChecker(auth),
-            invoke: firebaseTransferCallable(functions),
+          LiveFirebaseGateways.transfer(
+            auth: auth,
+            functions: functions,
+            session: session,
           ),
     );
   }
@@ -606,15 +589,13 @@ class DemoEmulatorBootstrap {
   static Future<TransferNoticeBackend> initializeTransferNoticeBackend(
     EmulatorSession session,
   ) {
-    if (session.role != InventoryRole.seller || session.branchId == null) {
-      throw ArgumentError('transfer notices belong to an exact seller session');
-    }
+    LiveFirebaseGateways.requireNoticeSeller(session);
     return _initializeLiveFirebase<TransferNoticeBackend>(
       (
         FirebaseAuth auth,
         FirebaseFirestore firestore,
         FirebaseFunctions functions,
-      ) => loadTransferNoticeBackend(
+      ) => LiveFirebaseGateways.transferNotices(
         firestore: firestore,
         functions: functions,
         session: session,
@@ -628,11 +609,12 @@ class DemoEmulatorBootstrap {
     EmulatorSession session,
   ) {
     return _initializeLiveFunctionsGateway<EmulatorSaleGateway>(
-      (FirebaseAuth auth, FirebaseFunctions functions) => createSaleGateway(
-        session: session,
-        sessionChecker: _firebaseActiveSessionChecker(auth),
-        callable: (String name) => firebaseSaleCallable(functions, name),
-      ),
+      (FirebaseAuth auth, FirebaseFunctions functions) =>
+          LiveFirebaseGateways.sale(
+            auth: auth,
+            functions: functions,
+            session: session,
+          ),
     );
   }
 
@@ -643,11 +625,10 @@ class DemoEmulatorBootstrap {
     required EmulatorSession session,
     required SaleSessionChecker sessionChecker,
     required SaleCallable Function(String name) callable,
-  }) => EmulatorSaleGateway(
-    expectedSession: session,
+  }) => LiveFirebaseGateways.saleGateway(
+    session: session,
     sessionChecker: sessionChecker,
-    quoteInvoke: callable('quoteSale'),
-    submitInvoke: callable('submitSale'),
+    callable: callable,
   );
 
   /// Seller correction gateway over the sale-correction callables,
@@ -657,10 +638,10 @@ class DemoEmulatorBootstrap {
   ) {
     return _initializeLiveFunctionsGateway<EmulatorCorrectionGateway>(
       (FirebaseAuth auth, FirebaseFunctions functions) =>
-          createCorrectionGateway(
+          LiveFirebaseGateways.correction(
+            auth: auth,
+            functions: functions,
             session: session,
-            sessionChecker: _firebaseActiveSessionChecker(auth),
-            callable: (String name) => firebaseSaleCallable(functions, name),
           ),
     );
   }
@@ -675,16 +656,10 @@ class DemoEmulatorBootstrap {
     required EmulatorSession session,
     required SaleSessionChecker sessionChecker,
     required SaleCallable Function(String name) callable,
-  }) => EmulatorCorrectionGateway(
-    expectedSession: session,
+  }) => LiveFirebaseGateways.correctionGateway(
+    session: session,
     sessionChecker: sessionChecker,
-    findInvoke: callable('findCorrectableSale'),
-    listInvoke: callable('listRecentCorrectableSales'),
-    returnInvoke: callable('submitSaleReturn'),
-    replacementInvoke: callable('submitSaleReplacement'),
-    exchangeInvoke: callable('submitSaleExchange'),
-    previewReturnInvoke: callable('previewSaleReturn'),
-    previewExchangeInvoke: callable('previewSaleExchange'),
+    callable: callable,
   );
 
   /// Administrator movements: the Firestore movements and profile reads,
@@ -692,27 +667,18 @@ class DemoEmulatorBootstrap {
   static Future<AdministratorMovementsBackend> initializeAdministratorMovements(
     EmulatorSession session,
   ) {
-    return _initializeLiveFirebase<AdministratorMovementsBackend>((
-      FirebaseAuth auth,
-      FirebaseFirestore firestore,
-      FirebaseFunctions functions,
-    ) {
-      final ActiveSessionChecker sessionChecker = _firebaseActiveSessionChecker(
-        auth,
-      );
-      return AdministratorMovementsBackend(
-        reader: FirestoreMovementRepository(
-          source: FirebaseFirestoreMovementReadSource(firestore),
-          session: session,
-          sessionChecker: sessionChecker,
-        ),
-        profiles: createSellerProfileGateway(
-          session: session,
-          sessionChecker: sessionChecker,
-          callable: (String name) => firebaseSaleCallable(functions, name),
-        ),
-      );
-    });
+    return _initializeLiveFirebase<AdministratorMovementsBackend>(
+      (
+        FirebaseAuth auth,
+        FirebaseFirestore firestore,
+        FirebaseFunctions functions,
+      ) => LiveFirebaseGateways.administratorMovements(
+        auth: auth,
+        firestore: firestore,
+        functions: functions,
+        session: session,
+      ),
+    );
   }
 
   /// Binds the `setSellerProfile` callable by name. Separate from
@@ -723,10 +689,10 @@ class DemoEmulatorBootstrap {
     required EmulatorSession session,
     required SaleSessionChecker sessionChecker,
     required SaleCallable Function(String name) callable,
-  }) => EmulatorSellerProfileGateway(
-    expectedSession: session,
+  }) => LiveFirebaseGateways.sellerProfileGateway(
+    session: session,
     sessionChecker: sessionChecker,
-    invoke: callable('setSellerProfile'),
+    callable: callable,
   );
 
   static Future<T> _initializeLiveFunctionsGateway<T>(
@@ -805,22 +771,6 @@ class DemoEmulatorBootstrap {
       },
       createGateway: () => create(auth, firestore, functions),
     );
-  }
-
-  static ActiveSessionChecker _firebaseActiveSessionChecker(FirebaseAuth auth) {
-    return () async {
-      final User? user = auth.currentUser;
-      if (user == null) return null;
-      final IdTokenResult token = await user.getIdTokenResult(true);
-      if (auth.currentUser?.uid != user.uid) return null;
-      final Map<String, dynamic>? claims = token.claims;
-      if (claims == null) throw const UntrustedSessionException();
-      return EmulatorSessionClaims.validate(
-        userId: user.uid,
-        email: user.email,
-        claims: claims.cast<String, Object?>(),
-      );
-    };
   }
 
   static Future<void> _prepareWebAuth(

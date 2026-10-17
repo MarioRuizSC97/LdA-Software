@@ -1,5 +1,6 @@
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as logger from 'firebase-functions/logger';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 
 import {
@@ -36,14 +37,39 @@ import {
   createSellerProfileService,
 } from './sellerProfiles.js';
 
+/**
+ * Creates the default Admin app once. A plain `getApps().length` check is not
+ * enough: in a deployed runtime firebase-functions creates its own named app
+ * to verify ID tokens before the callable body runs.
+ */
+export function ensureDefaultApp(admin = { getApps, initializeApp }) {
+  if (!admin.getApps().some((app) => app.name === '[DEFAULT]')) {
+    admin.initializeApp();
+  }
+}
+
+/**
+ * Logs an unexpected failure (error class, code and message only, never the
+ * request) and returns the generic internal error the client sees.
+ */
+export function unexpectedFailure(error, clientMessage, log = logger) {
+  log.error('callable failed unexpectedly', {
+    errorName: error?.name,
+    errorCode: error?.code,
+    errorMessage: error?.message,
+  });
+  return new HttpsError('internal', clientMessage);
+}
+
 export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/localhost(?::\d{1,5})?$/,
   /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
 ];
 
 /**
- * Emulator-only callable. The guard runs before Admin SDK initialization so a
- * copied or accidentally deployed function cannot connect to cloud Firestore.
+ * Trusted-runtime callable: the demo emulator or the deployed production
+ * project only (see runtime-project.js). The guard runs before Admin SDK
+ * initialization, so a function copied to any other project never connects.
  */
 export const createProduct = onCall(
   { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
@@ -58,19 +84,14 @@ export const createProduct = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const create = createProductCreationService({ firestore: getFirestore() });
       return await create(request);
     } catch (error) {
       if (error instanceof CatalogError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'product creation is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'product creation is temporarily unavailable');
     }
   },
 );
@@ -88,19 +109,14 @@ export const setProductPrice = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const setPrice = createProductPricingService({ firestore: getFirestore() });
       return await setPrice(request);
     } catch (error) {
       if (error instanceof PricingError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'product pricing is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'product pricing is temporarily unavailable');
     }
   },
 );
@@ -118,17 +134,12 @@ export const submitSale = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const submit = createSaleService({ firestore: getFirestore() });
       return await submit(request);
     } catch (error) {
       if (error instanceof SaleError) throw reasonedHttpsError(error);
-      throw new HttpsError(
-        'internal',
-        'sale submission is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'sale submission is temporarily unavailable');
     }
   },
 );
@@ -164,27 +175,22 @@ export const stockIntake = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const intake = createStockIntakeService({ firestore: getFirestore() });
       return await intake(request);
     } catch (error) {
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'stock intake is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'stock intake is temporarily unavailable');
     }
   },
 );
 
 /**
- * Emulator-only administrator transfer callable. The inventory guard runs before
- * Admin SDK initialization, so a copied or deployed function can never move
- * cloud stock. Domain failures are InventoryErrors and keep their code; any
+ * Trusted-runtime administrator transfer callable. The inventory guard runs
+ * before Admin SDK initialization, so a function copied to any other project
+ * can never move stock. Domain failures are InventoryErrors and keep their code; any
  * other error is masked as an internal fault.
  */
 export const transferInventory = onCall(
@@ -200,27 +206,23 @@ export const transferInventory = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const transfer = createTransferService({ firestore: getFirestore() });
       return await transfer(request);
     } catch (error) {
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'inventory transfer is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'inventory transfer is temporarily unavailable');
     }
   },
 );
 
 /**
- * Emulator-only seller callable for destination transfer notice acknowledgements
- * (DN-01). The inventory guard runs before Admin SDK initialization, so a
- * copied or deployed function can never write cloud markers. Identity and
+ * Trusted-runtime seller callable for destination transfer notice
+ * acknowledgements (DN-01). The inventory guard runs before Admin SDK
+ * initialization, so a function copied to any other project can never write
+ * markers. Identity and
  * branch come from the verified token only; the service validates the private
  * transfer audit server-side before writing the per-seller marker.
  */
@@ -237,25 +239,20 @@ export const markTransferNoticeRead = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const markRead = createTransferNoticeReadService({ firestore: getFirestore() });
       return await markRead(request);
     } catch (error) {
       if (error instanceof InventoryError) {
         throw new HttpsError(error.code, error.message);
       }
-      throw new HttpsError(
-        'internal',
-        'transfer notice acknowledgement is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'transfer notice acknowledgement is temporarily unavailable');
     }
   },
 );
 
 /**
- * Emulator-only seller callable. The sales guard runs before Admin SDK
+ * Trusted-runtime seller callable. The sales guard runs before Admin SDK
  * initialization; the service receives the whole request, so only trusted
  * request.auth assigns the seller and branch. Services translate calculation
  * errors into SaleError, so anything else is an internal fault and is masked.
@@ -279,14 +276,12 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
       }
 
       try {
-        if (getApps().length === 0) {
-          initializeApp();
-        }
+        ensureDefaultApp();
         const operation = createOperation(getFirestore());
         return await operation(request);
       } catch (error) {
         if (error instanceof SaleError) throw reasonedHttpsError(error);
-        throw new HttpsError('internal', unavailableMessage);
+        throw unexpectedFailure(error, unavailableMessage);
       }
     },
   );
@@ -333,7 +328,7 @@ export const previewSaleExchange = saleCorrectionCallable(
 );
 
 /**
- * Emulator-only administrator callable. The guard runs before Admin SDK
+ * Trusted-runtime administrator callable. The guard runs before Admin SDK
  * initialization, and Admin Auth is imported lazily after it, so a failed
  * guard never loads the Auth SDK and the other callables never depend on it.
  * The branch always comes from the target's trusted Auth claims.
@@ -351,9 +346,7 @@ export const setSellerProfile = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const { getAuth } = await import('firebase-admin/auth');
       const setProfile = createSellerProfileService({
         firestore: getFirestore(),
@@ -362,10 +355,7 @@ export const setSellerProfile = onCall(
       return await setProfile(request);
     } catch (error) {
       if (error instanceof SellerProfileError) throw reasonedHttpsError(error);
-      throw new HttpsError(
-        'internal',
-        'seller profile update is temporarily unavailable',
-      );
+      throw unexpectedFailure(error, 'seller profile update is temporarily unavailable');
     }
   },
 );
