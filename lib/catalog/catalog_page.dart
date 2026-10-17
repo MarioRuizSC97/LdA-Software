@@ -252,6 +252,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
   bool _transferVisible = false;
+  bool _transferPending = false;
   bool _noticesVisible = false;
   TransferNoticeController? _noticeController;
   int _transferGeneration = 0;
@@ -425,6 +426,55 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     });
   }
 
+  void _closeCart() => setState(() => _cartVisible = false);
+
+  /// The open body panels, topmost first, each closed by the same action as
+  /// its own "Cerrar". A sale receipt covers the panels below it, so while one
+  /// is shown only the panels drawn above it are listed.
+  List<VoidCallback> _openPanelClosers() {
+    final bool receiptShown = _sale?.lastReceipt != null;
+    return <VoidCallback>[
+      if (_movements != null && _movementsVisible) _closeMovements,
+      if (_corrections != null && _correctionsVisible) _closeCorrections,
+      if (_transfer != null && _transferVisible) _closeTransfer,
+      if (widget.session.role == InventoryRole.seller &&
+          _noticeController != null &&
+          _noticesVisible)
+        _closeNotices,
+      if (!receiptShown) ...<VoidCallback>[
+        if (_sale != null && _cartVisible) _closeCart,
+        if (_creationVisible) _closeCreation,
+        if (_pricingProduct != null) _closePricing,
+        if (_intakeProduct != null) _closeIntake,
+      ],
+    ];
+  }
+
+  /// A request in flight keeps every panel open, as its own "Cerrar" does, so
+  /// its answer is never dropped by navigation.
+  bool get _navigationBlocked =>
+      _creationPending ||
+      _pricingPending ||
+      _intakePending ||
+      _transferPending ||
+      (_sale?.isSubmitting ?? false);
+
+  /// "Volver": closes the topmost panel and reveals the one below it.
+  void _goBack() {
+    if (_navigationBlocked) return;
+    final List<VoidCallback> closers = _openPanelClosers();
+    if (closers.isNotEmpty) closers.first();
+  }
+
+  /// "Inicio": closes every open panel and returns to the catalog. Retained
+  /// uncertain drafts stay stored and are offered again when reopened.
+  void _goHome() {
+    if (_navigationBlocked) return;
+    for (final VoidCallback close in _openPanelClosers()) {
+      close();
+    }
+  }
+
   /// A settled transfer moved stock in two branches, so the page re-runs the
   /// catalog load it is already authorized to perform and keeps its current
   /// view: no new query path, no extra read, and the ledger parser untouched.
@@ -451,7 +501,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         for (final CatalogItem item in source?.items ?? const <CatalogItem>[])
           item.product,
       ],
-      submitTransfer: submit,
+      submitTransfer: (TransferDraft draft) async {
+        setState(() => _transferPending = true);
+        try {
+          return await submit(draft);
+        } finally {
+          if (mounted) setState(() => _transferPending = false);
+        }
+      },
       unresolvedDraft: widget.unresolvedTransferDraft!,
       onClose: _closeTransfer,
       // The receipt and its Spanish banner belong to the form; the page only
@@ -813,6 +870,35 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
+        // Navigation lives in the leading slot: it has its own width, so it
+        // never crowds the action row or adds height above a form on a
+        // narrow phone. "Volver" appears only while a panel is open.
+        leadingWidth: _openPanelClosers().isEmpty ? null : 104,
+        leading: ListenableBuilder(
+          listenable: Listenable.merge(<Listenable>[?sale]),
+          builder: (BuildContext context, Widget? child) {
+            final bool panelOpen = _openPanelClosers().isNotEmpty;
+            final bool enabled = panelOpen && !_navigationBlocked;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                IconButton(
+                  key: const ValueKey<String>('shell-home'),
+                  tooltip: 'Inicio',
+                  onPressed: enabled ? _goHome : null,
+                  icon: const Icon(Icons.home_outlined),
+                ),
+                if (panelOpen)
+                  IconButton(
+                    key: const ValueKey<String>('panel-back'),
+                    tooltip: 'Volver',
+                    onPressed: enabled ? _goBack : null,
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+              ],
+            );
+          },
+        ),
         title: const Text('LDA Inventory'),
         actions: <Widget>[
           if (corrections != null && !compactBar)
