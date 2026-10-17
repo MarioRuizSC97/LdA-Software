@@ -363,18 +363,32 @@ test('an unexpected callable failure is logged without request data and stays ge
 });
 
 test('the default Admin app is created even when another named app already exists', async () => {
-  const { getApp, getApps, initializeApp, deleteApp } = await import('firebase-admin/app');
   const { ensureDefaultApp } = await import('../src/index.js');
+  const admin = (names) => {
+    const apps = names.map((name) => ({ name }));
+    return {
+      initialized: 0,
+      getApps: () => apps,
+      initializeApp() {
+        this.initialized += 1;
+        apps.push({ name: '[DEFAULT]' });
+      },
+    };
+  };
+
   // firebase-functions creates its own named app to verify ID tokens in a
   // deployed runtime, before any callable body runs.
-  const sdkApp = initializeApp({ projectId: 'demo-lda-inventory' }, '__FIREBASE_FUNCTIONS_SDK__');
-  try {
-    ensureDefaultApp();
-    assert.equal(getApp().name, '[DEFAULT]');
-    ensureDefaultApp();
-    assert.equal(getApps().filter((app) => app.name === '[DEFAULT]').length, 1);
-  } finally {
-    await deleteApp(sdkApp);
-    if (getApps().some((app) => app.name === '[DEFAULT]')) await deleteApp(getApp());
-  }
+  const deployed = admin(['__FIREBASE_FUNCTIONS_SDK__']);
+  ensureDefaultApp(deployed);
+  assert.equal(deployed.initialized, 1);
+  ensureDefaultApp(deployed);
+  assert.equal(deployed.initialized, 1, 'a second call must not create another default app');
+
+  const emulator = admin([]);
+  ensureDefaultApp(emulator);
+  assert.equal(emulator.initialized, 1);
+
+  const warm = admin(['[DEFAULT]']);
+  ensureDefaultApp(warm);
+  assert.equal(warm.initialized, 0);
 });

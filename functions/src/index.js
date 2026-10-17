@@ -42,9 +42,9 @@ import {
  * enough: in a deployed runtime firebase-functions creates its own named app
  * to verify ID tokens before the callable body runs.
  */
-export function ensureDefaultApp() {
-  if (!getApps().some((app) => app.name === '[DEFAULT]')) {
-    initializeApp();
+export function ensureDefaultApp(admin = { getApps, initializeApp }) {
+  if (!admin.getApps().some((app) => app.name === '[DEFAULT]')) {
+    admin.initializeApp();
   }
 }
 

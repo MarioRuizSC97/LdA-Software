@@ -248,6 +248,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   int _pricingGeneration = 0;
   int _intakeGeneration = 0;
   SaleCartController? _sale;
+  bool _saleReceiptShown = false;
   bool _cartVisible = false;
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
@@ -450,8 +451,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     ];
   }
 
-  /// A request in flight keeps every panel open, as its own "Cerrar" does, so
-  /// its answer is never dropped by navigation.
+  /// Navigation is disabled exactly when the open panel's own "Cerrar" is:
+  /// while a creation, pricing, intake, transfer or sale request is in flight.
+  /// Correcciones and transfer notices keep "Cerrar" enabled, and so does this.
   bool get _navigationBlocked =>
       _creationPending ||
       _pricingPending ||
@@ -602,6 +604,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             onReceiptPending: _saleReceiptPending,
           )
         : null;
+    _saleReceiptShown = _sale?.lastReceipt != null;
+    _sale?.addListener(_onSaleChanged);
+  }
+
+  /// A receipt shown or cleared changes which panels navigation can close,
+  /// and so the width of the leading navigation slot: rebuild the page then.
+  void _onSaleChanged() {
+    final bool shown = _sale?.lastReceipt != null;
+    if (!mounted || shown == _saleReceiptShown) return;
+    setState(() => _saleReceiptShown = shown);
   }
 
   /// A cart action found a committed sale the seller has not acknowledged:
