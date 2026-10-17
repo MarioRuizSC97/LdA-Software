@@ -38,6 +38,17 @@ import {
 } from './sellerProfiles.js';
 
 /**
+ * Creates the default Admin app once. A plain `getApps().length` check is not
+ * enough: in a deployed runtime firebase-functions creates its own named app
+ * to verify ID tokens before the callable body runs.
+ */
+export function ensureDefaultApp() {
+  if (!getApps().some((app) => app.name === '[DEFAULT]')) {
+    initializeApp();
+  }
+}
+
+/**
  * Logs an unexpected failure (error class, code and message only, never the
  * request) and returns the generic internal error the client sees.
  */
@@ -73,9 +84,7 @@ export const createProduct = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const create = createProductCreationService({ firestore: getFirestore() });
       return await create(request);
     } catch (error) {
@@ -100,9 +109,7 @@ export const setProductPrice = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const setPrice = createProductPricingService({ firestore: getFirestore() });
       return await setPrice(request);
     } catch (error) {
@@ -127,9 +134,7 @@ export const submitSale = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const submit = createSaleService({ firestore: getFirestore() });
       return await submit(request);
     } catch (error) {
@@ -170,9 +175,7 @@ export const stockIntake = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const intake = createStockIntakeService({ firestore: getFirestore() });
       return await intake(request);
     } catch (error) {
@@ -203,9 +206,7 @@ export const transferInventory = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const transfer = createTransferService({ firestore: getFirestore() });
       return await transfer(request);
     } catch (error) {
@@ -238,9 +239,7 @@ export const markTransferNoticeRead = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const markRead = createTransferNoticeReadService({ firestore: getFirestore() });
       return await markRead(request);
     } catch (error) {
@@ -277,9 +276,7 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
       }
 
       try {
-        if (getApps().length === 0) {
-          initializeApp();
-        }
+        ensureDefaultApp();
         const operation = createOperation(getFirestore());
         return await operation(request);
       } catch (error) {
@@ -349,9 +346,7 @@ export const setSellerProfile = onCall(
     }
 
     try {
-      if (getApps().length === 0) {
-        initializeApp();
-      }
+      ensureDefaultApp();
       const { getAuth } = await import('firebase-admin/auth');
       const setProfile = createSellerProfileService({
         firestore: getFirestore(),

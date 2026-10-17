@@ -361,3 +361,20 @@ test('an unexpected callable failure is logged without request data and stays ge
     fields: { errorName: 'Error', errorCode: 7, errorMessage: '7 PERMISSION_DENIED: missing permission' },
   }]);
 });
+
+test('the default Admin app is created even when another named app already exists', async () => {
+  const { getApp, getApps, initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { ensureDefaultApp } = await import('../src/index.js');
+  // firebase-functions creates its own named app to verify ID tokens in a
+  // deployed runtime, before any callable body runs.
+  const sdkApp = initializeApp({ projectId: 'demo-lda-inventory' }, '__FIREBASE_FUNCTIONS_SDK__');
+  try {
+    ensureDefaultApp();
+    assert.equal(getApp().name, '[DEFAULT]');
+    ensureDefaultApp();
+    assert.equal(getApps().filter((app) => app.name === '[DEFAULT]').length, 1);
+  } finally {
+    await deleteApp(sdkApp);
+    if (getApps().some((app) => app.name === '[DEFAULT]')) await deleteApp(getApp());
+  }
+});
