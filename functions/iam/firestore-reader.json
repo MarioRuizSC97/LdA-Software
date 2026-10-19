@@ -1,0 +1,10 @@
+{
+  "title": "Functions Firestore reader",
+  "description": "Candidate runtime role: document reads, queries and read-only transactions. Not applied.",
+  "stage": "GA",
+  "includedPermissions": [
+    "datastore.databases.get",
+    "datastore.entities.get",
+    "datastore.entities.list"
+  ]
+}

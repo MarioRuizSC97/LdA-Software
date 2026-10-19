@@ -2,6 +2,7 @@ import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as logger from 'firebase-functions/logger';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { callableRuntimeOptions } from './runtime-identity.js';
 
 import {
   CatalogError,
@@ -72,7 +73,7 @@ export const LOCAL_WEB_ORIGINS = [
  * initialization, so a function copied to any other project never connects.
  */
 export const createProduct = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('createProduct', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalCatalogEmulator();
@@ -97,7 +98,7 @@ export const createProduct = onCall(
 );
 
 export const setProductPrice = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('setProductPrice', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalPricingEmulator();
@@ -122,7 +123,7 @@ export const setProductPrice = onCall(
 );
 
 export const submitSale = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('submitSale', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalSalesEmulator();
@@ -157,13 +158,14 @@ function reasonedHttpsError(error) {
 
 /** Read-only cart quote: exactly what submitSale would charge right now. */
 export const quoteSale = localSaleCallable(
+  'quoteSale',
   'sales are restricted to the local demo emulator',
   (firestore) => createSaleQuoteService({ firestore }),
   'sale quote is temporarily unavailable',
 );
 
 export const stockIntake = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('stockIntake', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -194,7 +196,7 @@ export const stockIntake = onCall(
  * other error is masked as an internal fault.
  */
 export const transferInventory = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('transferInventory', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -227,7 +229,7 @@ export const transferInventory = onCall(
  * transfer audit server-side before writing the per-seller marker.
  */
 export const markTransferNoticeRead = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('markTransferNoticeRead', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -257,17 +259,18 @@ export const markTransferNoticeRead = onCall(
  * request.auth assigns the seller and branch. Services translate calculation
  * errors into SaleError, so anything else is an internal fault and is masked.
  */
-function saleCorrectionCallable(createOperation, unavailableMessage) {
+function saleCorrectionCallable(functionName, createOperation, unavailableMessage) {
   return localSaleCallable(
+    functionName,
     'sale corrections are restricted to the local demo emulator',
     createOperation,
     unavailableMessage,
   );
 }
 
-function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
+function localSaleCallable(functionName, guardMessage, createOperation, unavailableMessage) {
   return onCall(
-    { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+    callableRuntimeOptions(functionName, LOCAL_WEB_ORIGINS),
     async (request) => {
       try {
         assertLocalSalesEmulator();
@@ -288,26 +291,31 @@ function localSaleCallable(guardMessage, createOperation, unavailableMessage) {
 }
 
 export const findCorrectableSale = saleCorrectionCallable(
+  'findCorrectableSale',
   (firestore) => createSaleLookupService({ firestore }).findSale,
   'sale lookup is temporarily unavailable',
 );
 
 export const listRecentCorrectableSales = saleCorrectionCallable(
+  'listRecentCorrectableSales',
   (firestore) => createSaleLookupService({ firestore }).listRecentSales,
   'recent sales lookup is temporarily unavailable',
 );
 
 export const submitSaleReturn = saleCorrectionCallable(
+  'submitSaleReturn',
   (firestore) => createSaleReturnService({ firestore }),
   'sale return is temporarily unavailable',
 );
 
 export const submitSaleReplacement = saleCorrectionCallable(
+  'submitSaleReplacement',
   (firestore) => createSaleReplacementService({ firestore }),
   'sale replacement is temporarily unavailable',
 );
 
 export const submitSaleExchange = saleCorrectionCallable(
+  'submitSaleExchange',
   (firestore) => createSaleExchangeService({ firestore }),
   'sale exchange is temporarily unavailable',
 );
@@ -318,11 +326,13 @@ export const submitSaleExchange = saleCorrectionCallable(
  * callable per kind, mirroring the submits and their exact request shapes.
  */
 export const previewSaleReturn = saleCorrectionCallable(
+  'previewSaleReturn',
   (firestore) => createSaleReturnPreviewService({ firestore }),
   'sale return preview is temporarily unavailable',
 );
 
 export const previewSaleExchange = saleCorrectionCallable(
+  'previewSaleExchange',
   (firestore) => createSaleExchangePreviewService({ firestore }),
   'sale exchange preview is temporarily unavailable',
 );
@@ -334,7 +344,7 @@ export const previewSaleExchange = saleCorrectionCallable(
  * The branch always comes from the target's trusted Auth claims.
  */
 export const setSellerProfile = onCall(
-  { region: 'us-south1', cors: LOCAL_WEB_ORIGINS },
+  callableRuntimeOptions('setSellerProfile', LOCAL_WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalSellerProfilesEmulator();
