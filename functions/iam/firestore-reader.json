@@ -1,6 +1,6 @@
 {
   "title": "Functions Firestore reader",
-  "description": "Candidate runtime role: document reads, queries and read-only transactions. Not applied.",
+  "description": "Functions runtime role: document reads, queries and read-only transactions.",
   "stage": "GA",
   "includedPermissions": [
     "datastore.databases.get",

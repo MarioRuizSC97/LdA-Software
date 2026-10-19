@@ -1,7 +1,8 @@
 import { DEPLOYED_PROJECT_ID } from './runtime-project.js';
 
-// Planned identities only. Provisioning and deployment require separate approval;
-// see ../iam/README.md. This module never creates credentials or contacts IAM.
+// Runtime identities provisioned in lda-inventory-dev-mx; deployment requires
+// separate approval, see ../iam/README.md. This module never creates credentials
+// or contacts IAM.
 const ACCOUNT_BY_FUNCTION = Object.freeze({
   quoteSale: 'reader',
   findCorrectableSale: 'reader',

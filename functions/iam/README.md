@@ -1,9 +1,26 @@
-# Functions runtime identities — local preparation only
+# Functions runtime identities
 
-**Not provisioned, not granted, not deployed.** The source now declares planned
-service accounts. Do not deploy this tree until the identities exist, their
-candidate roles have been validated, and the owner explicitly approves rollout.
-These files do not create accounts, roles, bindings, keys, or credentials.
+**Provisioned in `lda-inventory-dev-mx` on 2026-10-19; not deployed yet.** The
+deployed callables still run as the default compute account until this tree is
+deployed. Roll out with an owner-approved pilot first (gates below). These files
+do not create accounts, roles, bindings, keys, or credentials.
+
+## Provisioned state
+
+| Custom role ID | Source file | Bound to |
+| --- | --- | --- |
+| `functionsFirestoreReader` | `firestore-reader.json` | `lda-functions-reader` |
+| `functionsFirestoreWriter` | `firestore-writer.json` | `lda-functions-writer`, `lda-functions-profiles` |
+| `functionsAuthLookup` | `auth-lookup.json` | `lda-functions-profiles` |
+
+Roles are project-level custom roles (`projects/lda-inventory-dev-mx/roles/<id>`),
+bound at project scope without conditions. The deploying user holds
+`roles/iam.serviceAccountUser` on each of the three accounts only. No JSON keys
+exist. The default compute account and its roles were not changed.
+
+After editing a role file, apply it with
+`gcloud iam roles update <id> --project=lda-inventory-dev-mx --file=<file>`.
+Deleted custom role IDs cannot be reused for 37 days; update instead.
 
 ## Target and mapping
 
@@ -23,11 +40,11 @@ project/emulator guards, and business handlers are unchanged. Importing the
 configuration only builds SDK descriptors; it does not impersonate an account.
 Local emulators do **not** enforce these IAM roles.
 
-The JSON files are **candidate custom-role definitions**, not predefined roles or
-an applied IAM policy. Role IDs, binding scope, permission support, inherited
-access and effective permissions must be checked before provisioning. `stage: GA`
-is role-definition metadata, not proof of approval or successful validation.
-The source mapping does not itself grant any of these permissions.
+The JSON files are the **source of the custom-role definitions** listed above.
+GCP accepted all permissions on creation, but effective access (including
+denials) is only proven by the pilot in gate 3. `stage: GA` is role-definition
+metadata, not proof of approval or successful validation. The source mapping
+does not itself grant any of these permissions.
 
 ## Why these permissions
 

@@ -1,6 +1,6 @@
 {
   "title": "Functions Firestore writer",
-  "description": "Candidate runtime role: document reads, create/update and transactions, without delete. Not applied.",
+  "description": "Functions runtime role: document reads, create/update and transactions, without delete.",
   "stage": "GA",
   "includedPermissions": [
     "datastore.databases.get",
