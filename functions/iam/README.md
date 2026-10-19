@@ -1,9 +1,8 @@
 # Functions runtime identities
 
-**Provisioned in `lda-inventory-dev-mx` on 2026-10-19; not deployed yet.** The
-deployed callables still run as the default compute account until this tree is
-deployed. Roll out with an owner-approved pilot first (gates below). These files
-do not create accounts, roles, bindings, keys, or credentials.
+**Provisioned and deployed in `lda-inventory-dev-mx` on 2026-10-19.** All 15
+callables run as the accounts below; none runs as the default compute account.
+These files do not create accounts, roles, bindings, keys, or credentials.
 
 ## Provisioned state
 
@@ -16,7 +15,16 @@ do not create accounts, roles, bindings, keys, or credentials.
 Roles are project-level custom roles (`projects/lda-inventory-dev-mx/roles/<id>`),
 bound at project scope without conditions. The deploying user holds
 `roles/iam.serviceAccountUser` on each of the three accounts only. No JSON keys
-exist. The default compute account and its roles were not changed.
+exist.
+
+The default compute account (`<project-number>-compute@developer.gserviceaccount.com`)
+is the Cloud Build service account for Functions deploys and no callable uses it.
+Its only role is `roles/cloudbuild.builds.builder`; `roles/editor` was removed on
+2026-10-19 after a no-change redeploy confirmed that builds still succeed. If a
+build later fails on permissions, check this account first. The Artifact Registry
+repository `gcf-artifacts` (`us-south1`) keeps the Firebase cleanup policy that
+deletes build images older than one day, so old revisions may not be restorable
+by traffic rollback; redeploy from Git instead.
 
 After editing a role file, apply it with
 `gcloud iam roles update <id> --project=lda-inventory-dev-mx --file=<file>`.
@@ -82,7 +90,14 @@ requests, start emulators, or create users. It is separate from the existing
 These checks prove configuration wiring and regression behavior, **not** actual
 cloud IAM enforcement or equivalence to the currently deployed source.
 
-## Owner-approved rollout gates — not executed
+## Owner-approved rollout gates
+
+Executed on 2026-10-19: the deployed source matched `abd0df6`, so each deploy only
+changed the runtime account; `quoteSale` ran as a pilot, then the other read
+callables, then the writers and `setSellerProfile`, each verified in production.
+Denials (gate 3) were checked by static analysis of the project IAM policy, which
+has no inherited or broad bindings, not by live denied calls. Keep these gates for
+any future identity or role change.
 
 1. Record the actual deployed source/configuration, runtime account and rollback
    version for each function. Local Git HEAD alone is not deployed-source
@@ -105,7 +120,7 @@ cloud IAM enforcement or equivalence to the currently deployed source.
    invocation policy, or provisioning flows as part of this identity migration.
 5. On failure, stop the rollout and restore the recorded, verified prior source
    and account configuration. Keep the old account and bindings available for
-   this rollback. Removing Editor from the old shared account is a **separate**
+   this rollback. Changing roles of the old shared account is a **separate**
    decision, only after checking all other consumers; do not break build or
    platform service accounts to harden the Functions runtime.
 
