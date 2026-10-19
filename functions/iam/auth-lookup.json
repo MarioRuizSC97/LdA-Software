@@ -1,0 +1,8 @@
+{
+  "title": "Functions Auth user lookup",
+  "description": "Functions runtime role: user lookup for setSellerProfile only. No Auth mutations.",
+  "stage": "GA",
+  "includedPermissions": [
+    "firebaseauth.users.get"
+  ]
+}
