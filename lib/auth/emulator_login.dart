@@ -6,6 +6,7 @@ import '../app/backend_environment.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import '../catalog/product_qr_scan.dart';
 import '../catalog/stock_intake.dart';
 import '../corrections/correction_draft.dart';
 import '../corrections/correction_receipt.dart';
@@ -1069,6 +1070,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         session,
       );
       final Widget page = AuthenticatedCatalogPage(
+        qrScan: productQrScanSupported ? showProductQrScanner : null,
         key: ValueKey<String>(
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),

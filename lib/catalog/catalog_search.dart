@@ -23,6 +23,10 @@ const ValueKey<String> catalogSearchClearKey = ValueKey<String>(
   'catalog-search-clear',
 );
 
+const ValueKey<String> catalogSearchScanKey = ValueKey<String>(
+  'catalog-search-scan',
+);
+
 /// Label announced for the search input, also used as its visible label.
 const String catalogSearchLabel = 'Buscar por nombre o código';
 
@@ -116,12 +120,17 @@ class CatalogSearchField extends StatelessWidget {
     required this.controller,
     required this.onChanged,
     required this.onClear,
+    this.onScan,
     super.key,
   });
 
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
+
+  /// When set, a camera entry point is offered next to the field. The caller
+  /// decides that, so a platform without a camera route never shows one.
+  final VoidCallback? onScan;
 
   bool get _hasQuery => controller.text.trim().isNotEmpty;
 
@@ -146,7 +155,14 @@ class CatalogSearchField extends StatelessWidget {
                 tooltip: 'Limpiar búsqueda',
                 onPressed: onClear,
               )
-            : null,
+            : onScan == null
+            ? null
+            : IconButton(
+                key: catalogSearchScanKey,
+                icon: const Icon(Icons.qr_code_scanner),
+                tooltip: 'Escanear código QR',
+                onPressed: onScan,
+              ),
       ),
     );
   }

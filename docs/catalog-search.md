@@ -45,8 +45,44 @@ using these keys, declared in `lib/catalog/catalog_search.dart`:
 - `catalogSearchLabel` — `Buscar por nombre o código`, the visible label and the
   announced semantics label.
 
+## Scanning the product QR with the camera
+
+On Android and iOS the search field offers a camera entry point
+(`catalog-search-scan`). One scan is enough: the camera closes, the payload is
+typed into the search field and the existing matcher filters the list, so a
+scanned code and a typed code behave identically. Web and desktop show the
+typed search only.
+
+A product QR carries the internal code (`lib/catalog/product_qr.dart`,
+`ProductQr.payloadFor`), which is exactly what the search matches. The scanner
+decodes QR codes only (`BarcodeFormat.qrCode`), so a barcode printed on
+packaging is reported as "El código leído no es un QR de producto" and the
+camera stays open instead of silently filtering the list.
+
+Permission and hardware problems are explained in Spanish and always leave a
+way out:
+
+| Situation | Message |
+| --- | --- |
+| Camera starting | `Encendiendo la cámara…` |
+| Permission denied | `No se permitió el acceso a la cámara. Actívalo en Ajustes para poder escanear códigos QR.` |
+| No camera on the device | `Este dispositivo no tiene una cámara disponible.` |
+| Code read is not a QR | `El código leído no es un QR de producto.` (the camera stays open) |
+
+Platform setup:
+
+- **iOS**: `NSCameraUsageDescription` in `ios/Runner/Info.plist`.
+- **Android**: the `mobile_scanner` plugin merges `CAMERA` and
+  `<uses-feature android:name="android.hardware.camera" android:required="false"/>`;
+  nothing to declare in the app manifest. The **bundled** ML Kit barcode model
+  is used (no `dev.steenbakker.mobile_scanner.useUnbundled` flag), so scanning
+  works offline and on devices without Google Play Services, at the cost of a
+  larger APK.
+- Cancelling, or a scan that yields nothing, leaves the search untouched.
+
 ## Out of scope
 
-Camera QR scanning for the same search is tracked as T7 of
-`odd/tasks/v1-0-ui.md` (new dependency plus camera permissions). Advanced
-filters (price, stock, branch) are a future release.
+Advanced filters (price, stock, branch) are a future release. Scanning from a
+photo in the gallery is not offered. Real camera behaviour on a device is
+verified manually; the automated tests drive the sheet through a fake camera so
+no test needs a lens.

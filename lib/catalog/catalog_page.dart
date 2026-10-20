@@ -21,6 +21,7 @@ import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'catalog_search.dart';
+import 'product_qr_scan.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
 import 'product_qr.dart';
@@ -42,10 +43,19 @@ typedef StockIntakeDraftLookup = StockIntakeDraft? Function(
 );
 
 class CatalogPage extends StatefulWidget {
-  const CatalogPage({required this.repository, this.statusLabel, super.key});
+  const CatalogPage({
+    required this.repository,
+    this.statusLabel,
+    this.qrScan,
+    super.key,
+  });
 
   final CatalogRepository repository;
   final String? statusLabel;
+
+  /// Opens the product QR camera and returns the code to search for. It is
+  /// offered only on Android and iOS; web and desktop keep the typed search.
+  final ProductQrScanOpener? qrScan;
 
   @override
   State<CatalogPage> createState() => _CatalogPageState();
@@ -79,6 +89,7 @@ class _CatalogPageState extends State<CatalogPage> {
   }
 
   Widget _catalogList(List<CatalogProduct> products) => _CatalogList(
+    qrScan: widget.qrScan,
     items: products
         .map(
           (CatalogProduct product) =>
@@ -157,6 +168,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.unresolvedTransferDraft,
     this.createTransferId,
     this.transferNotices,
+    this.qrScan,
     super.key,
   });
 
@@ -203,6 +215,10 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   /// the badge entry and the inbox. The controller belongs to the page so its
   /// streams stay alive while the seller navigates inside the shell.
   final TransferNoticeControllerFactory? transferNotices;
+
+  /// Opens the product QR camera and returns the code to search for. It is
+  /// offered only on Android and iOS; web and desktop keep the typed search.
+  final ProductQrScanOpener? qrScan;
 
   @override
   State<AuthenticatedCatalogPage> createState() =>
@@ -2161,6 +2177,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
     if (items.isEmpty) return const _EmptyCatalog();
     return _CatalogList(
+      qrScan: widget.qrScan,
       items: items,
       role: widget.session.role,
       branchChoices: _snapshot!.branchChoices,
@@ -2667,6 +2684,7 @@ class _CatalogList extends StatefulWidget {
     this.onConfigurePricing,
     this.onRecordIntake,
     this.saleAction,
+    this.qrScan,
   });
 
   final List<CatalogItem> items;
@@ -2676,6 +2694,8 @@ class _CatalogList extends StatefulWidget {
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
   final _SaleActionBuilder? saleAction;
+
+  final ProductQrScanOpener? qrScan;
 
   @override
   State<_CatalogList> createState() => _CatalogListState();
@@ -2697,6 +2717,20 @@ class _CatalogListState extends State<_CatalogList> {
   void _clearSearch() {
     _search.clear();
     setState(() => _query = '');
+  }
+
+  /// Reads one product QR and types its payload into the search field, so the
+  /// scanned code goes through the same matcher as a typed one.
+  Future<void> _scanSearch() async {
+    final ProductQrScanOpener? opener = widget.qrScan;
+    if (opener == null) return;
+    final String? scanned = await opener(context);
+    if (!mounted || scanned == null || scanned.isEmpty) return;
+    _search.value = TextEditingValue(
+      text: scanned,
+      selection: TextSelection.collapsed(offset: scanned.length),
+    );
+    setState(() => _query = scanned);
   }
 
   @override
@@ -2731,6 +2765,9 @@ class _CatalogListState extends State<_CatalogList> {
                   controller: _search,
                   onChanged: _onSearchChanged,
                   onClear: _clearSearch,
+                  onScan: widget.qrScan == null || !productQrScanSupported
+                      ? null
+                      : _scanSearch,
                 ),
               ),
             ),
