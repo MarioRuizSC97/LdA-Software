@@ -999,7 +999,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: enabled ? _goBack : null,
                     icon: const Icon(Icons.arrow_back),
                   ),
-                if (!mobilePlatform || panelOpen)
+                // "Inicio" appears only while a panel is open, on every
+                // platform: at the main panel the home icon is redundant
+                // (S2, extended to web/desktop by S9).
+                if (panelOpen)
                   IconButton(
                     key: const ValueKey<String>('shell-home'),
                     tooltip: 'Inicio',
@@ -1023,30 +1026,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
             ),
-          if (noticeController != null)
+          // Transfer notices (S10) live in the overflow menu wherever that
+          // menu exists — always on Android/iOS, on web/desktop when the bar
+          // is compact — as its first entry. The wide web/desktop bar keeps
+          // its own icon.
+          if (noticeController != null && !menuActions)
             IconButton(
               key: const ValueKey<String>('notices-open'),
               tooltip: 'Avisos de traslados',
               onPressed: showNotices ? null : _showNotices,
-              // Screen readers hear the badge state in words, not the bare
-              // count or the '!' glyph.
-              icon: Semantics(
-                label: unreadNotices == null
-                    ? 'sin confirmar'
-                    : unreadNotices > 0
-                    ? '$unreadNotices sin leer'
-                    : null,
-                child: ExcludeSemantics(
-                  child: Badge(
-                    isLabelVisible: unreadNotices == null || unreadNotices > 0,
-                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                    backgroundColor: unreadNotices == null
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    child: const Icon(Icons.inbox_outlined),
-                  ),
-                ),
-              ),
+              icon: _noticeBadge(context, unreadNotices),
             ),
           if (movements != null && !compactBar)
             TextButton.icon(
@@ -1068,10 +1057,40 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             PopupMenuButton<VoidCallback>(
               key: const ValueKey<String>('shell-more'),
               // Three bars on mobile (S2); web/desktop keeps the three dots.
-              icon: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
+              // The unread-notice badge rides on the menu icon itself, and
+              // screen readers hear the unread notices named on the button.
+              icon: Semantics(
+                label: unreadNotices == null
+                    ? 'sin confirmar'
+                    : unreadNotices > 0
+                    ? 'Avisos de traslados: $unreadNotices sin leer'
+                    : null,
+                child: ExcludeSemantics(
+                  child: Badge(
+                    isLabelVisible: unreadNotices == null || unreadNotices > 0,
+                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+                    backgroundColor: unreadNotices == null
+                        ? Theme.of(context).colorScheme.surfaceContainerHighest
+                        : null,
+                    child: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
+                  ),
+                ),
+              ),
               onSelected: (VoidCallback action) => action(),
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<VoidCallback>>[
+                    // First entry for the fastest access (S10); the count on
+                    // the item is read when the menu opens.
+                    if (noticeController != null)
+                      PopupMenuItem<VoidCallback>(
+                        key: const ValueKey<String>('notices-open'),
+                        enabled: !showNotices,
+                        value: _showNotices,
+                        child: ListTile(
+                          leading: _noticeBadge(context, unreadNotices),
+                          title: const Text('Avisos de traslados'),
+                        ),
+                      ),
                     if (mobilePlatform)
                       PopupMenuItem<VoidCallback>(
                         enabled: !_loading,
@@ -2607,6 +2626,27 @@ void _validateBranchName(String? name) {
 
 /// Width of the required-error border, stronger than the 1.0 normal border.
 const double _errorBorderWidth = 2.0;
+
+/// Badge state shared by the wide-shell bar icon and the overflow menu entry
+/// (S10): the unread count, or the '!' glyph while the count is unconfirmed.
+/// Screen readers hear the state in words, never the bare count or glyph.
+Widget _noticeBadge(BuildContext context, int? unreadNotices) => Semantics(
+  label: unreadNotices == null
+      ? 'sin confirmar'
+      : unreadNotices > 0
+      ? '$unreadNotices sin leer'
+      : null,
+  child: ExcludeSemantics(
+    child: Badge(
+      isLabelVisible: unreadNotices == null || unreadNotices > 0,
+      label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+      backgroundColor: unreadNotices == null
+          ? Theme.of(context).colorScheme.surfaceContainerHighest
+          : null,
+      child: const Icon(Icons.inbox_outlined),
+    ),
+  ),
+);
 
 /// Shown when a create, pricing or intake request may or may not have landed.
 const String _uncertainOutcomeMessage =

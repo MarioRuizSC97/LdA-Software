@@ -3075,6 +3075,11 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // Notices live in the overflow menu (T10/S10); its items are built at
+      // open time.
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey<String>('notices-open')),
         findsOneWidget,

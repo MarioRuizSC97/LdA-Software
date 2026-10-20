@@ -170,7 +170,7 @@ void main() {
     expect(find.textContaining('Carrito vacío'), findsOneWidget);
   });
 
-  testWidgets('Agregar on a product in the cart edits that line', (
+  testWidgets('the quantity on a product in the cart edits that line', (
     WidgetTester tester,
   ) async {
     final FakeSaleCheckout sales = FakeSaleCheckout();
@@ -178,7 +178,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await _enterQuantity(tester, 'DEMO-PIN', '2');
-    await _tap(tester, _key('sale-add-DEMO-PIN'));
+    // T11/S11: once the product is in the cart the card shows the stepper
+    // instead of a second 'Agregar'; the typed edit is reached from the
+    // stepper's quantity control, which pre-fills the current quantity.
+    await _tap(tester, _key('sale-line-edit-DEMO-PIN'));
     final TextField field = tester.widget(_key('sale-quantity-DEMO-PIN'));
     expect(field.controller!.text, '2');
     expect(find.text('Actualizar cantidad'), findsOneWidget);
@@ -559,7 +562,9 @@ void main() {
     await tester.pumpWidget(_page(sales));
     await tester.pumpAndSettle();
     expect(find.textContaining('1 producto · 5.00 MXN'), findsOneWidget);
-    expect(_enabled(tester, _key('sale-add-DEMO-PIN')), isFalse);
+    // T11/S11: the in-cart product shows the (locked) stepper, not 'Agregar'.
+    expect(_key('sale-add-DEMO-PIN'), findsNothing);
+    expect(_enabled(tester, _key('sale-line-increment-DEMO-PIN')), isFalse);
     await _openCart(tester);
     expect(_key('sale-retry-submit'), findsOneWidget);
 

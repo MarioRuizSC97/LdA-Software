@@ -222,9 +222,8 @@ void main() {
       expect(_inAppBar(find.text('Movimientos')), findsOneWidget);
       expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
       expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);
-      // The main panel keeps its (disabled) Inicio button on desktop.
-      expect(_key('shell-home'), findsOneWidget);
-      expect(tester.widget<IconButton>(_key('shell-home')).onPressed, isNull);
+      // 'Inicio' is hidden at the main panel on every platform (S9, T10).
+      expect(_key('shell-home'), findsNothing);
       final Rect wideBar = tester.getRect(find.byType(AppBar));
       final Rect wideTitle = tester.getRect(find.text('LDA Inventory'));
       expect(wideTitle.center.dx, lessThan(wideBar.center.dx - 100));

@@ -105,17 +105,16 @@ Future<ProductCreationResult> _neverCreates(ProductCreationDraft draft) =>
     Completer<ProductCreationResult>().future;
 
 void main() {
-  testWidgets('at home Inicio is disabled and Volver is hidden', (
+  testWidgets('at home Inicio is hidden and Volver is hidden', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(_adminPage(createProduct: _neverCreates));
     await tester.pumpAndSettle();
 
-    expect(_home, findsOneWidget);
-    expect(_enabled(tester, _home), isFalse);
+    expect(_home, findsNothing);
     expect(_back, findsNothing);
-    // Desktop navigation: Inicio stays visible (disabled) at the main
-    // panel; on mobile it is hidden there (S2, mobile_app_bar_test.dart).
+    // 'Inicio' is hidden at the main panel on every platform (S9, T10); it
+    // appears next to Volver only while a panel is open.
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('Volver closes the top panel and reveals the one below it', (
@@ -138,10 +137,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(_creationIntro), findsNothing);
     expect(_back, findsNothing);
-    expect(_enabled(tester, _home), isFalse);
-    // Desktop navigation: the persistent (disabled) Inicio survives closing
-    // every panel; on mobile it disappears with the last panel (S2,
-    // mobile_app_bar_test.dart).
+    expect(_home, findsNothing);
+    // 'Inicio' disappears with the last panel on every platform (S9, T10).
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('Inicio closes every open panel at once', (
@@ -212,7 +209,7 @@ void main() {
   ) async {
     await tester.pumpWidget(_sellerPage());
     await tester.pumpAndSettle();
-    expect(_enabled(tester, _home), isFalse);
+    expect(_home, findsNothing);
 
     await tester.tap(find.byKey(const ValueKey<String>('corrections-open')));
     await tester.pumpAndSettle();
@@ -223,7 +220,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(CorrectionLookupView), findsNothing);
     expect(_back, findsNothing);
-    // Desktop navigation: Inicio exists (disabled) at the main panel; on
-    // mobile it is hidden there (S2, mobile_app_bar_test.dart).
+    expect(_home, findsNothing);
+    // 'Inicio' is hidden at the main panel on every platform (S9, T10).
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

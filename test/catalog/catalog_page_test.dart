@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -5248,17 +5247,23 @@ void main() {
         await tester.pumpWidget(appWithNotices(streams));
         await flush(tester);
 
-        // Confirmed zero: no badge label yet, but the entry exists.
+        // Confirmed zero: no badge label yet, but the entry exists in the
+        // overflow menu (T10/S10), whose items are built at open time.
         streams.emitMovements(<CatalogDocument>[]);
         streams.emitMarkers(<CatalogDocument>[]);
         await flush(tester);
+        await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         expect(
           find.byKey(const ValueKey<String>('notices-open')),
           findsOneWidget,
         );
         expect(find.text('1'), findsNothing);
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pumpAndSettle();
 
-        // A new arrival updates the badge live.
+        // A new arrival updates the badge on the menu icon live.
         streams.emitMovements(<CatalogDocument>[
           CatalogDocument(
             path: 'inventoryMovements/m1',
@@ -5266,7 +5271,13 @@ void main() {
           ),
         ]);
         await flush(tester);
-        expect(find.text('1'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey<String>('shell-more')),
+            matching: find.text('1'),
+          ),
+          findsOneWidget,
+        );
       },
     );
 
@@ -5278,25 +5289,58 @@ void main() {
       await tester.pumpWidget(appWithNotices(streams));
       await flush(tester);
       // Before both streams confirm, the count is unknown, never zero.
-      SemanticsNode entry() => tester.getSemantics(
-        find.byKey(const ValueKey<String>('notices-open')),
+      // The entry lives in the overflow menu (T10/S10); its items are built
+      // at open time, and the badge state rides on the menu icon too.
+      Future<void> openMenu() async {
+        await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await openMenu();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.bySemanticsLabel(RegExp('sin confirmar')),
+        ),
+        findsOneWidget,
       );
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, 'sin confirmar');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.text('Avisos de traslados'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
 
       streams.emitMovements(<CatalogDocument>[
         CatalogDocument(path: 'inventoryMovements/m1', data: leg('t-a', 'm1')),
       ]);
       streams.emitMarkers(<CatalogDocument>[]);
       await flush(tester);
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, '1 sin leer');
+      await openMenu();
+      expect(
+        find.bySemanticsLabel(RegExp('Avisos de traslados: 1 sin leer')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.bySemanticsLabel(RegExp('1 sin leer')),
+        ),
+        findsOneWidget,
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
 
       // Confirmed zero announces no unread state at all.
       streams.emitMarkers(<CatalogDocument>[streams.marker('t-a')]);
       await flush(tester);
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, isEmpty);
+      await openMenu();
+      expect(find.bySemanticsLabel(RegExp('sin confirmar')), findsNothing);
+      expect(find.bySemanticsLabel(RegExp('1 sin leer')), findsNothing);
       semantics.dispose();
     });
 
@@ -5322,6 +5366,10 @@ void main() {
       streams.emitMarkers(<CatalogDocument>[]);
       await flush(tester);
 
+      // The entry is the first item of the overflow menu (T10/S10).
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byKey(const ValueKey<String>('notices-open')));
       await tester.pumpAndSettle();
       expect(find.text('Avisos de traslados'), findsOneWidget);
@@ -5336,8 +5384,25 @@ void main() {
       streams.completeAck('t-a');
       await flush(tester);
       expect(find.text('Leído'), findsOneWidget);
-      // The badge clears once the ack settles.
-      expect(find.text('1'), findsNothing);
+      // The badge clears once the ack settles: no unread count on the menu
+      // icon, and none on the reopened menu item.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('shell-more')),
+          matching: find.text('1'),
+        ),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.text('1'),
+        ),
+        findsNothing,
+      );
     });
 
     testWidgets('removing the seam disposes the notice controller', (
