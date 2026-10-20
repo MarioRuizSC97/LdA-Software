@@ -311,6 +311,15 @@ class _SaleLineTile extends StatelessWidget {
   final SaleCartController controller;
   final SaleCartLine line;
 
+  void _step(int scaled) {
+    controller.saveEntry(
+      productId: line.productId,
+      name: line.name,
+      quantitySpec: line.quantitySpec,
+      quantity: formatScaledQuantity(scaled, line.quantitySpec.precision),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -324,6 +333,14 @@ class _SaleLineTile extends StatelessWidget {
         ? 'Calculando…'
         : '—';
     final bool editing = controller.editingProductId == line.productId;
+    // Step by one product unit, keeping fractional quantities exact. A
+    // quantity at or below one unit is removed instead of becoming zero.
+    final int unitScaled = BigInt.from(10)
+        .pow(line.quantitySpec.precision)
+        .toInt();
+    final bool removeOnDecrease = line.quantityScaled <= unitScaled;
+    final bool canIncrease =
+        line.quantityScaled <= maxSafeSaleInteger - unitScaled;
     return Card(
       key: ValueKey<String>('sale-line-${line.productId}'),
       margin: const EdgeInsets.only(bottom: 8),
@@ -363,29 +380,79 @@ class _SaleLineTile extends StatelessWidget {
             else
               Wrap(
                 spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  TextButton.icon(
-                    key: ValueKey<String>('sale-line-edit-${line.productId}'),
-                    onPressed: controller.canEdit
-                        ? () => controller.startEntry(line.productId)
-                        : null,
-                    icon: const Icon(Icons.edit_outlined),
-                    label: Text(
-                      'Editar',
-                      semanticsLabel: 'Editar cantidad de ${line.name}',
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: theme.colorScheme.outline),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        IconButton(
+                          key: ValueKey<String>(
+                            removeOnDecrease
+                                ? 'sale-line-remove-${line.productId}'
+                                : 'sale-line-decrement-${line.productId}',
+                          ),
+                          tooltip: removeOnDecrease
+                              ? 'Quitar ${line.name} del carrito'
+                              : 'Disminuir cantidad de ${line.name}',
+                          onPressed: !controller.canEdit
+                              ? null
+                              : removeOnDecrease
+                              ? () => controller.remove(line.productId)
+                              : () => _step(line.quantityScaled - unitScaled),
+                          icon: Icon(
+                            removeOnDecrease
+                                ? Icons.delete_outline
+                                : Icons.remove,
+                          ),
+                        ),
+                        Tooltip(
+                          message: 'Editar cantidad de ${line.name}',
+                          child: TextButton(
+                            key: ValueKey<String>(
+                              'sale-line-edit-${line.productId}',
+                            ),
+                            onPressed: controller.canEdit
+                                ? () => controller.startEntry(line.productId)
+                                : null,
+                            child: Text(
+                              line.quantity,
+                              semanticsLabel:
+                                  'Editar cantidad de ${line.name}: '
+                                  '${line.quantity} ${line.quantitySpec.unit}',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: ValueKey<String>(
+                            'sale-line-increment-${line.productId}',
+                          ),
+                          tooltip: 'Aumentar cantidad de ${line.name}',
+                          onPressed: controller.canEdit && canIncrease
+                              ? () => _step(line.quantityScaled + unitScaled)
+                              : null,
+                          icon: const Icon(Icons.add),
+                        ),
+                      ],
                     ),
                   ),
-                  TextButton.icon(
-                    key: ValueKey<String>('sale-line-remove-${line.productId}'),
-                    onPressed: controller.canEdit
-                        ? () => controller.remove(line.productId)
-                        : null,
-                    icon: const Icon(Icons.delete_outline),
-                    label: Text(
-                      'Quitar',
-                      semanticsLabel: 'Quitar ${line.name} del carrito',
+                  // Keep direct removal available for multi-unit lines too.
+                  if (!removeOnDecrease)
+                    IconButton(
+                      key: ValueKey<String>(
+                        'sale-line-remove-${line.productId}',
+                      ),
+                      tooltip: 'Quitar ${line.name} del carrito',
+                      onPressed: controller.canEdit
+                          ? () => controller.remove(line.productId)
+                          : null,
+                      icon: const Icon(Icons.delete_outline),
                     ),
-                  ),
                 ],
               ),
           ],
