@@ -272,12 +272,11 @@ void main() {
       await _type(tester, 'selecto');
       expect(find.text('Agua Mineral 1 L'), findsNothing);
 
-      await tester.tap(
-        find.descendant(
-          of: find.byType(AppBar),
-          matching: find.byIcon(Icons.refresh),
-        ),
-      );
+      // The default test platform is Android, where reload lives in the
+      // app bar menu (T2).
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Actualizar catálogo'));
       await tester.pumpAndSettle();
 
       expect(_searchFieldValue(tester), 'selecto');
