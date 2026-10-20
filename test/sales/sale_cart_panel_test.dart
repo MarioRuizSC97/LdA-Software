@@ -131,8 +131,8 @@ void main() {
     );
   });
 
-  testWidgets('Agregar with less than one unit in stock flags the line and '
-      'blocks charging', (WidgetTester tester) async {
+  testWidgets('Agregar with less than one loaded unit is disabled and '
+      'leaves the cart empty', (WidgetTester tester) async {
     final FakeSaleCheckout sales = FakeSaleCheckout()
       ..unavailable = <String>{'DEMO-RIBBON'};
     final _Loader loader = _Loader(
@@ -148,17 +148,14 @@ void main() {
     await tester.pumpWidget(_page(sales, loader: loader));
     await tester.pumpAndSettle();
 
-    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-
-    // saveEntry validates quantity, not stock. The quote must flag the
-    // one-unit line as unavailable rather than silently allowing a sale.
-    expect(tester.takeException(), isNull);
-    expect(sales.quotedCarts.single.lines.single.quantity, '1');
+    // S14 supersedes T13's acceptance of one unit above loaded stock.
+    expect(_enabled(tester, _key('sale-add-DEMO-RIBBON')), isFalse);
+    expect(find.text('Agotado'), findsWidgets);
+    expect(sales.quotedCarts, isEmpty);
     expect(_key('sale-quantity-DEMO-RIBBON'), findsNothing);
-    expect(_key('sale-line-edit-DEMO-RIBBON'), findsOneWidget);
+    expect(_key('sale-line-edit-DEMO-RIBBON'), findsNothing);
     await _openCart(tester);
-    expect(find.text('1.00 meter'), findsOneWidget);
-    expect(find.text('Sin existencias suficientes'), findsOneWidget);
+    expect(find.textContaining('El carrito está vacío.'), findsOneWidget);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
     expect(sales.submittedDrafts, isEmpty);
   });

@@ -653,11 +653,24 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       item.product,
   ];
 
+  int? _availableSaleStock(String productId) {
+    for (final CatalogItem item in _snapshot?.items ?? const <CatalogItem>[]) {
+      if (item.product.internalCode != productId) continue;
+      for (final CatalogHolding holding in item.holdings) {
+        if (holding.branchId == widget.session.branchId) {
+          return holding.quantityScaled;
+        }
+      }
+    }
+    return null;
+  }
+
   void _configureSale() {
     final SaleCheckout? checkout = widget.saleCheckout;
     _sale = widget.session.role == InventoryRole.seller && checkout != null
         ? SaleCartController(
             checkout: checkout,
+            availableScaled: _availableSaleStock,
             onCompleted: _saleCompleted,
             onReceiptPending: _saleReceiptPending,
           )
@@ -920,6 +933,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _snapshot = snapshot;
         _loading = false;
       });
+      // A refresh may reveal stock changes for an unchanged cart. Keep its
+      // quantities and let a fresh server quote decide availability.
+      if (_sale?.cart.isEmpty == false) _sale?.retryQuote();
       return snapshot;
     } catch (_) {
       if (!mounted || generation != _generation) return null;

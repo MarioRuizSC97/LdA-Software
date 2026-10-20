@@ -51,9 +51,13 @@ class SaleAddControl extends StatelessWidget {
       }
       // 'Agregar' adds one product unit and shows the stepper at once (S13);
       // a larger quantity is typed by tapping the stepper's quantity.
+      final bool inStock = controller.fitsLoadedStock(
+        productId,
+        BigInt.from(10).pow(product.quantitySpec.precision).toInt(),
+      );
       return OutlinedButton.icon(
         key: ValueKey<String>('sale-add-$productId'),
-        onPressed: controller.canEdit
+        onPressed: controller.canEdit && inStock
             ? () => controller.saveEntry(
                 productId: productId,
                 name: product.name,
@@ -63,8 +67,10 @@ class SaleAddControl extends StatelessWidget {
             : null,
         icon: const Icon(Icons.add_shopping_cart_outlined),
         label: Text(
-          'Agregar',
-          semanticsLabel: 'Agregar ${product.name} al carrito',
+          inStock ? 'Agregar' : 'Agotado',
+          semanticsLabel: inStock
+              ? 'Agregar ${product.name} al carrito'
+              : '${product.name}: Agotado',
         ),
       );
     },
@@ -103,8 +109,13 @@ class SaleLineStepper extends StatelessWidget {
         .pow(line.quantitySpec.precision)
         .toInt();
     final bool removeOnDecrease = line.quantityScaled <= unitScaled;
+    final bool stockAllowsIncrease = controller.fitsLoadedStock(
+      line.productId,
+      line.quantityScaled + unitScaled,
+    );
     final bool canIncrease =
-        line.quantityScaled <= maxSafeSaleInteger - unitScaled;
+        line.quantityScaled <= maxSafeSaleInteger - unitScaled &&
+        stockAllowsIncrease;
     // The compact product card (S4) can be far narrower than a cart line —
     // below the shell's compact-bar width the card grid is at most two
     // columns — so the controls shrink there instead of overflowing. The
@@ -177,7 +188,9 @@ class SaleLineStepper extends StatelessWidget {
               constraints: iconConstraints,
               padding: compact ? EdgeInsets.zero : null,
               key: ValueKey<String>('sale-line-increment-${line.productId}'),
-              tooltip: 'Aumentar cantidad de ${line.name}',
+              tooltip: stockAllowsIncrease
+                  ? 'Aumentar cantidad de ${line.name}'
+                  : 'No hay más existencias',
               onPressed: controller.canEdit && canIncrease
                   ? () => _step(line.quantityScaled + unitScaled)
                   : null,

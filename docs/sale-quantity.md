@@ -20,3 +20,21 @@ Changes recalculate the server quote; the displayed total is never computed by
 these controls. Quantity controls are disabled while a sale is being submitted
 or its outcome is unresolved. The plus button is also disabled when another
 whole unit would exceed the supported quantity limit.
+
+## Loaded branch stock (T14/S14)
+
+The seller's current catalog snapshot supplies a client-side stock limit at
+product precision. **+** is disabled with **No hay más existencias** when one
+more whole unit would exceed it. Typed quantities above the limit show
+**Solo hay 3 pieza en existencia.** (using the actual quantity and unit) and
+leave the cart unchanged. **Agregar** adds one unit immediately; when stock is
+below one whole unit, it is disabled and reads **Agotado**. A fractional amount
+can still be typed when editing an existing line.
+
+A catalog refresh updates the limit but never reduces or removes an existing
+cart line. The seller can type a smaller quantity or remove the line. Unknown
+stock (or a controller without a lookup) adds no client limit.
+
+The server quote remains authoritative: stock sold by another seller after the
+catalog loaded still produces **Sin existencias suficientes** and blocks
+charging. Quantity edits continue to request a new quote.
