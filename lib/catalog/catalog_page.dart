@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../app/backend_environment.dart';
@@ -866,6 +867,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool compactBar =
         MediaQuery.sizeOf(context).width <
         _compactShellWidth * MediaQuery.textScalerOf(context).scale(1);
+    // Mobile means an Android or iOS app build, never a web browser: a narrow
+    // web window must keep the desktop app bar even though a phone browser
+    // reports an Android/iOS platform (S2).
+    final TargetPlatform platform = Theme.of(context).platform;
+    final bool mobilePlatform =
+        !kIsWeb &&
+        (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
+    // On mobile the overflow menu always exists so Reload stays reachable at
+    // every window width; on web/desktop it appears only when compact.
+    final bool menuActions = mobilePlatform || compactBar;
     final VoidCallback? openCorrections = showCorrections || showTransfer
         ? null
         : _showCorrections;
@@ -882,10 +893,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
+        // The title centers on Android and iOS only (S2); desktop and web
+        // keep Flutter's platform default at every window width.
+        centerTitle: mobilePlatform ? true : null,
         // Navigation lives in the leading slot: it has its own width, so it
         // never crowds the action row or adds height above a form on a
         // narrow phone. "Volver" (left) appears only while a panel is open;
-        // "Inicio" sits to its right.
+        // "Inicio" sits to its right — on mobile only while a panel is open,
+        // because at the main panel the home icon is redundant (S2).
         leadingWidth: _openPanelClosers().isEmpty ? null : 104,
         leading: ListenableBuilder(
           listenable: Listenable.merge(<Listenable>[?sale]),
@@ -902,12 +917,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: enabled ? _goBack : null,
                     icon: const Icon(Icons.arrow_back),
                   ),
-                IconButton(
-                  key: const ValueKey<String>('shell-home'),
-                  tooltip: 'Inicio',
-                  onPressed: enabled ? _goHome : null,
-                  icon: const Icon(Icons.home_outlined),
-                ),
+                if (!mobilePlatform || panelOpen)
+                  IconButton(
+                    key: const ValueKey<String>('shell-home'),
+                    tooltip: 'Inicio',
+                    onPressed: enabled ? _goHome : null,
+                    icon: const Icon(Icons.home_outlined),
+                  ),
               ],
             );
           },
@@ -915,6 +931,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         title: _ShellTitle(
           session: widget.session,
           environment: widget.environment,
+          centered: mobilePlatform,
         ),
         actions: <Widget>[
           if (corrections != null && !compactBar)
@@ -956,18 +973,33 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               icon: const Icon(Icons.swap_vert),
               label: const Text('Movimientos'),
             ),
-          IconButton(
-            tooltip: 'Actualizar catálogo',
-            onPressed: _loading ? null : _requestCatalog,
-            icon: const Icon(Icons.refresh),
-          ),
-          if (compactBar)
+          // On mobile the refresh button leaves the bar (S2): Reload lives
+          // in the overflow menu below, so the bar spends no space on it.
+          // Desktop and web keep the bar button at every window width.
+          if (!mobilePlatform)
+            IconButton(
+              tooltip: 'Actualizar catálogo',
+              onPressed: _loading ? null : _requestCatalog,
+              icon: const Icon(Icons.refresh),
+            ),
+          if (menuActions)
             PopupMenuButton<VoidCallback>(
               key: const ValueKey<String>('shell-more'),
+              // Three bars on mobile (S2); web/desktop keeps the three dots.
+              icon: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
               onSelected: (VoidCallback action) => action(),
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<VoidCallback>>[
-                    if (corrections != null)
+                    if (mobilePlatform)
+                      PopupMenuItem<VoidCallback>(
+                        enabled: !_loading,
+                        value: _requestCatalog,
+                        child: const ListTile(
+                          leading: Icon(Icons.refresh),
+                          title: Text('Actualizar catálogo'),
+                        ),
+                      ),
+                    if (corrections != null && compactBar)
                       PopupMenuItem<VoidCallback>(
                         key: const ValueKey<String>('corrections-open'),
                         enabled: openCorrections != null,
@@ -977,7 +1009,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           title: Text('Correcciones'),
                         ),
                       ),
-                    if (movements != null)
+                    if (movements != null && compactBar)
                       PopupMenuItem<VoidCallback>(
                         key: const ValueKey<String>('movements-open'),
                         enabled: openMovements != null,
@@ -987,16 +1019,19 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           title: Text('Movimientos'),
                         ),
                       ),
-                    PopupMenuItem<VoidCallback>(
-                      value: widget.onLogout,
-                      child: const ListTile(
-                        leading: Icon(Icons.logout),
-                        title: Text('Cerrar sesión'),
+                    if (compactBar)
+                      PopupMenuItem<VoidCallback>(
+                        value: widget.onLogout,
+                        child: const ListTile(
+                          leading: Icon(Icons.logout),
+                          title: Text('Cerrar sesión'),
+                        ),
                       ),
-                    ),
                   ],
-            )
-          else ...<Widget>[
+            ),
+          // The inline logout keeps its place whenever the bar is wide enough
+          // for it — mobile only moved Reload out of the bar (S2c).
+          if (!compactBar) ...<Widget>[
             OutlinedButton(
               onPressed: widget.onLogout,
               child: const Text('Cerrar sesión'),
@@ -2431,10 +2466,18 @@ String _branchDisplayName(String branchId) {
 /// App title with a compact session line (role and branch, never the email)
 /// in place of a full-width session banner.
 class _ShellTitle extends StatelessWidget {
-  const _ShellTitle({required this.session, required this.environment});
+  const _ShellTitle({
+    required this.session,
+    required this.environment,
+    this.centered = false,
+  });
 
   final EmulatorSession session;
   final BackendEnvironment environment;
+
+  /// Whether the title and its session line center under the app bar's
+  /// centerTitle layout (Android and iOS only).
+  final bool centered;
 
   @override
   Widget build(BuildContext context) {
@@ -2446,7 +2489,10 @@ class _ShellTitle extends StatelessWidget {
     ].join(' · ');
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // Centered with the title on mobile (S2); left-aligned on desktop/web.
+      crossAxisAlignment: centered
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
       children: <Widget>[
         const Text('LDA Inventory'),
         Text(

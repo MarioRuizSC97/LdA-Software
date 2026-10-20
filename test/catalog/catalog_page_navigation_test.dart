@@ -114,7 +114,9 @@ void main() {
     expect(_home, findsOneWidget);
     expect(_enabled(tester, _home), isFalse);
     expect(_back, findsNothing);
-  });
+    // Desktop navigation: Inicio stays visible (disabled) at the main
+    // panel; on mobile it is hidden there (S2, mobile_app_bar_test.dart).
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('Volver closes the top panel and reveals the one below it', (
     WidgetTester tester,
@@ -137,7 +139,10 @@ void main() {
     expect(find.text(_creationIntro), findsNothing);
     expect(_back, findsNothing);
     expect(_enabled(tester, _home), isFalse);
-  });
+    // Desktop navigation: the persistent (disabled) Inicio survives closing
+    // every panel; on mobile it disappears with the last panel (S2,
+    // mobile_app_bar_test.dart).
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('Inicio closes every open panel at once', (
     WidgetTester tester,
@@ -218,5 +223,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(CorrectionLookupView), findsNothing);
     expect(_back, findsNothing);
-  });
+    // Desktop navigation: Inicio exists (disabled) at the main panel; on
+    // mobile it is hidden there (S2, mobile_app_bar_test.dart).
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

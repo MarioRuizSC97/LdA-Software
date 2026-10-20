@@ -13,9 +13,9 @@ Branch: feat/v1-0-ui (from main 7ccbf55). Tests: `flutter test`, `flutter analyz
 - S8. Visual polish. User: "Meterle algún diseño más elegante a la interfaz en general", reviewed live with the user's feedback.
 
 ## Tasks
-- [ ] T1 | S1 | inline | Session status: drop email, show branch + role compactly, collapsible.
-- [ ] T2 | S2 | inline | Mobile app bar: centered title, no home on main panel, Reload in menu, menu icon.
-- [ ] T3 | S3 | inline | Quantity stepper (trash/− qty +, typed quantity) in the sale cart.
+- [x] T1 | S1 | inline | Session status: drop email, show branch + role compactly in the app bar. Commit c47ca2e. See L7-L8.
+- [x] T2 | S2 | worker mvh4d2cd-1-f7a9 | Mobile app bar: centered title, no home on main panel, Reload in menu, menu icon. See L10.
+- [x] T3 | S3 | peer session 01a15a9b | Commit b6ff98a. Quantity stepper (trash/− qty +, typed quantity) in the sale cart. See L9.
 - [ ] T4 | S4 | inline | Product grid (2 columns mobile, 3 web) with name, stock, price.
 - [ ] T5 | S5 | inline | Product detail sheet (long-press + Detalles button), role-based fields.
 - [ ] T6 | S6 | inline | Inventory search by name and code (typed).
@@ -31,3 +31,6 @@ Branch: feat/v1-0-ui (from main 7ccbf55). Tests: `flutter test`, `flutter analyz
 - L5. Instead of unit editing, the 3 products' units (aut-opsm, aut-opcm, aut-brsm) were renamed to "pieza" in production in one atomic commit of 34 documents (2026-10-20T19:53:23Z); backup ~/lda-backups/unit-fix-2026-10-20/. User verified as seller (Oriente) and administrator.
 - L6 (user decision): seller branch name is derived from the branch id (`branch-oriente` -> `Sucursal Oriente`) rather than widening rules (sellers cannot read `branches/{id}`, firestore.rules:125). Design: the full-width banner is replaced by a session line under the app bar title (`Vendedor · Sucursal Oriente`; local emulator prefixed `Emulador local ·`), so no hide control is needed.
 - L7. T1 RED observed (4 new tests in test/catalog/session_status_test.dart fail: no `session-status` widget) -> GREEN 4/4, flutter analyze clean. Flutter binary: ~/develop/flutter/bin/flutter (not on PATH).
+- L8. T1 suite: 9 existing tests in test/auth/emulator_login_test.dart used the old banner text ('Autenticado localmente', 'Rol: ...', 'Sesión iniciada') as the signed-in marker; they now assert the `session-status` key or the new line, and the production test also asserts the email is hidden. integration_test/native_smoke_test.dart updated the same way (email now findsNothing); not run (needs a device/simulator). flutter test 1014/1014, analyze clean. Commit c47ca2e.
+- L9. T2 delegated to gentle-ai-worker task mvh4d2cd-1-f7a9 (surfaces: lib/catalog/catalog_page.dart, test/catalog/**, test/auth/**, integration_test/**). T3 taken by peer Pi session 01a15a9b after the user confirmed there ("Si dale papurri :)"); its surfaces: lib/sales/sale_cart_panel.dart, test/sales/sale_quantity_stepper_test.dart, sales docs; separate worktree/branch feat/v1-0-ui-t3 from c47ca2e; this session owns this document and its Engram mirror and integrates the peer commit.
+- L10. T2 by worker: on Android/iOS app builds (platform android/iOS and !kIsWeb) the title is centered, 'Inicio' shows only once a panel is open, 'Actualizar catálogo' moves into the 'shell-more' menu (always present on mobile, disabled while loading) and the menu icon is Icons.menu; web/desktop unchanged. RED 8 new tests in test/catalog/mobile_app_bar_test.dart; 12 existing shell tests that encode web/desktop layout pinned to macOS. T3 landed on feat/v1-0-ui as b6ff98a (peer). Parent check on b6ff98a + T2: flutter test 1028/1028, analyze clean. Not seen on a device yet. T6 (worktree feat/v1-0-ui-t6-search, 60d7af2) and T8 backend (worktree feat/v1-0-ui-t8, 9ae695c) were done by other sessions; pending integration review.

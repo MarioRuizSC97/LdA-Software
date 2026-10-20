@@ -676,61 +676,67 @@ void main() {
       expect(find.text('Coffee'), findsNothing);
       expect(find.textContaining('Último costo unitario:'), findsNothing);
     });
-    testWidgets('refresh replaces latest cost, clears stale states and role', (
-      WidgetTester tester,
-    ) async {
-      final _CatalogLoader loader = _CatalogLoader();
-      await tester.pumpWidget(
-        _authenticatedApp(session: _administrator, loader: loader.call),
-      );
-      loader.requests.last.complete(snapshot(cents: 345));
-      await tester.pumpAndSettle();
-      expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
-      for (final CatalogSnapshot next in <CatalogSnapshot>[
-        snapshot(cents: 678),
-        snapshot(available: false),
-        snapshot(),
-      ]) {
+    testWidgets(
+      'refresh replaces latest cost, clears stale states and role',
+      (WidgetTester tester) async {
+        final _CatalogLoader loader = _CatalogLoader();
+        await tester.pumpWidget(
+          _authenticatedApp(session: _administrator, loader: loader.call),
+        );
+        loader.requests.last.complete(snapshot(cents: 345));
+        await tester.pumpAndSettle();
+        expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
+        for (final CatalogSnapshot next in <CatalogSnapshot>[
+          snapshot(cents: 678),
+          snapshot(available: false),
+          snapshot(),
+        ]) {
+          await tester.tap(find.byTooltip('Actualizar catálogo'));
+          await tester.pump();
+          expect(find.textContaining('Último costo unitario:'), findsNothing);
+          expect(find.text('Costo no disponible'), findsNothing);
+          expect(find.text('Sin costo registrado'), findsNothing);
+          loader.requests.last.complete(next);
+          await tester.pumpAndSettle();
+          final String expected = !next.costsAvailable
+              ? 'Costo no disponible'
+              : next.costs.isEmpty
+              ? 'Sin costo registrado'
+              : 'Último costo unitario: 6.78 MXN';
+          expect(find.text(expected), findsOneWidget);
+          expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
+        }
         await tester.tap(find.byTooltip('Actualizar catálogo'));
         await tester.pump();
+        final Completer<CatalogSnapshot> stale = loader.requests.last;
+        await tester.pumpWidget(
+          _authenticatedApp(session: _seller, loader: loader.call),
+        );
+        await tester.pump();
+        stale.complete(snapshot(cents: 999));
+        loader.requests.last.complete(
+          _snapshot(
+            _coffee,
+            holdings: const [
+              CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Coffee'), findsOneWidget);
+        expect(find.text('Existencias: 0.00 kg'), findsOneWidget);
+        expect(find.text('Agotado'), findsOneWidget);
+        expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
         expect(find.textContaining('Último costo unitario:'), findsNothing);
         expect(find.text('Costo no disponible'), findsNothing);
         expect(find.text('Sin costo registrado'), findsNothing);
-        loader.requests.last.complete(next);
-        await tester.pumpAndSettle();
-        final String expected = !next.costsAvailable
-            ? 'Costo no disponible'
-            : next.costs.isEmpty
-            ? 'Sin costo registrado'
-            : 'Último costo unitario: 6.78 MXN';
-        expect(find.text(expected), findsOneWidget);
-        expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
-      }
-      await tester.tap(find.byTooltip('Actualizar catálogo'));
-      await tester.pump();
-      final Completer<CatalogSnapshot> stale = loader.requests.last;
-      await tester.pumpWidget(
-        _authenticatedApp(session: _seller, loader: loader.call),
-      );
-      await tester.pump();
-      stale.complete(snapshot(cents: 999));
-      loader.requests.last.complete(
-        _snapshot(
-          _coffee,
-          holdings: const [
-            CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
-          ],
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Coffee'), findsOneWidget);
-      expect(find.text('Existencias: 0.00 kg'), findsOneWidget);
-      expect(find.text('Agotado'), findsOneWidget);
-      expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-      expect(find.textContaining('Último costo unitario:'), findsNothing);
-      expect(find.text('Costo no disponible'), findsNothing);
-      expect(find.text('Sin costo registrado'), findsNothing);
-    });
+        // The refresh tests drive the desktop app-bar button (web/desktop
+        // keeps it); the mobile menu entry is covered in
+        // mobile_app_bar_test.dart.
+      },
+      // Desktop/web keeps the bar refresh button (S2).
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
   });
   group('creation pending draft authority', () {
     const ProductCreationDraft own = ProductCreationDraft(
@@ -1126,7 +1132,10 @@ void main() {
           findsOneWidget,
         );
         expect(loader.requests, hasLength(2));
+        // Desktop/web keeps the bar refresh button (S2); the mobile menu
+        // entry is covered in mobile_app_bar_test.dart.
       },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     );
 
     testWidgets('administrator to seller replacement clears branch reminders', (
@@ -1377,7 +1386,9 @@ void main() {
     expect(find.text('Coffee'), findsNothing);
     expect(find.text('Tea'), findsOneWidget);
     expect(find.text('Existencias: 4 piece'), findsOneWidget);
-  });
+    // Desktop/web keeps the bar refresh button (S2); the mobile menu entry
+    // is covered in mobile_app_bar_test.dart.
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('administrator sees named zero holdings and no-holdings state', (
     WidgetTester tester,
