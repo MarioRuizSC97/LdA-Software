@@ -7,6 +7,7 @@ import 'catalog/catalog_load_diagnostics.dart';
 import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
+import 'catalog/product_qr_scan.dart';
 import 'firebase/emulator_bootstrap.dart';
 import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
@@ -266,6 +267,7 @@ class LdaInventoryApp extends StatelessWidget {
       home: CatalogPage(
         repository: catalogRepository,
         statusLabel: statusLabel,
+        qrScan: productQrScanSupported ? showProductQrScanner : null,
       ),
     );
   }
