@@ -49,10 +49,17 @@ class SaleAddControl extends StatelessWidget {
       if (line != null) {
         return SaleLineStepper(controller: controller, line: line);
       }
+      // 'Agregar' adds one product unit and shows the stepper at once (S13);
+      // a larger quantity is typed by tapping the stepper's quantity.
       return OutlinedButton.icon(
         key: ValueKey<String>('sale-add-$productId'),
         onPressed: controller.canEdit
-            ? () => controller.startEntry(productId)
+            ? () => controller.saveEntry(
+                productId: productId,
+                name: product.name,
+                quantitySpec: product.quantitySpec,
+                quantity: '1',
+              )
             : null,
         icon: const Icon(Icons.add_shopping_cart_outlined),
         label: Text(

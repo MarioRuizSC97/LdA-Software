@@ -26,12 +26,15 @@ const EmulatorSession _administrator = EmulatorSession(
 );
 
 class _Loader {
+  _Loader({this.snapshot});
+
+  final CatalogSnapshot? snapshot;
   int calls = 0;
 
   Future<CatalogSnapshot> call(EmulatorSession session) async {
     calls += 1;
     return session.role == InventoryRole.seller
-        ? sellerSaleSnapshot()
+        ? snapshot ?? sellerSaleSnapshot()
         : CatalogSnapshot(const <CatalogItem>[]);
   }
 }
@@ -60,12 +63,15 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
 }
 
+/// Agregar saves one unit; other quantities are typed through the stepper.
 Future<void> _enterQuantity(
   WidgetTester tester,
   String productId,
   String quantity,
 ) async {
   await _tap(tester, _key('sale-add-$productId'));
+  if (quantity == '1') return;
+  await _tap(tester, _key('sale-line-edit-$productId'));
   await tester.enterText(_key('sale-quantity-$productId'), quantity);
   await _tap(tester, _key('sale-entry-save-$productId'));
 }
@@ -102,6 +108,61 @@ void main() {
     );
   });
 
+  testWidgets('Agregar adds one unit and shows the stepper without an entry', (
+    WidgetTester tester,
+  ) async {
+    final FakeSaleCheckout sales = FakeSaleCheckout();
+    await tester.pumpWidget(_page(sales));
+    await tester.pumpAndSettle();
+
+    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+
+    expect(sales.quotedCarts.single.lines.single.quantity, '1');
+    expect(_key('sale-quantity-DEMO-RIBBON'), findsNothing);
+    expect(_key('sale-add-DEMO-RIBBON'), findsNothing);
+    expect(_key('sale-line-remove-DEMO-RIBBON'), findsOneWidget);
+    expect(_key('sale-line-increment-DEMO-RIBBON'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: _key('sale-line-edit-DEMO-RIBBON'),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Agregar with less than one unit in stock flags the line and '
+      'blocks charging', (WidgetTester tester) async {
+    final FakeSaleCheckout sales = FakeSaleCheckout()
+      ..unavailable = <String>{'DEMO-RIBBON'};
+    final _Loader loader = _Loader(
+      snapshot: CatalogSnapshot(<CatalogItem>[
+        CatalogItem(
+          product: ribbonProduct,
+          holdings: <CatalogHolding>[
+            CatalogHolding(branchId: 'branch-north', quantityScaled: 50),
+          ],
+        ),
+      ]),
+    );
+    await tester.pumpWidget(_page(sales, loader: loader));
+    await tester.pumpAndSettle();
+
+    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+
+    // saveEntry validates quantity, not stock. The quote must flag the
+    // one-unit line as unavailable rather than silently allowing a sale.
+    expect(tester.takeException(), isNull);
+    expect(sales.quotedCarts.single.lines.single.quantity, '1');
+    expect(_key('sale-quantity-DEMO-RIBBON'), findsNothing);
+    expect(_key('sale-line-edit-DEMO-RIBBON'), findsOneWidget);
+    await _openCart(tester);
+    expect(find.text('1.00 meter'), findsOneWidget);
+    expect(find.text('Sin existencias suficientes'), findsOneWidget);
+    expect(_enabled(tester, _key('sale-charge')), isFalse);
+    expect(sales.submittedDrafts, isEmpty);
+  });
+
   testWidgets('an administrator never sees the cart even with a checkout', (
     WidgetTester tester,
   ) async {
@@ -121,8 +182,9 @@ void main() {
 
     await _enterQuantity(tester, 'DEMO-RIBBON', '2.5');
 
-    expect(sales.quotedCarts, hasLength(1));
-    expect(sales.quotedCarts.single.toQuoteRequest(), <String, Object?>{
+    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts.first.lines.single.quantity, '1');
+    expect(sales.quotedCarts.last.toQuoteRequest(), <String, Object?>{
       'invoiceRequested': false,
       'lines': <Object?>[
         <String, Object?>{'productId': 'DEMO-RIBBON', 'quantity': '2.5'},
@@ -138,37 +200,48 @@ void main() {
     expect(_enabled(tester, _key('sale-charge')), isTrue);
   });
 
-  testWidgets('invalid quantities show inline errors and never quote', (
-    WidgetTester tester,
-  ) async {
-    final FakeSaleCheckout sales = FakeSaleCheckout();
-    await tester.pumpWidget(_page(sales));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'invalid typed edits show inline errors without changing one-unit lines',
+    (WidgetTester tester) async {
+      final FakeSaleCheckout sales = FakeSaleCheckout();
+      await tester.pumpWidget(_page(sales));
+      await tester.pumpAndSettle();
 
-    final Map<String, String> ribbonCases = <String, String>{
-      '': 'Escribe una cantidad.',
-      '0': 'La cantidad debe ser mayor que cero.',
-      '1.234': 'Usa como máximo 2 decimales.',
-      'abc': 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
-      '-1': 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
-      '99999999999999999': 'La cantidad es demasiado grande.',
-    };
-    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-    for (final MapEntry<String, String> entry in ribbonCases.entries) {
-      await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), entry.key);
-      await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
-      expect(find.text(entry.value), findsOneWidget, reason: entry.key);
-    }
-    await _tap(tester, _key('sale-entry-cancel-DEMO-RIBBON'));
+      final Map<String, String> ribbonCases = <String, String>{
+        '': 'Escribe una cantidad.',
+        '0': 'La cantidad debe ser mayor que cero.',
+        '1.234': 'Usa como máximo 2 decimales.',
+        'abc': 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
+        '-1': 'Escribe una cantidad válida, por ejemplo 2 o 1.5.',
+        '99999999999999999': 'La cantidad es demasiado grande.',
+      };
+      await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+      await _tap(tester, _key('sale-line-edit-DEMO-RIBBON'));
+      for (final MapEntry<String, String> entry in ribbonCases.entries) {
+        await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), entry.key);
+        await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+        expect(find.text(entry.value), findsOneWidget, reason: entry.key);
+        expect(sales.quotedCarts, hasLength(1));
+        expect(sales.quotedCarts.single.lines.single.quantity, '1');
+      }
+      await _tap(tester, _key('sale-entry-cancel-DEMO-RIBBON'));
 
-    await _enterQuantity(tester, 'DEMO-PIN', '1.5');
-    expect(
-      find.text('Este producto solo admite cantidades enteras.'),
-      findsOneWidget,
-    );
-    expect(sales.quotedCarts, isEmpty);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
-  });
+      await _enterQuantity(tester, 'DEMO-PIN', '1.5');
+      expect(
+        find.text('Este producto solo admite cantidades enteras.'),
+        findsOneWidget,
+      );
+      expect(sales.quotedCarts, hasLength(2));
+      expect(
+        sales.quotedCarts.last.lines.map((line) => line.quantity),
+        <String>['1', '1'],
+      );
+      await _tap(tester, _key('sale-entry-cancel-DEMO-PIN'));
+      await _openCart(tester);
+      expect(find.text('1.00 meter'), findsOneWidget);
+      expect(find.text('1 piece'), findsOneWidget);
+    },
+  );
 
   testWidgets('the quantity on a product in the cart edits that line', (
     WidgetTester tester,
@@ -188,7 +261,7 @@ void main() {
     await tester.enterText(_key('sale-quantity-DEMO-PIN'), '4');
     await _tap(tester, _key('sale-entry-save-DEMO-PIN'));
 
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(sales.quotedCarts.last.lineCount, 1);
     expect(sales.quotedCarts.last.lines.single.quantity, '4');
     expect(find.textContaining('1 producto · 10.00 MXN'), findsOneWidget);
@@ -208,17 +281,17 @@ void main() {
     await _tap(tester, _key('sale-line-edit-DEMO-RIBBON'));
     await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '1');
     await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
-    expect(sales.quotedCarts, hasLength(3));
+    expect(sales.quotedCarts, hasLength(5));
     expect(find.text('1.00 meter'), findsOneWidget);
     expect(find.textContaining('17.50 MXN'), findsWidgets);
 
     await _tap(tester, _key('sale-line-remove-DEMO-RIBBON'));
-    expect(sales.quotedCarts, hasLength(4));
+    expect(sales.quotedCarts, hasLength(6));
     expect(_key('sale-line-DEMO-RIBBON'), findsNothing);
     expect(_key('sale-line-DEMO-PIN'), findsOneWidget);
 
     await _tap(tester, _key('sale-line-remove-DEMO-PIN'));
-    expect(sales.quotedCarts, hasLength(4));
+    expect(sales.quotedCarts, hasLength(6));
     expect(
       find.text('El carrito está vacío. Agrega productos desde el catálogo.'),
       findsOneWidget,
@@ -234,13 +307,14 @@ void main() {
     await _enterQuantity(tester, 'DEMO-RIBBON', '2.5');
     expect(find.textContaining('Calculando…'), findsOneWidget);
     await _enterQuantity(tester, 'DEMO-PIN', '3');
-    expect(sales.heldQuotes, hasLength(2));
+    expect(sales.heldQuotes, hasLength(4));
 
-    sales.heldQuotes[1].complete(sales.quoteNow(sales.quotedCarts[1]));
+    sales.heldQuotes[3].complete(sales.quoteNow(sales.quotedCarts[3]));
     await tester.pumpAndSettle();
     expect(find.textContaining('2 productos · 32.50 MXN'), findsOneWidget);
 
-    sales.heldQuotes[0].complete(sales.quoteNow(sales.quotedCarts[0]));
+    // The typed 2.5 quote is stale too, not just the initial one-unit quote.
+    sales.heldQuotes[1].complete(sales.quoteNow(sales.quotedCarts[1]));
     await tester.pumpAndSettle();
     expect(find.textContaining('2 productos · 32.50 MXN'), findsOneWidget);
     expect(find.textContaining('25.00 MXN'), findsNothing);
@@ -253,9 +327,9 @@ void main() {
 
     await _enterQuantity(tester, 'DEMO-RIBBON', '2.5');
     await _enterQuantity(tester, 'DEMO-PIN', '3');
-    sales.heldQuotes[1].complete(sales.quoteNow(sales.quotedCarts[1]));
+    sales.heldQuotes[3].complete(sales.quoteNow(sales.quotedCarts[3]));
     await tester.pumpAndSettle();
-    sales.heldQuotes[0].completeError(const SaleUncertainException());
+    sales.heldQuotes[1].completeError(const SaleUncertainException());
     await tester.pumpAndSettle();
 
     expect(find.textContaining('2 productos · 32.50 MXN'), findsOneWidget);
@@ -305,30 +379,33 @@ void main() {
     expect(find.textContaining('25.00 MXN'), findsWidgets);
 
     await _tap(tester, _key('sale-invoice-switch'));
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(sales.quotedCarts.last.invoiceRequested, isTrue);
     expect(find.textContaining('29.00 MXN'), findsWidgets);
     expect(find.text('IVA adicional'), findsOneWidget);
 
     await _tap(tester, _key('sale-invoice-switch'));
-    expect(sales.quotedCarts, hasLength(3));
+    expect(sales.quotedCarts, hasLength(4));
     expect(sales.quotedCarts.last.invoiceRequested, isFalse);
   });
 
   testWidgets('an uncertain quote offers Reintentar; a rejected one shows '
       'the server message', (WidgetTester tester) async {
     final FakeSaleCheckout sales = FakeSaleCheckout();
-    sales.quoteFailures.add(const SaleUncertainException());
     await tester.pumpWidget(_page(sales));
     await tester.pumpAndSettle();
-    await _enterQuantity(tester, 'DEMO-RIBBON', '2.5');
+    await _enterQuantity(tester, 'DEMO-RIBBON', '1');
+    sales.quoteFailures.add(const SaleUncertainException());
+    await _tap(tester, _key('sale-line-edit-DEMO-RIBBON'));
+    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2.5');
+    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
     expect(find.textContaining('Total no disponible'), findsOneWidget);
     await _openCart(tester);
     expect(find.text('No se pudo calcular el total'), findsOneWidget);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
 
     await _tap(tester, _key('sale-retry-quote'));
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(_enabled(tester, _key('sale-charge')), isTrue);
 
     sales.quoteFailures.add(
@@ -400,7 +477,7 @@ void main() {
     sales.priceDelta = 50;
     await _tap(tester, _key('sale-charge'));
 
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(
       find.text('El total cambió. Revisa el nuevo total y vuelve a cobrar.'),
       findsOneWidget,
@@ -434,7 +511,7 @@ void main() {
       find.text('No hay existencias suficientes para completar la venta.'),
       findsOneWidget,
     );
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(find.text('Sin existencias suficientes'), findsOneWidget);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
     expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
@@ -461,7 +538,7 @@ void main() {
       find.text('La venta fue rechazada: product does not exist'),
       findsOneWidget,
     );
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
     expect(_enabled(tester, _key('sale-charge')), isFalse);
     expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
 
@@ -497,7 +574,7 @@ void main() {
       find.text('La venta fue rechazada: $paymentMismatchMessage'),
       findsOneWidget,
     );
-    expect(sales.quotedCarts, hasLength(2));
+    expect(sales.quotedCarts, hasLength(3));
   });
 
   testWidgets('an uncertain sale locks the cart and retries the same key', (
@@ -619,7 +696,8 @@ void main() {
 
     expect(find.textContaining('Calculando…'), findsWidgets);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
-    sales.heldQuotes.single.complete(sales.quoteNow(sales.quotedCarts.single));
+    expect(sales.heldQuotes, hasLength(2));
+    sales.heldQuotes.last.complete(sales.quoteNow(sales.quotedCarts.last));
     await tester.pumpAndSettle();
     expect(_enabled(tester, _key('sale-charge')), isTrue);
   });

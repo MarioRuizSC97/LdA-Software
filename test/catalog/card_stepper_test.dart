@@ -48,19 +48,43 @@ Future<void> _tap(WidgetTester tester, String key) async {
   await tester.pumpAndSettle();
 }
 
-/// Adds [productId] from the card with a typed quantity, as today (T3
-/// hybrid): 'Agregar' opens the inline quantity entry.
+/// Adds [productId] from the card: 'Agregar' adds one unit (S13), and a
+/// different quantity is typed through the stepper's quantity control.
 Future<void> _addToCartFromCard(
   WidgetTester tester,
   String productId,
   String quantity,
 ) async {
   await _tap(tester, 'sale-add-$productId');
+  if (quantity == '1') return;
+  await _tap(tester, 'sale-line-edit-$productId');
   await tester.enterText(_key('sale-quantity-$productId'), quantity);
   await _tap(tester, 'sale-entry-save-$productId');
 }
 
 void main() {
+  testWidgets('Agregar adds one unit and shows the stepper right away', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_sellerApp());
+    await tester.pumpAndSettle();
+
+    await _tap(tester, 'sale-add-DEMO-RIBBON');
+
+    // S13: no quantity entry first; the trash 1 + stepper appears at once.
+    expect(_key('sale-quantity-DEMO-RIBBON'), findsNothing);
+    expect(_key('sale-line-remove-DEMO-RIBBON'), findsOneWidget);
+    expect(_key('sale-line-increment-DEMO-RIBBON'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: _key('sale-line-edit-DEMO-RIBBON'),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+    expect(_key('sale-add-DEMO-RIBBON'), findsNothing);
+  });
+
   testWidgets('the card keeps Agregar for products not in the cart', (
     WidgetTester tester,
   ) async {
