@@ -20,6 +20,7 @@ import '../transfers/transfer_notice_controller.dart';
 import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
+import 'catalog_search.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
 import 'product_qr.dart';
@@ -53,6 +54,10 @@ class CatalogPage extends StatefulWidget {
 class _CatalogPageState extends State<CatalogPage> {
   late Future<List<CatalogProduct>> _products;
 
+  /// Products of the last successful load, kept so a reload does not unmount
+  /// the list and lose the search query typed in it.
+  List<CatalogProduct>? _lastProducts;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +78,15 @@ class _CatalogPageState extends State<CatalogPage> {
     setState(_load);
   }
 
+  Widget _catalogList(List<CatalogProduct> products) => _CatalogList(
+    items: products
+        .map(
+          (CatalogProduct product) =>
+              CatalogItem(product: product, holdings: const <CatalogHolding>[]),
+        )
+        .toList(growable: false),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -90,26 +104,25 @@ class _CatalogPageState extends State<CatalogPage> {
                       BuildContext context,
                       AsyncSnapshot<List<CatalogProduct>> snapshot,
                     ) {
-                      if (snapshot.connectionState != ConnectionState.done) {
-                        return const _CatalogLoading();
+                      if (snapshot.data
+                          case final List<CatalogProduct> loaded) {
+                        _lastProducts = loaded;
                       }
                       if (snapshot.hasError) {
                         return _CatalogError(onRetry: _retry);
+                      }
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        // A reload keeps the list already on screen, so the
+                        // search query and its results survive it.
+                        return _lastProducts == null
+                            ? const _CatalogLoading()
+                            : _catalogList(_lastProducts!);
                       }
 
                       final List<CatalogProduct> products =
                           snapshot.data ?? const <CatalogProduct>[];
                       if (products.isEmpty) return const _EmptyCatalog();
-                      return _CatalogList(
-                        items: products
-                            .map(
-                              (CatalogProduct product) => CatalogItem(
-                                product: product,
-                                holdings: const <CatalogHolding>[],
-                              ),
-                            )
-                            .toList(growable: false),
-                      );
+                      return _catalogList(products);
                     },
               ),
             ),
@@ -2143,7 +2156,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   Widget _catalogBody() {
-    if (_loading) return const _CatalogLoading();
+    if (_loading && _snapshot == null) return const _CatalogLoading();
     if (_failed) return _CatalogError(onRetry: _requestCatalog);
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
     if (items.isEmpty) return const _EmptyCatalog();
@@ -2645,7 +2658,7 @@ class _ConnectionStatus extends StatelessWidget {
   }
 }
 
-class _CatalogList extends StatelessWidget {
+class _CatalogList extends StatefulWidget {
   const _CatalogList({
     required this.items,
     this.branchChoices = const <CatalogBranchChoice>[],
@@ -2665,7 +2678,30 @@ class _CatalogList extends StatelessWidget {
   final _SaleActionBuilder? saleAction;
 
   @override
+  State<_CatalogList> createState() => _CatalogListState();
+}
+
+class _CatalogListState extends State<_CatalogList> {
+  final TextEditingController _search = TextEditingController();
+
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) => setState(() => _query = value);
+
+  void _clearSearch() {
+    _search.clear();
+    setState(() => _query = '');
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final List<CatalogItem> visible = filterCatalogItems(widget.items, _query);
     return CustomScrollView(
       slivers: <Widget>[
         SliverToBoxAdapter(
@@ -2685,32 +2721,60 @@ class _CatalogList extends StatelessWidget {
             ),
           ),
         ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-          sliver: SliverList.separated(
-            itemCount: items.length,
-            itemBuilder: (BuildContext context, int index) => Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 920),
-                child: _ProductCard(
-                  item: items[index],
-                  costLabel: role == InventoryRole.administrator
-                      ? _latestCostLabel(
-                          snapshot,
-                          items[index].product.internalCode,
-                        )
-                      : null,
-                  role: role,
-                  branchChoices: branchChoices,
-                  onConfigurePricing: onConfigurePricing,
-                  onRecordIntake: onRecordIntake,
-                  saleAction: saleAction,
+        SliverToBoxAdapter(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                child: CatalogSearchField(
+                  controller: _search,
+                  onChanged: _onSearchChanged,
+                  onClear: _clearSearch,
                 ),
               ),
             ),
-            separatorBuilder: (_, _) => const SizedBox(height: 12),
           ),
         ),
+        if (visible.isEmpty)
+          SliverToBoxAdapter(
+            child: _CatalogMessage(
+              icon: Icons.search_off,
+              title: 'Sin resultados',
+              message: 'Ningún producto coincide con "$_query".',
+              action: OutlinedButton(
+                onPressed: _clearSearch,
+                child: const Text('Limpiar búsqueda'),
+              ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            sliver: SliverList.separated(
+              itemCount: visible.length,
+              itemBuilder: (BuildContext context, int index) => Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 920),
+                  child: _ProductCard(
+                    item: visible[index],
+                    costLabel: widget.role == InventoryRole.administrator
+                        ? _latestCostLabel(
+                            widget.snapshot,
+                            visible[index].product.internalCode,
+                          )
+                        : null,
+                    role: widget.role,
+                    branchChoices: widget.branchChoices,
+                    onConfigurePricing: widget.onConfigurePricing,
+                    onRecordIntake: widget.onRecordIntake,
+                    saleAction: widget.saleAction,
+                  ),
+                ),
+              ),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+            ),
+          ),
       ],
     );
   }
