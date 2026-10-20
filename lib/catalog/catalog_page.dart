@@ -1061,15 +1061,21 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               // Three bars on mobile (S2); web/desktop keeps the three dots.
               // The unread-notice badge rides on the menu icon itself, and
               // screen readers hear the unread notices named on the button.
+              // Only a session with transfer notices can have an unread
+              // badge; administrators have none.
               icon: Semantics(
-                label: unreadNotices == null
+                label: noticeController == null
+                    ? null
+                    : unreadNotices == null
                     ? 'sin confirmar'
                     : unreadNotices > 0
                     ? 'Avisos de traslados: $unreadNotices sin leer'
                     : null,
                 child: ExcludeSemantics(
                   child: Badge(
-                    isLabelVisible: unreadNotices == null || unreadNotices > 0,
+                    isLabelVisible:
+                        noticeController != null &&
+                        (unreadNotices == null || unreadNotices > 0),
                     label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
                     backgroundColor: unreadNotices == null
                         ? Theme.of(context).colorScheme.surfaceContainerHighest

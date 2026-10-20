@@ -329,5 +329,25 @@ void main() {
         findsNothing,
       );
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+    testWidgets('an administrator without notices gets no badge on the menu', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(_adminPage());
+      await tester.pumpAndSettle();
+
+      final Finder menu = find.byKey(const ValueKey<String>('shell-more'));
+      expect(menu, findsOneWidget);
+      final Badge badge = tester.widget<Badge>(
+        find.descendant(of: menu, matching: find.byType(Badge)),
+      );
+      expect(badge.isLabelVisible, isFalse);
+      expect(find.descendant(of: menu, matching: find.text('!')), findsNothing);
+      expect(find.bySemanticsLabel('sin confirmar'), findsNothing);
+
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey<String>('notices-open')), findsNothing);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   });
 }
