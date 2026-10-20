@@ -250,6 +250,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'rename gateway loader defaults follow the selected connected mode',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          productionEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+        find.byType(EmulatorLoginShell),
+      );
+      expect(
+        shell.productRenameGatewayLoader,
+        same(ProductionFirebaseBootstrap.initializeProductRenameGateway),
+      );
+
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          localEmulatorsEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      shell = tester.widget<EmulatorLoginShell>(
+        find.byType(EmulatorLoginShell),
+      );
+      expect(
+        shell.productRenameGatewayLoader,
+        same(DemoEmulatorBootstrap.initializeProductRenameGateway),
+      );
+    },
+  );
+
   testWidgets('production and local-emulator flags together stay offline', (
     WidgetTester tester,
   ) async {

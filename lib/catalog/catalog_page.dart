@@ -25,12 +25,16 @@ import 'catalog_search.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
 import 'product_qr.dart';
+import 'product_rename.dart';
 import 'stock_intake.dart';
 
 typedef CatalogSnapshotLoader = Future<CatalogSnapshot> Function(
   EmulatorSession session,
 );
 typedef ProductPricingDraftLookup = ProductPricingDraft? Function(
+  String productId,
+);
+typedef ProductRenameDraftLookup = ProductRenameDraft? Function(
   String productId,
 );
 typedef StockIntakeSubmit = Future<StockIntakeResult> Function(
@@ -147,6 +151,8 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createPricingId,
     this.unresolvedPricingDrafts = const <ProductPricingDraft>[],
     this.unresolvedPricingDraftForProduct,
+    this.renameProduct,
+    this.unresolvedRenameDraftForProduct,
     this.submitStockIntake,
     this.createIntakeId,
     this.unresolvedIntakeDraftFor,
@@ -174,6 +180,15 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final ProductPricingIdFactory? createPricingId;
   final List<ProductPricingDraft> unresolvedPricingDrafts;
   final ProductPricingDraftLookup? unresolvedPricingDraftForProduct;
+
+  /// Administrator-only rename submit seam inside the price panel; null hides
+  /// the name section. Name and price stay separate operations with separate
+  /// submits, so a partial failure can never mix them.
+  final ProductRenameSubmit? renameProduct;
+
+  /// Live lookup of the shell-retained unresolved rename draft for one
+  /// product; a draft is offered back only to its owning exact administrator.
+  final ProductRenameDraftLookup? unresolvedRenameDraftForProduct;
   final StockIntakeSubmit? submitStockIntake;
   final StockIntakeIdFactory? createIntakeId;
   final StockIntakeDraftLookup? unresolvedIntakeDraftFor;
@@ -215,6 +230,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   final TextEditingController _unit = TextEditingController();
   final TextEditingController _listedPrice = TextEditingController();
   final TextEditingController _ivaRate = TextEditingController();
+  final TextEditingController _renameName = TextEditingController();
   final TextEditingController _intakeQuantity = TextEditingController();
   final TextEditingController _intakeCost = TextEditingController();
   CatalogSnapshot? _snapshot;
@@ -242,6 +258,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   String? _ivaTreatment;
   bool _pricingPending = false;
   bool _pricingUncertain = false;
+  ProductRenameDraft? _lockedRenameDraft;
+  ProductRenameResult? _renameSuccess;
+  String? _renameError;
+  String? _renameNameError;
+  bool _renamePending = false;
+  bool _renameUncertain = false;
+  int _renameGeneration = 0;
   CatalogProduct? _intakeProduct;
   StockIntakeDraft? _lockedIntakeDraft;
   StockIntakeResult? _intakeSuccess;
@@ -332,8 +355,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _successfulCreationDraft = null;
       _configureCreation();
     }
-    if (sessionChanged || oldWidget.setProductPrice != widget.setProductPrice) {
+    if (sessionChanged ||
+        oldWidget.setProductPrice != widget.setProductPrice ||
+        oldWidget.renameProduct != widget.renameProduct) {
       _pricingGeneration += 1;
+      _renameGeneration += 1;
       _clearPricingPresentation();
     }
     if (sessionChanged ||
@@ -692,6 +718,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _unit.dispose();
     _listedPrice.dispose();
     _ivaRate.dispose();
+    _renameName.dispose();
     _intakeQuantity.dispose();
     _intakeCost.dispose();
     super.dispose();
@@ -741,22 +768,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _pricingUncertain = false;
     _listedPrice.clear();
     _ivaRate.clear();
+    _cancelSuccessNotice('rename');
+    _renameSuccess = null;
+    _lockedRenameDraft = null;
+    _renameError = null;
+    _renameNameError = null;
+    _renamePending = false;
+    _renameUncertain = false;
+    _renameName.clear();
   }
 
   void _restorePricingDraft(CatalogSnapshot snapshot) {
-    if (widget.session.role != InventoryRole.administrator ||
-        widget.setProductPrice == null ||
+    if (widget.session.role != InventoryRole.administrator) return;
+    final bool pricingAvailable = widget.setProductPrice != null;
+    final bool renameAvailable = widget.renameProduct != null;
+    if ((!pricingAvailable && !renameAvailable) ||
         _pricingProduct != null ||
-        _pricingSuccess != null) {
+        _pricingSuccess != null ||
+        _renameSuccess != null) {
       return;
     }
     for (final CatalogItem item in snapshot.items) {
-      final ProductPricingDraft? draft = _unresolvedPricingDraftFor(
-        item.product.internalCode,
-      );
-      if (draft == null) continue;
+      final ProductPricingDraft? pricing = pricingAvailable
+          ? _unresolvedPricingDraftFor(item.product.internalCode)
+          : null;
+      final ProductRenameDraft? rename = renameAvailable
+          ? _unresolvedRenameDraftFor(item.product.internalCode)
+          : null;
+      if (pricing == null && rename == null) continue;
       _pricingProduct = item.product;
-      _lockPricingDraft(draft);
+      if (pricing != null) _lockPricingDraft(pricing);
+      if (rename != null) _lockRenameDraft(rename);
       break;
     }
   }
@@ -783,6 +825,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _ivaRate.text = draft.ivaRatePercent ?? '';
     _pricingUncertain = true;
     _pricingError = _uncertainOutcomeMessage;
+  }
+
+  ProductRenameDraft? _unresolvedRenameDraftFor(String productId) =>
+      widget.unresolvedRenameDraftForProduct?.call(productId);
+
+  void _lockRenameDraft(ProductRenameDraft draft) {
+    _renameNameError = null;
+    _lockedRenameDraft = draft;
+    _renameName.text = draft.name;
+    _renameUncertain = true;
+    _renameError = _uncertainOutcomeMessage;
   }
 
   void _clearIntakePresentation() {
@@ -1060,6 +1113,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
               _PricingSuccess(result: result),
+            if (_renameSuccess case final ProductRenameResult result)
+              _RenameSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
             if (transfer != null)
@@ -1412,6 +1467,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
       product.internalCode,
     );
+    final ProductRenameDraft? unresolvedRename = _unresolvedRenameDraftFor(
+      product.internalCode,
+    );
     final CatalogPricing? pricing = product.pricing;
     setState(() {
       _pricingProduct = product;
@@ -1439,11 +1497,26 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _ivaTreatment = null;
         _ivaRate.clear();
       }
+      // The name section is a separate operation with its own state: an
+      // unresolved rename restores its own locked draft, otherwise the field
+      // simply offers the current product name.
+      if (unresolvedRename != null) {
+        _lockRenameDraft(unresolvedRename);
+      } else {
+        _cancelSuccessNotice('rename');
+        _renameSuccess = null;
+        _renameError = null;
+        _renameNameError = null;
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameName.text = product.name;
+      }
     });
   }
 
   void _closePricing() {
-    if (_pricingPending) return;
+    if (_pricingPending || _renamePending) return;
     _presentationRevision += 1;
     setState(() {
       _pricingProduct = null;
@@ -1451,6 +1524,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _priceModeError = null;
       _ivaTreatmentError = null;
       _ivaRateError = null;
+      _renameNameError = null;
+      _renameError = null;
     });
   }
 
@@ -1594,6 +1669,111 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           _pricingUncertain = true;
           _lockedPricingDraft = draft;
           _pricingError = _uncertainOutcomeMessage;
+        }
+      });
+    }
+  }
+
+  bool get _renameLocked => _renamePending || _renameUncertain;
+
+  /// Separate rename submit (S7): name and price stay independent operations,
+  /// so a partial failure can never mix them. The uncertain pattern mirrors
+  /// [_submitPricing]: an unresolved draft keeps its frozen idempotency key
+  /// and the retry resends the exact same request.
+  Future<void> _submitRename() async {
+    final CatalogProduct? product = _pricingProduct;
+    final ProductRenameSubmit? submit = widget.renameProduct;
+    if (product == null || submit == null || _renamePending) return;
+    if (!_renameUncertain) {
+      final String? nameError = _creationNameFieldError(_renameName.text);
+      if (nameError != null) {
+        setState(() {
+          _renameError = null;
+          _renameNameError = nameError;
+        });
+        return;
+      }
+    }
+    ProductRenameDraft draft;
+    try {
+      final ProductRenameDraft? authoritative = _unresolvedRenameDraftFor(
+        product.internalCode,
+      );
+      if (authoritative != null) _lockRenameDraft(authoritative);
+      draft =
+          authoritative ??
+          (_renameUncertain
+              ? _lockedRenameDraft!
+              : ProductRenameDraft(
+                  idempotencyKey: createProductRenameIdempotencyKey(),
+                  productId: product.internalCode,
+                  name: _renameName.text,
+                ));
+      draft.validate();
+    } on ProductRenameValidationException catch (error) {
+      setState(() => _renameError = error.message);
+      return;
+    }
+
+    final int generation = ++_renameGeneration;
+    _lockedRenameDraft ??= draft;
+    setState(() {
+      _renamePending = true;
+      _renameError = null;
+    });
+    try {
+      final ProductRenameResult result = await submit(draft);
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _pricingProduct = null;
+        _renameSuccess = result;
+        _expireSuccessNotice('rename', () => _renameSuccess = null);
+      });
+      await _requestCatalog();
+    } on ProductRenameValidationException catch (error) {
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameError = error.message;
+      });
+    } on ProductRenameSessionException {
+      // Definite: the exact administrator session ended before any write.
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _renameError =
+            'Tu sesión ya no permite editar nombres. Vuelve a '
+            'iniciar sesión.';
+      });
+    } on ProductRenameRejectedException catch (error) {
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameError = _renameRejectionMessage(error.code);
+      });
+    } on ProductRenameStaleException {
+      // A newer attempt or session owns presentation authority.
+    } catch (_) {
+      if (!mounted || generation != _renameGeneration) return;
+      final ProductRenameDraft? authoritative = _unresolvedRenameDraftFor(
+        product.internalCode,
+      );
+      setState(() {
+        _renamePending = false;
+        if (authoritative != null) {
+          _lockRenameDraft(authoritative);
+        } else {
+          _renameUncertain = true;
+          _lockedRenameDraft = draft;
+          _renameError = _uncertainOutcomeMessage;
         }
       });
     }
@@ -1793,6 +1973,83 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   ),
                 ],
               ),
+              if (widget.renameProduct != null) ...<Widget>[
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 8),
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Nombre del producto',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _renameNameError != null,
+                  label: _renameNameError == null
+                      ? null
+                      : 'Error en el nombre del producto: $_renameNameError',
+                  child: TextFormField(
+                    key: ValueKey<String>(
+                      'rename-name-${product.internalCode}',
+                    ),
+                    controller: _renameName,
+                    enabled: !_renameLocked,
+                    maxLength: maxProductRenameNameLength,
+                    onChanged: (_) {
+                      if (_renameNameError == null) return;
+                      setState(() => _renameNameError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(
+                        labelText: 'Nombre del producto',
+                        border: _pricingFieldBorder,
+                      ),
+                      _renameNameError,
+                    ),
+                  ),
+                ),
+                if (_renameError case final String error) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    label: 'Error en el nombre del producto',
+                    liveRegion: true,
+                    child: ExcludeSemantics(child: Text(error)),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    FilledButton(
+                      key: ValueKey<String>(
+                        'rename-submit-${product.internalCode}',
+                      ),
+                      onPressed: _renamePending ? null : _submitRename,
+                      child: _renamePending
+                          ? Semantics(
+                              label: 'Guardando nombre del producto',
+                              liveRegion: true,
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              _renameUncertain
+                                  ? 'Reintentar misma solicitud'
+                                  : 'Guardar nombre',
+                            ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -2338,6 +2595,19 @@ const double _errorBorderWidth = 2.0;
 const String _uncertainOutcomeMessage =
     'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
 
+/// Safe Spanish message for a proven pre-write rename rejection. The server
+/// text never reaches the UI; only its stable code is mapped here.
+String _renameRejectionMessage(String code) => switch (code) {
+  'invalid-argument' =>
+    'El nombre no es válido. Revisa el campo e inténtalo de nuevo.',
+  'unauthenticated' => 'Tu sesión ya no es válida. Vuelve a iniciar sesión.',
+  'permission-denied' => 'Tu sesión ya no permite cambiar nombres de producto.',
+  'not-found' =>
+    'El producto ya no existe en el catálogo. Actualiza e inténtalo de nuevo.',
+  'already-exists' => 'Esa solicitud de cambio de nombre ya se usó para otro cambio. Inicia uno nuevo.',
+  _ => 'Se rechazó el cambio de nombre ($code).',
+};
+
 /// Spanish display name of a session role; the wire value stays unchanged.
 String _roleDisplayName(InventoryRole role) => switch (role) {
   InventoryRole.administrator => 'Administrador',
@@ -2645,6 +2915,33 @@ class _IntakeSuccess extends StatelessWidget {
             Flexible(
               child: Text('Entrada registrada. Folio ${result.entryId}'),
             ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _RenameSuccess extends StatelessWidget {
+  const _RenameSuccess({required this.result});
+
+  final ProductRenameResult result;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Nombre del producto actualizado',
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Icon(Icons.check_circle_outline),
+            const SizedBox(width: 8),
+            Flexible(child: Text('Nombre actualizado a ${result.newName}')),
           ],
         ),
       ),

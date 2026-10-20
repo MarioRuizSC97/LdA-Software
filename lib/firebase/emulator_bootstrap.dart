@@ -8,6 +8,7 @@ import '../auth/emulator_session.dart';
 import '../catalog/catalog_repository.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import '../catalog/product_rename.dart';
 import 'emulator_auth_routing.dart';
 import 'emulator_auth_routing_platform.dart';
 import 'emulator_auth_routing_preinit.dart';
@@ -557,6 +558,24 @@ class DemoEmulatorBootstrap {
     return _initializeLiveFunctionsGateway<EmulatorStockIntakeGateway>(
       (FirebaseAuth auth, FirebaseFunctions functions) =>
           LiveFirebaseGateways.stockIntake(
+            auth: auth,
+            functions: functions,
+            session: session,
+          ),
+    );
+  }
+
+  /// Administrator product rename over the `renameProduct` callable, wired
+  /// exactly like stock intake: lazily on submit, no startup read, no extra
+  /// service, and no new Firebase app. The callable instance is bound to the
+  /// bootstrap-created Functions for region us-south1, never the default
+  /// singleton.
+  static Future<ProductRenameGateway> initializeProductRenameGateway(
+    EmulatorSession session,
+  ) {
+    return _initializeLiveFunctionsGateway<ProductRenameGateway>(
+      (FirebaseAuth auth, FirebaseFunctions functions) =>
+          LiveFirebaseGateways.productRename(
             auth: auth,
             functions: functions,
             session: session,
