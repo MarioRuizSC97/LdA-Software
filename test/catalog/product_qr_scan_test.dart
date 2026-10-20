@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, debugDefaultTargetPlatformOverride;
+    show TargetPlatform, debugDefaultTargetPlatformOverride, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:flutter_test/flutter_test.dart';
@@ -102,6 +102,36 @@ Future<_Opened> _openSheet(
   await tester.pumpAndSettle();
 
   return _Opened(camera, popped);
+}
+
+/// A camera state with the shutter running, used to prove the bridge maps a
+/// live state instead of echoing a fixed one.
+const MobileScannerState _runningScannerState = MobileScannerState(
+  availableCameras: 1,
+  cameraDirection: CameraFacing.back,
+  cameraLensType: CameraLensType.wide,
+  isInitialized: true,
+  isStarting: false,
+  isRunning: true,
+  size: Size.zero,
+  torchState: TorchState.off,
+  zoomScale: 1,
+  deviceOrientation: DeviceOrientation.portraitUp,
+);
+
+/// Records listener removal.
+///
+/// A broadcast stream with no listeners silently drops whatever is added to
+/// it, so "no events after cancel" would prove nothing on its own; this is
+/// what shows the bridge really unsubscribes.
+class _RecordingScannerController extends MobileScannerController {
+  int removedListeners = 0;
+
+  @override
+  void removeListener(VoidCallback listener) {
+    removedListeners++;
+    super.removeListener(listener);
+  }
 }
 
 class _Repository implements CatalogRepository {
@@ -600,9 +630,20 @@ void main() {
     test(
       'a new listener is given the current state, not the next change',
       () async {
-        final MobileScannerController controller = MobileScannerController();
+        final _RecordingScannerController controller =
+            _RecordingScannerController();
         final MobileScannerProductQrCamera camera =
             MobileScannerProductQrCamera(controller: controller);
+
+        // Denied before anything observes it. A bridge that echoed a fixed
+        // "starting" (a fresh controller also starts as uninitialized), or one
+        // that only reported changes, would not say denied right here.
+        controller.value = const MobileScannerState.uninitialized().copyWith(
+          error: const MobileScannerException(
+            errorCode: MobileScannerErrorCode.permissionDenied,
+          ),
+        );
+
         final List<ProductQrCameraAccess> seen = <ProductQrCameraAccess>[];
         final StreamSubscription<ProductQrCameraAccess> subscription = camera
             .access
@@ -612,34 +653,35 @@ void main() {
 
         expect(
           seen,
-          <ProductQrCameraAccess>[ProductQrCameraAccess.starting],
+          <ProductQrCameraAccess>[ProductQrCameraAccess.denied],
           reason: 'the sheet must know the state without waiting for a change',
         );
 
-        controller.value = const MobileScannerState.uninitialized().copyWith(
-          error: const MobileScannerException(
-            errorCode: MobileScannerErrorCode.permissionDenied,
-          ),
-        );
+        controller.value = _runningScannerState;
         await pumpEventQueue();
 
         expect(seen, <ProductQrCameraAccess>[
-          ProductQrCameraAccess.starting,
           ProductQrCameraAccess.denied,
+          ProductQrCameraAccess.ready,
         ]);
 
         await subscription.cancel();
         await pumpEventQueue();
         final int seenBeforeCancel = seen.length;
 
+        // The proof that cancelling unsubscribes: without it the broadcast
+        // stream would drop the next event whether we removed the listener
+        // or not.
+        expect(
+          controller.removedListeners,
+          greaterThanOrEqualTo(1),
+          reason: 'cancelling must remove the listener again',
+        );
+
         controller.value = const MobileScannerState.uninitialized();
         await pumpEventQueue();
 
-        expect(
-          seen.length,
-          seenBeforeCancel,
-          reason: 'cancelling the sheet must remove the listener again',
-        );
+        expect(seen.length, seenBeforeCancel);
       },
     );
 
@@ -657,6 +699,15 @@ void main() {
           isTrue,
           reason: 'the mounted widget is what starts the camera',
         );
+
+        // The adapter's own default path too: a filter written where the
+        // controller is chosen (controller ?? ...) must fail here as well,
+        // not only at the factory.
+        final MobileScannerProductQrCamera camera =
+            MobileScannerProductQrCamera();
+
+        expect(camera.debugController.formats, isEmpty);
+        expect(camera.debugController.autoStart, isTrue);
       },
     );
   });
@@ -667,6 +718,12 @@ void main() {
         WidgetTester tester,
       ) async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        // The framework does not undo these after a failed expect, so they are
+        // released through tearDown. The platform override is the exception:
+        // foundation debug variables are verified before tearDown runs, so it
+        // stays inline below.
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        addTearDown(() => tester.binding.setSurfaceSize(null));
         await tester.binding.setSurfaceSize(const Size(320, 700));
         tester.platformDispatcher.textScaleFactorTestValue = scale;
 
@@ -689,12 +746,48 @@ void main() {
           reason: 'clear and scan share the field suffix without overflowing',
         );
 
-        tester.platformDispatcher.clearTextScaleFactorTestValue();
-        await tester.binding.setSurfaceSize(null);
         debugDefaultTargetPlatformOverride = null;
-      });
+      }, skip: kIsWeb);
     }
   });
+  group('scan entry point on the web', () {
+    // Only runs under `flutter test --platform chrome`, where kIsWeb is true
+    // for real. This is the runtime half of the web gate: the pure function
+    // alone cannot prove the button stays out of a browser.
+    testWidgets('the camera entry point is never offered on the web', (
+      WidgetTester tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+
+      await tester.pumpWidget(
+        _catalogApp(qrScan: (BuildContext context) async => 'PRD-WATER-002'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        _scanButton(),
+        findsNothing,
+        reason: 'web keeps the typed search only (spec S2)',
+      );
+      expect(find.text('Café Grano Selecto'), findsOneWidget);
+
+      // The typed search stays fully usable on the web.
+      await tester.enterText(_searchField(), 'grano');
+      await tester.pumpAndSettle();
+      expect(find.text('Café Grano Selecto'), findsOneWidget);
+      expect(find.text('Agua Mineral 1 L'), findsNothing);
+
+      // The store screen honours the same gate.
+      await tester.pumpWidget(
+        _authenticatedApp(qrScan: (BuildContext context) async => null),
+      );
+      await tester.pumpAndSettle();
+      expect(_scanButton(), findsNothing);
+
+      debugDefaultTargetPlatformOverride = null;
+    }, skip: !kIsWeb);
+  });
+
   group('scan entry point in the search field', () {
     testWidgets('is offered on Android and types the scanned code', (
       WidgetTester tester,
@@ -723,7 +816,7 @@ void main() {
       expect(find.text('Café Grano Selecto'), findsNothing);
 
       debugDefaultTargetPlatformOverride = null;
-    });
+    }, skip: kIsWeb);
 
     testWidgets('is offered on iOS as well', (WidgetTester tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
@@ -736,7 +829,7 @@ void main() {
       expect(_scanButton(), findsOneWidget);
 
       debugDefaultTargetPlatformOverride = null;
-    });
+    }, skip: kIsWeb);
 
     testWidgets('is hidden when the platform has no camera route', (
       WidgetTester tester,
@@ -794,7 +887,7 @@ void main() {
       expect(find.text('Agua Mineral 1 L'), findsNothing);
 
       debugDefaultTargetPlatformOverride = null;
-    });
+    }, skip: kIsWeb);
 
     testWidgets('a scan replaces the query already typed', (
       WidgetTester tester,
@@ -819,7 +912,7 @@ void main() {
       expect(find.text('Agua Mineral 1 L'), findsNothing);
 
       debugDefaultTargetPlatformOverride = null;
-    });
+    }, skip: kIsWeb);
 
     testWidgets('no scan button is offered without an opener', (
       WidgetTester tester,
@@ -861,6 +954,6 @@ void main() {
       expect(find.text('Agua Mineral 1 L'), findsNothing);
 
       debugDefaultTargetPlatformOverride = null;
-    });
+    }, skip: kIsWeb);
   });
 }

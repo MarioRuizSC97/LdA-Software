@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -323,6 +323,11 @@ class MobileScannerProductQrCamera implements ProductQrCamera {
     : _controller = controller ?? createProductQrCameraController();
 
   final MobileScannerController _controller;
+
+  /// The controller this adapter drives. Exposed only so a test can pin the
+  /// contract on the adapter's own default path, not just on the factory.
+  @visibleForTesting
+  MobileScannerController get debugController => _controller;
 
   @override
   Stream<ProductQrReading> get readings =>
