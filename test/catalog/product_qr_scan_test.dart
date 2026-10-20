@@ -21,6 +21,7 @@ import 'package:mobile_scanner/mobile_scanner.dart'
         CameraLensType,
         MobileScannerErrorCode,
         MobileScannerException,
+        MobileScannerController,
         MobileScannerState,
         TorchState;
 
@@ -591,6 +592,109 @@ void main() {
     });
   });
 
+  group('camera adapter against the real controller', () {
+    // MobileScannerController is a plain ValueNotifier before it ever talks to
+    // a platform, so this exercises the bridge that closed H1 without a lens.
+    // It is deliberately never disposed: disposing it would reach the plugin
+    // platform, which a unit test has no camera to answer with.
+    test(
+      'a new listener is given the current state, not the next change',
+      () async {
+        final MobileScannerController controller = MobileScannerController();
+        final MobileScannerProductQrCamera camera =
+            MobileScannerProductQrCamera(controller: controller);
+        final List<ProductQrCameraAccess> seen = <ProductQrCameraAccess>[];
+        final StreamSubscription<ProductQrCameraAccess> subscription = camera
+            .access
+            .listen(seen.add);
+
+        await pumpEventQueue();
+
+        expect(
+          seen,
+          <ProductQrCameraAccess>[ProductQrCameraAccess.starting],
+          reason: 'the sheet must know the state without waiting for a change',
+        );
+
+        controller.value = const MobileScannerState.uninitialized().copyWith(
+          error: const MobileScannerException(
+            errorCode: MobileScannerErrorCode.permissionDenied,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(seen, <ProductQrCameraAccess>[
+          ProductQrCameraAccess.starting,
+          ProductQrCameraAccess.denied,
+        ]);
+
+        await subscription.cancel();
+        await pumpEventQueue();
+        final int seenBeforeCancel = seen.length;
+
+        controller.value = const MobileScannerState.uninitialized();
+        await pumpEventQueue();
+
+        expect(
+          seen.length,
+          seenBeforeCancel,
+          reason: 'cancelling the sheet must remove the listener again',
+        );
+      },
+    );
+
+    test(
+      'the adapter filters no symbology, so a shelf barcode is reported',
+      () {
+        // If a formats filter came back, H2 would reopen silently: the plugin
+        // would never deliver a barcode, and the seller would see nothing.
+        final MobileScannerController controller =
+            createProductQrCameraController();
+
+        expect(controller.formats, isEmpty);
+        expect(
+          controller.autoStart,
+          isTrue,
+          reason: 'the mounted widget is what starts the camera',
+        );
+      },
+    );
+  });
+
+  group('search field at 320px', () {
+    for (final double scale in <double>[1, 2]) {
+      testWidgets('both actions fit at text scale $scale', (
+        WidgetTester tester,
+      ) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        await tester.binding.setSurfaceSize(const Size(320, 700));
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+
+        await tester.pumpWidget(
+          _catalogApp(qrScan: (BuildContext context) async => null),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.enterText(_searchField(), 'grano');
+        await tester.pumpAndSettle();
+
+        expect(_scanButton(), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey<String>('catalog-search-clear')),
+          findsOneWidget,
+        );
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'clear and scan share the field suffix without overflowing',
+        );
+
+        tester.platformDispatcher.clearTextScaleFactorTestValue();
+        await tester.binding.setSurfaceSize(null);
+        debugDefaultTargetPlatformOverride = null;
+      });
+    }
+  });
   group('scan entry point in the search field', () {
     testWidgets('is offered on Android and types the scanned code', (
       WidgetTester tester,

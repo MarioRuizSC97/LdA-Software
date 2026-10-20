@@ -304,6 +304,14 @@ class _CameraNotice extends StatelessWidget {
   }
 }
 
+/// The controller the adapter uses.
+///
+/// It is a function so a test can pin the decision that keeps H2 closed: no
+/// `formats` filter, so every symbology the device can read reaches the sheet
+/// and a shelf barcode is reported instead of silently ignored.
+MobileScannerController createProductQrCameraController() =>
+    MobileScannerController();
+
 /// The `mobile_scanner` adapter. It is only constructed on Android and iOS,
 /// where [productQrScanSupported] is true.
 ///
@@ -312,7 +320,7 @@ class _CameraNotice extends StatelessWidget {
 /// product QR instead of staying silent.
 class MobileScannerProductQrCamera implements ProductQrCamera {
   MobileScannerProductQrCamera({MobileScannerController? controller})
-    : _controller = controller ?? MobileScannerController();
+    : _controller = controller ?? createProductQrCameraController();
 
   final MobileScannerController _controller;
 
