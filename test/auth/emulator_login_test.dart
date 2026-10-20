@@ -319,10 +319,22 @@ Future<CatalogSnapshot> _intakeCatalog(EmulatorSession session) async =>
       ],
     );
 
-Future<void> _submitExistingPricing(WidgetTester tester) async {
-  await tester.tap(
-    find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+/// Opens the product detail sheet (T5) and then the pricing flow from it.
+Future<void> _openProductSheet(WidgetTester tester, String code) async {
+  await tester.ensureVisible(
+    find.byKey(ValueKey<String>('product-details-$code')),
   );
+  await tester.tap(find.byKey(ValueKey<String>('product-details-$code')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _submitExistingPricing(WidgetTester tester) async {
+  await _openProductSheet(tester, 'PRD-COFFEE-001');
+  final Finder configure = find.byKey(
+    const ValueKey<String>('configure-price-PRD-COFFEE-001'),
+  );
+  await tester.ensureVisible(configure);
+  await tester.tap(configure);
   await tester.pumpAndSettle();
   final Finder save = find.widgetWithText(FilledButton, 'Guardar precio / IVA');
   await tester.ensureVisible(save);
@@ -2360,11 +2372,11 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-TEA-002');
       final Finder configureTea = find.byKey(
         const ValueKey<String>('configure-price-PRD-TEA-002'),
       );
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
-      await tester.pumpAndSettle();
+      await tester.ensureVisible(configureTea);
       await tester.tap(configureTea);
       await tester.pumpAndSettle();
       expect(
@@ -2382,11 +2394,11 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       final Finder configureCoffee = find.byKey(
         const ValueKey<String>('configure-price-PRD-COFFEE-001'),
       );
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
-      await tester.pumpAndSettle();
+      await tester.ensureVisible(configureCoffee);
       await tester.tap(configureCoffee);
       await tester.pumpAndSettle();
 
@@ -2898,7 +2910,9 @@ void main() {
       await tester.pumpAndSettle();
       final EmulatorLoginShellState shell = shellKey.currentState!;
 
-      // The administrator opens the visible intake form and submits.
+      // The administrator opens the visible intake form and submits, through
+      // the product detail sheet (T5).
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
@@ -2958,6 +2972,7 @@ void main() {
       // through the visible form with a fresh gateway.
       auth.sessions.add(_administrator);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );

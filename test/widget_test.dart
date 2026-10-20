@@ -444,6 +444,11 @@ void main() {
       expect(app.title, 'LDA Inventory');
       expect(find.text('Catálogo'), findsOneWidget);
       expect(find.text('Test product'), findsOneWidget);
+      // The QR lives in the product detail sheet (S5).
+      await tester.tap(
+        find.byKey(const ValueKey<String>('product-details-PRD-TEST-001')),
+      );
+      await tester.pumpAndSettle();
       expect(
         find.bySemanticsLabel('Código QR de Test product. Código PRD-TEST-001'),
         findsOneWidget,

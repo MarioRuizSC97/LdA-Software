@@ -2748,82 +2748,118 @@ class _CatalogListState extends State<_CatalogList> {
   @override
   Widget build(BuildContext context) {
     final List<CatalogItem> visible = filterCatalogItems(widget.items, _query);
-    return CustomScrollView(
-      slivers: <Widget>[
-        SliverToBoxAdapter(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                child: Semantics(
-                  header: true,
-                  child: Text(
-                    'Catálogo',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        SliverToBoxAdapter(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                child: CatalogSearchField(
-                  controller: _search,
-                  onChanged: _onSearchChanged,
-                  onClear: _clearSearch,
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (visible.isEmpty)
-          SliverToBoxAdapter(
-            child: _CatalogMessage(
-              icon: Icons.search_off,
-              title: 'Sin resultados',
-              message: 'Ningún producto coincide con "$_query".',
-              action: OutlinedButton(
-                onPressed: _clearSearch,
-                child: const Text('Limpiar búsqueda'),
-              ),
-            ),
-          )
-        else
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            sliver: SliverList.separated(
-              itemCount: visible.length,
-              itemBuilder: (BuildContext context, int index) => Center(
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final int columns = _columnsFor(context, constraints.maxWidth);
+        return CustomScrollView(
+          slivers: <Widget>[
+            SliverToBoxAdapter(
+              child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 920),
-                  child: _ProductCard(
-                    item: visible[index],
-                    costLabel: widget.role == InventoryRole.administrator
-                        ? _latestCostLabel(
-                            widget.snapshot,
-                            visible[index].product.internalCode,
-                          )
-                        : null,
-                    role: widget.role,
-                    branchChoices: widget.branchChoices,
-                    onConfigurePricing: widget.onConfigurePricing,
-                    onRecordIntake: widget.onRecordIntake,
-                    saleAction: widget.saleAction,
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        'Catálogo',
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                    ),
                   ),
                 ),
               ),
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
             ),
-          ),
-      ],
+            SliverToBoxAdapter(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: CatalogSearchField(
+                      controller: _search,
+                      onChanged: _onSearchChanged,
+                      onClear: _clearSearch,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (visible.isEmpty)
+              SliverToBoxAdapter(
+                child: _CatalogMessage(
+                  icon: Icons.search_off,
+                  title: 'Sin resultados',
+                  message: 'Ningún producto coincide con "$_query".',
+                  action: OutlinedButton(
+                    onPressed: _clearSearch,
+                    child: const Text('Limpiar búsqueda'),
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                sliver: SliverList.separated(
+                  // The grid lays out complete rows of Expanded cards so the
+                  // row height follows the tallest card instead of a fixed
+                  // aspect ratio (S4).
+                  itemCount: (visible.length + columns - 1) ~/ columns,
+                  itemBuilder: (BuildContext context, int index) {
+                    final int first = index * columns;
+                    return IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          for (
+                            int i = first;
+                            i < first + columns && i < visible.length;
+                            i++
+                          )
+                            Expanded(
+                              child: _ProductCard(
+                                item: visible[i],
+                                costLabel:
+                                    widget.role == InventoryRole.administrator
+                                    ? _latestCostLabel(
+                                        widget.snapshot,
+                                        visible[i].product.internalCode,
+                                      )
+                                    : null,
+                                role: widget.role,
+                                branchChoices: widget.branchChoices,
+                                onConfigurePricing: widget.onConfigurePricing,
+                                onRecordIntake: widget.onRecordIntake,
+                                saleAction: widget.saleAction,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
+}
+
+/// Products per row (S4): an Android or iOS app build always shows 2, at any
+/// width — the same mobile rule the shell app bar uses. Web and desktop use
+/// width breakpoints so cards never get unreadably thin: 3 columns from 900px,
+/// 2 from 560px, and a single column below that.
+int _columnsFor(BuildContext context, double width) {
+  final TargetPlatform platform = Theme.of(context).platform;
+  final bool mobile =
+      !kIsWeb &&
+      (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
+  if (mobile) return 2;
+  if (width >= 900) return 3;
+  if (width >= 560) return 2;
+  return 1;
 }
 
 String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
@@ -2836,6 +2872,11 @@ String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
       '${formatCentavos(cost.latestUnitCostCentavos)} MXN';
 }
 
+/// Compact product card (S4). Shows only name, stock and price — the code,
+/// unit, price mode, IVA treatment and rate, cost, and QR moved to the detail
+/// sheet (S5), which opens by long-press and by the visible "Detalles" button
+/// on every platform. The seller's sale action stays on the card so selling
+/// remains one tap.
 class _ProductCard extends StatelessWidget {
   const _ProductCard({
     required this.costLabel,
@@ -2856,59 +2897,102 @@ class _ProductCard extends StatelessWidget {
 
   final String? costLabel;
 
+  CatalogProduct get product => item.product;
+
+  void _openDetails(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (BuildContext context) => _ProductSheet(
+        costLabel: costLabel,
+        item: item,
+        role: role,
+        branchChoices: branchChoices,
+        onConfigurePricing: onConfigurePricing,
+        onRecordIntake: onRecordIntake,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final Widget details = _ProductDetails(
-      costLabel: costLabel,
-      item: item,
-      role: role,
-      branchChoices: branchChoices,
-      onConfigurePricing: onConfigurePricing,
-      onRecordIntake: onRecordIntake,
-      saleAction: saleAction,
-    );
-    final Widget qr = ProductQrView(product: item.product);
-
+    final CatalogPricing? pricing = product.pricing;
+    final String priceLine = pricing == null
+        ? 'Sin precio'
+        : 'Precio: ${formatCentavos(pricing.listedPriceCentavos)} '
+              '${pricing.currency}';
     return Card(
+      key: ValueKey<String>('product-card-${product.internalCode}'),
       clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints constraints) {
-            if (constraints.maxWidth < 420) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  details,
-                  const SizedBox(height: 16),
-                  Align(child: qr),
-                ],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                Expanded(child: details),
-                const SizedBox(width: 20),
-                qr,
+      child: InkWell(
+        onLongPress: () => _openDetails(context),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Text(
+                  product.name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              if (role != null) ...<Widget>[
+                const SizedBox(height: 8),
+                ..._holdingLines(
+                  item: item,
+                  role: role,
+                  branchChoices: branchChoices,
+                ),
               ],
-            );
-          },
+              const SizedBox(height: 8),
+              Text(priceLine, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    key: ValueKey<String>(
+                      'product-details-${product.internalCode}',
+                    ),
+                    onPressed: () => _openDetails(context),
+                    icon: const Icon(Icons.info_outline),
+                    label: Text(
+                      'Detalles',
+                      semanticsLabel: 'Ver detalles de ${product.name}',
+                    ),
+                  ),
+                  if (saleAction?.call(product) case final Widget action)
+                    action,
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ProductDetails extends StatelessWidget {
-  const _ProductDetails({
+/// Detail sheet for one product (S5): a scrollable modal bottom sheet on
+/// every platform, with the content capped at 560px on wide screens. The
+/// seller sees name, price, price mode, stock and the QR; the administrator
+/// additionally sees the IVA treatment and rate, unit and precision, the
+/// internal code, the latest cost, per-branch stock, and the pricing and
+/// intake actions. The unauthenticated diagnostic page (role null) keeps the
+/// full detail set it always showed.
+class _ProductSheet extends StatelessWidget {
+  const _ProductSheet({
     required this.costLabel,
     required this.item,
     required this.role,
     required this.branchChoices,
     required this.onConfigurePricing,
     required this.onRecordIntake,
-    this.saleAction,
   });
 
   final CatalogItem item;
@@ -2916,7 +3000,6 @@ class _ProductDetails extends StatelessWidget {
   final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
-  final _SaleActionBuilder? saleAction;
 
   final String? costLabel;
 
@@ -2924,135 +3007,209 @@ class _ProductDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Semantics(
-          header: true,
-          child: Text(
-            product.name,
-            style: Theme.of(context).textTheme.titleLarge,
+    final bool administrator = role == InventoryRole.administrator;
+    final bool fullDetails = administrator || role == null;
+    final CatalogPricing? pricing = product.pricing;
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            0,
+            24,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: ConstrainedBox(
+            key: ValueKey<String>('product-sheet-${product.internalCode}'),
+            constraints: BoxConstraints(
+              maxWidth: 560,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Semantics(
+                          header: true,
+                          child: Text(
+                            'Detalles del producto',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey<String>('product-sheet-close'),
+                        tooltip: 'Cerrar detalles',
+                        onPressed: Navigator.of(context).pop,
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    product.name,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (fullDetails) ...<Widget>[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      product.internalCode,
+                      semanticsLabel: 'Código interno ${product.internalCode}',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ],
+                  if (pricing case final CatalogPricing shown) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
+                      '${shown.currency}',
+                    ),
+                    const SizedBox(height: 4),
+                    Text('Modo de precio: ${_priceModeLabel(shown.priceMode)}'),
+                    if (fullDetails) ...<Widget>[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
+                      ),
+                    ],
+                  ],
+                  if (administrator && costLabel != null) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Semantics(
+                      container: true,
+                      label: costLabel,
+                      excludeSemantics: true,
+                      child: Text(costLabel!),
+                    ),
+                  ],
+                  if (fullDetails) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Unidad: ${product.quantitySpec.unit} '
+                      '(precisión ${product.quantitySpec.precision})',
+                    ),
+                  ],
+                  if (role != null) ...<Widget>[
+                    const SizedBox(height: 8),
+                    ..._holdingLines(
+                      item: item,
+                      role: role,
+                      branchChoices: branchChoices,
+                    ),
+                  ],
+                  if (administrator && onConfigurePricing != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      key: ValueKey<String>(
+                        'configure-price-${product.internalCode}',
+                      ),
+                      // Close the sheet first, then open the existing flow.
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onConfigurePricing!(product);
+                      },
+                      icon: const Icon(Icons.price_change_outlined),
+                      label: const Text('Editar precio / IVA'),
+                    ),
+                  ],
+                  if (administrator && onRecordIntake != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      key: ValueKey<String>('intake-${product.internalCode}'),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onRecordIntake!(product);
+                      },
+                      icon: const Icon(Icons.inventory_outlined),
+                      label: const Text('Registrar entrada de inventario'),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Center(child: ProductQrView(product: product)),
+                ],
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        SelectableText(
-          product.internalCode,
-          semanticsLabel: 'Código interno ${product.internalCode}',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Unidad: ${product.quantitySpec.unit} '
-          '(precisión ${product.quantitySpec.precision})',
-        ),
-        if (product.pricing case final CatalogPricing pricing) ...<Widget>[
-          const SizedBox(height: 4),
-          Text(
-            'Precio de lista: ${formatCentavos(pricing.listedPriceCentavos)} '
-            '${pricing.currency}',
-          ),
-          const SizedBox(height: 4),
-          Text('Modo de precio: ${_priceModeLabel(pricing.priceMode)}'),
-          const SizedBox(height: 4),
-          Text(
-            'Tratamiento de IVA: ${_ivaTreatmentLabel(pricing.ivaTreatment)}',
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Tasa de IVA: ${pricing.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
-          ),
-        ],
-        if (role == InventoryRole.administrator &&
-            costLabel != null) ...<Widget>[
-          const SizedBox(height: 4),
-          Semantics(
-            container: true,
-            label: costLabel,
-            excludeSemantics: true,
-            child: Text(costLabel!),
-          ),
-        ],
-        if (role != null) ...<Widget>[
-          const SizedBox(height: 12),
-          ..._holdingRows(),
-        ],
-        if (onConfigurePricing != null) ...<Widget>[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: ValueKey<String>('configure-price-${product.internalCode}'),
-            onPressed: () => onConfigurePricing!(product),
-            icon: const Icon(Icons.price_change_outlined),
-            label: const Text('Editar precio / IVA'),
-          ),
-        ],
-        if (onRecordIntake != null) ...<Widget>[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: ValueKey<String>('intake-${product.internalCode}'),
-            onPressed: () => onRecordIntake!(product),
-            icon: const Icon(Icons.inventory_outlined),
-            label: const Text('Registrar entrada de inventario'),
-          ),
-        ],
-        if (saleAction?.call(product) case final Widget action) ...<Widget>[
-          const SizedBox(height: 12),
-          action,
-        ],
-      ],
+      ),
     );
   }
+}
 
-  List<Widget> _holdingRows() {
-    if (role == InventoryRole.administrator && branchChoices.isNotEmpty) {
-      final Map<String, CatalogHolding> holdings = <String, CatalogHolding>{
-        for (final CatalogHolding holding in item.holdings)
-          holding.branchId: holding,
-      };
-      final Map<String, CatalogBranchChoice> choices =
-          <String, CatalogBranchChoice>{
-            for (final CatalogBranchChoice choice in branchChoices)
-              choice.branchId: choice,
-          };
-      final List<String> branchIds = <String>{
-        ...choices.keys,
-        ...holdings.keys,
-      }.toList()..sort();
-      return branchIds
-          .map((String branchId) {
-            final CatalogHolding? holding = holdings[branchId];
-            if (holding != null) return _holdingRow(holding);
-            return Text(
-              '${choices[branchId]!.branchName}: Agotado · Sin entrada registrada',
-            );
-          })
-          .toList(growable: false);
-    }
-    if (role == InventoryRole.administrator && item.holdings.isEmpty) {
-      return const <Widget>[Text('Sin existencias en sucursales')];
-    }
-    return item.holdings.map(_holdingRow).toList(growable: false);
+/// Stock lines shared by the compact card and the detail sheet. The
+/// administrator sees a short line per known branch (Agotado markers stay);
+/// the seller sees their own branch as "Existencias: N unidad" plus
+/// "Agotado" when out of stock.
+List<Widget> _holdingLines({
+  required CatalogItem item,
+  required InventoryRole? role,
+  required List<CatalogBranchChoice> branchChoices,
+}) {
+  final CatalogProduct product = item.product;
+  if (role == InventoryRole.administrator && branchChoices.isNotEmpty) {
+    final Map<String, CatalogHolding> holdings = <String, CatalogHolding>{
+      for (final CatalogHolding holding in item.holdings)
+        holding.branchId: holding,
+    };
+    final Map<String, CatalogBranchChoice> choices =
+        <String, CatalogBranchChoice>{
+          for (final CatalogBranchChoice choice in branchChoices)
+            choice.branchId: choice,
+        };
+    final List<String> branchIds = <String>{
+      ...choices.keys,
+      ...holdings.keys,
+    }.toList()..sort();
+    return branchIds
+        .map((String branchId) {
+          final CatalogHolding? holding = holdings[branchId];
+          if (holding != null) return _holdingLine(holding, product, role);
+          return Text(
+            '${choices[branchId]!.branchName}: Agotado · Sin entrada registrada',
+          );
+        })
+        .toList(growable: false);
   }
+  if (role == InventoryRole.administrator && item.holdings.isEmpty) {
+    return const <Widget>[Text('Sin existencias en sucursales')];
+  }
+  return item.holdings
+      .map((CatalogHolding holding) => _holdingLine(holding, product, role))
+      .toList(growable: false);
+}
 
-  Widget _holdingRow(CatalogHolding holding) {
-    final String quantity = formatScaledQuantity(
-      holding.quantityScaled,
-      product.quantitySpec.precision,
-    );
-    final String unit = product.quantitySpec.unit;
-    if (role == InventoryRole.administrator) {
-      final String branchName = holding.branchName!;
-      final String empty = holding.isOutOfStock ? ' · Agotado' : '';
-      return Text('$branchName: $quantity $unit$empty');
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text('Existencias: $quantity $unit'),
-        if (holding.isOutOfStock)
-          Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
-      ],
-    );
+Widget _holdingLine(
+  CatalogHolding holding,
+  CatalogProduct product,
+  InventoryRole? role,
+) {
+  final String quantity = formatScaledQuantity(
+    holding.quantityScaled,
+    product.quantitySpec.precision,
+  );
+  final String unit = product.quantitySpec.unit;
+  if (role == InventoryRole.administrator) {
+    final String branchName = holding.branchName!;
+    final String empty = holding.isOutOfStock ? ' · Agotado' : '';
+    return Text('$branchName: $quantity $unit$empty');
   }
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      Text('Existencias: $quantity $unit'),
+      if (holding.isOutOfStock)
+        Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
+    ],
+  );
 }
 
 class _EmptyCatalog extends StatelessWidget {
