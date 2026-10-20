@@ -94,3 +94,74 @@ isolated emulator, not shared default ports.
   calling `renameProduct` (S7 UI integration; S5 detail sheet surface).
 - Deployment approval and the IAM rollout gates in `iam/README.md` before the
   callable goes live.
+
+## Dart client (T8C / S7 backend-client slice)
+
+The client slice is implemented in the Flutter app (new files, no UI wiring
+performed yet — the main session owns the S7 catalog integration and no
+deployment was done):
+
+- `lib/catalog/product_rename.dart` — `ProductRenameDraft`
+  (`validate()`, `toRequest()` with exactly `idempotencyKey`, `productId`,
+  `name`), `ProductRenameResult.fromCallable` (accepts only the exact
+  success shape and binds `productId`/`newName` to the frozen request),
+  `createProductRenameIdempotencyKey()` (UUID v4), the `ProductRenameGateway`
+  interface, the `ProductRenameSubmit` typedef, and the exceptions
+  `ProductRenameValidationException`, `ProductRenameProtocolException`,
+  `ProductRenameRejectedException` (carries the server code),
+  `ProductRenameUncertainException`, `ProductRenameSessionException` and
+  `ProductRenameStaleException`. Name validation enforces 1..120 UTF-16 code
+  units, no surrounding whitespace, and no ASCII control characters. Client and
+  server use their platform's `trim()`, whose Unicode edge cases differ; the
+  backend remains authoritative and rejects invalid input before writing.
+- `lib/firebase/emulator_product_rename_gateway.dart` —
+  `EmulatorProductRenameGateway` (session guard before and after the call,
+  generation-based staleness, validation before any network use), the raw
+  `ProductRenameCallable` transport, `productRenameCallableFromInvoker`
+  (maps `FirebaseFunctionsException` codes without parsing messages) and
+  `firebaseProductRenameCallable(functions)` bound to the callable
+  `renameProduct`.
+
+Error semantics: `invalid-argument`, `unauthenticated`, `permission-denied`,
+`not-found` and `already-exists` arrive as definite
+`ProductRenameRejectedException`s (the backend proves they decided before any
+write); `failed-precondition`, `internal`, transport failures and
+malformed/foreign payloads surface as `ProductRenameUncertainException` — the
+rename may or may not have persisted, so the UI must never show success. The
+caller keeps reusing the same draft (same idempotency key and name) until a
+definite outcome; the backend then replays its stored receipt (`replayed: true`).
+Do not edit an unresolved draft. After a definite outcome, a different name
+requires a new draft with a fresh key; `copyWith` does not allocate a new key.
+A stale completion must not show success; refresh from the catalog instead.
+
+Intended main-session usage once the S7 UI field exists (administrator
+session, same interface as the price editor):
+
+```dart
+final ProductRenameGateway renameGateway = EmulatorProductRenameGateway(
+  expectedSession: session,
+  sessionChecker: sessionGateway.restoreSession,
+  // Use the bootstrap-injected instance configured for us-south1 and the
+  // selected production/emulator environment, not FirebaseFunctions.instance.
+  invoke: firebaseProductRenameCallable(functions),
+);
+
+final ProductRenameDraft draft = ProductRenameDraft(
+  idempotencyKey: createProductRenameIdempotencyKey(),
+  productId: product.internalCode,
+  name: nameController.text,
+);
+try {
+  final ProductRenameResult result = await renameGateway.renameProduct(draft);
+  // Show result.newName; refresh the product from the catalog stream.
+} on ProductRenameValidationException {
+  // Fix the field locally; nothing was sent.
+} on ProductRenameRejectedException {
+  // Definite server refusal (e.g. not-found, already-exists); no retry.
+} on ProductRenameSessionException {
+  // Not the current administrator anymore; renew the session first.
+} on ProductRenameUncertainException {
+  // Unknown outcome: keep the same draft and let the user retry with the
+  // same idempotency key; the backend replays instead of renaming twice.
+}
+```
