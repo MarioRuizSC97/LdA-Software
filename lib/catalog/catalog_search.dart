@@ -134,6 +134,31 @@ class CatalogSearchField extends StatelessWidget {
 
   bool get _hasQuery => controller.text.trim().isNotEmpty;
 
+  /// The clear action and the camera action, side by side when there is
+  /// something to clear: a query must not hide the camera, otherwise a seller
+  /// who already typed has to clear the field before scanning again.
+  Widget? _suffix() {
+    final List<Widget> actions = <Widget>[
+      if (_hasQuery)
+        IconButton(
+          key: catalogSearchClearKey,
+          icon: const Icon(Icons.close),
+          tooltip: 'Limpiar búsqueda',
+          onPressed: onClear,
+        ),
+      if (onScan != null)
+        IconButton(
+          key: catalogSearchScanKey,
+          icon: const Icon(Icons.qr_code_scanner),
+          tooltip: 'Escanear código QR',
+          onPressed: onScan,
+        ),
+    ];
+    if (actions.isEmpty) return null;
+    if (actions.length == 1) return actions.single;
+    return Row(mainAxisSize: MainAxisSize.min, children: actions);
+  }
+
   @override
   Widget build(BuildContext context) {
     return TextField(
@@ -148,21 +173,7 @@ class CatalogSearchField extends StatelessWidget {
         hintText: 'Nombre o código',
         prefixIcon: const Icon(Icons.search),
         border: const OutlineInputBorder(),
-        suffixIcon: _hasQuery
-            ? IconButton(
-                key: catalogSearchClearKey,
-                icon: const Icon(Icons.close),
-                tooltip: 'Limpiar búsqueda',
-                onPressed: onClear,
-              )
-            : onScan == null
-            ? null
-            : IconButton(
-                key: catalogSearchScanKey,
-                icon: const Icon(Icons.qr_code_scanner),
-                tooltip: 'Escanear código QR',
-                onPressed: onScan,
-              ),
+        suffixIcon: _suffix(),
       ),
     );
   }

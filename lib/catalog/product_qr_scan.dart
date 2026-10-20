@@ -26,13 +26,51 @@ class ProductQrReading {
 /// The search query a reading should type, or null when the reading cannot be
 /// used and the camera has to stay open.
 ///
-/// A payload that is a valid QR but not a known product code is still returned:
-/// the search then shows its own "Sin resultados" panel, which tells the truth
-/// about what was read instead of pretending nothing happened.
+/// A payload that is a valid QR but not a known product code is still
+/// returned: the search then shows its own "Sin resultados" panel, which tells
+/// the truth about what was read instead of pretending nothing happened.
 String? catalogQueryFromQrReading(ProductQrReading reading) {
   if (!reading.isQrCode) return null;
   final String trimmed = reading.rawValue.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+/// Why a reading could not be used, in the words shown to the seller. Naming
+/// the case keeps an empty QR from being described as the wrong thing.
+String qrReadingRejectionMessage(ProductQrReading reading) {
+  if (!reading.isQrCode) {
+    return 'Lo que leyó la cámara no es un código QR de producto.';
+  }
+  return 'El código QR no contiene un código de producto.';
+}
+
+/// The reading carried by one camera capture, or null when the capture found
+/// nothing. An empty capture is not a code, so it must not be reported as one.
+ProductQrReading? productQrReadingFromCapture(BarcodeCapture capture) {
+  final Barcode? barcode = capture.barcodes.firstOrNull;
+  if (barcode == null) return null;
+  return ProductQrReading(
+    rawValue: barcode.rawValue ?? '',
+    isQrCode: barcode.format == BarcodeFormat.qrCode,
+  );
+}
+
+/// Access states the sheet can explain to the seller.
+enum ProductQrCameraAccess { starting, ready, denied, unavailable }
+
+/// Folds the plugin camera state into the one state the sheet shows.
+///
+/// The preview is always in the tree, so the widget owns starting the camera;
+/// this only reads the outcome. Anything other than a denied permission or a
+/// running camera is still starting, and a failure that is not a permission
+/// problem is reported as unavailable.
+ProductQrCameraAccess productQrCameraAccessFor(MobileScannerState state) {
+  if (state.error?.errorCode == MobileScannerErrorCode.permissionDenied) {
+    return ProductQrCameraAccess.denied;
+  }
+  if (state.isRunning) return ProductQrCameraAccess.ready;
+  if (state.error != null) return ProductQrCameraAccess.unavailable;
+  return ProductQrCameraAccess.starting;
 }
 
 /// Whether the camera entry point is offered on this platform.
@@ -48,16 +86,17 @@ bool productQrScanAvailable({
 bool get productQrScanSupported =>
     productQrScanAvailable(isWeb: kIsWeb, target: defaultTargetPlatform);
 
-/// Access states the sheet can explain to the seller.
-enum ProductQrCameraAccess { starting, ready, denied, unavailable }
-
 /// The camera the sheet needs. The production implementation is backed by
 /// `mobile_scanner`; tests drive a fake one, so no test opens a real camera.
+///
+/// Both streams are broadcast and are subscribed as soon as the sheet is
+/// built, because the sheet keeps the preview mounted from the first frame.
 abstract interface class ProductQrCamera {
   Stream<ProductQrReading> get readings;
 
-  /// Starts the feed and reports whether it can show a preview.
-  Future<ProductQrCameraAccess> start();
+  /// The camera access as it becomes known. Starts reporting from the first
+  /// subscription.
+  Stream<ProductQrCameraAccess> get access;
 
   Widget preview(BuildContext context);
 
@@ -68,8 +107,9 @@ abstract interface class ProductQrCamera {
 /// seller cancels.
 typedef ProductQrScanOpener = Future<String?> Function(BuildContext context);
 
-/// The camera sheet: a preview, one readable QR, and honest Spanish feedback
-/// when the camera or the code is not usable.
+/// The camera sheet: a preview that is mounted from the first frame, one
+/// readable QR, and honest Spanish feedback when the camera or the code is
+/// not usable.
 class ProductQrScanSheet extends StatefulWidget {
   const ProductQrScanSheet({required this.camera, super.key});
 
@@ -82,30 +122,36 @@ class ProductQrScanSheet extends StatefulWidget {
 class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
   ProductQrCameraAccess _access = ProductQrCameraAccess.starting;
   String? _rejection;
-  StreamSubscription<ProductQrReading>? _subscription;
+
+  /// Guards the single scan: readings after the first usable code are
+  /// dropped, so the sheet cannot pop twice.
+  bool _done = false;
+
+  StreamSubscription<ProductQrReading>? _readings;
+  StreamSubscription<ProductQrCameraAccess>? _accessSubscription;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _start());
-  }
-
-  Future<void> _start() async {
-    _subscription = widget.camera.readings.listen(_onReading);
-    final ProductQrCameraAccess access = await widget.camera.start();
-    if (!mounted) return;
-    setState(() => _access = access);
+    _readings = widget.camera.readings.listen(_onReading);
+    _accessSubscription = widget.camera.access.listen((
+      ProductQrCameraAccess access,
+    ) {
+      if (!mounted) return;
+      setState(() => _access = access);
+    });
   }
 
   void _onReading(ProductQrReading reading) {
+    if (_done) return;
     final String? query = catalogQueryFromQrReading(reading);
     if (query == null) {
-      // Not usable: keep the camera open and say what happened.
-      setState(() => _rejection = 'El código leído no es un QR de producto.');
+      // Not usable: keep the camera open and say what happened, in the words
+      // that name this case.
+      setState(() => _rejection = qrReadingRejectionMessage(reading));
       return;
     }
-    unawaited(_subscription?.cancel());
-    _subscription = null;
+    _done = true;
     Navigator.of(context).pop(query);
   }
 
@@ -113,14 +159,17 @@ class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
   void dispose() {
     // Cancel and release synchronously: the teardown order must not depend on
     // when microtasks run, and the camera owns its own asynchronous cleanup.
-    _subscription?.cancel();
-    _subscription = null;
+    _readings?.cancel();
+    _readings = null;
+    _accessSubscription?.cancel();
+    _accessSubscription = null;
     unawaited(widget.camera.dispose());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool ready = _access == ProductQrCameraAccess.ready;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Escanear código QR'),
@@ -136,39 +185,26 @@ class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
         child: Column(
           children: <Widget>[
             Expanded(
-              child: switch (_access) {
-                ProductQrCameraAccess.starting => const _CameraNotice(
-                  key: ValueKey<String>('qr-scan-starting'),
-                  icon: Icons.camera_alt_outlined,
-                  message: 'Encendiendo la cámara…',
-                ),
-                ProductQrCameraAccess.denied => _CameraNotice(
-                  key: const ValueKey<String>('qr-scan-denied'),
-                  icon: Icons.no_photography_outlined,
-                  message:
-                      'No se permitió el acceso a la cámara. Actívalo en '
-                      'Ajustes para poder escanear códigos QR.',
-                  action: _closeButton(),
-                ),
-                ProductQrCameraAccess.unavailable => _CameraNotice(
-                  key: const ValueKey<String>('qr-scan-unavailable'),
-                  icon: Icons.videocam_off_outlined,
-                  message: 'Este dispositivo no tiene una cámara disponible.',
-                  action: _closeButton(),
-                ),
-                ProductQrCameraAccess.ready => widget.camera.preview(context),
-              },
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  // The preview stays mounted: the MobileScanner widget is
+                  // what attaches and starts the controller.
+                  widget.camera.preview(context),
+                  if (!ready) _accessNotice(),
+                ],
+              ),
             ),
             if (_rejection case final String message)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Semantics(
                   liveRegion: true,
                   label: message,
                   child: ExcludeSemantics(child: Text(message)),
                 ),
               ),
-            if (_access == ProductQrCameraAccess.ready)
+            if (ready)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Text(
@@ -181,6 +217,31 @@ class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
         ),
       ),
     );
+  }
+
+  Widget _accessNotice() {
+    return switch (_access) {
+      ProductQrCameraAccess.starting => const _CameraNotice(
+        key: ValueKey<String>('qr-scan-starting'),
+        icon: Icons.camera_alt_outlined,
+        message: 'Encendiendo la cámara…',
+      ),
+      ProductQrCameraAccess.denied => _CameraNotice(
+        key: const ValueKey<String>('qr-scan-denied'),
+        icon: Icons.no_photography_outlined,
+        message:
+            'No se permitió el acceso a la cámara. Actívalo en '
+            'Ajustes para poder escanear códigos QR.',
+        action: _closeButton(),
+      ),
+      ProductQrCameraAccess.unavailable => _CameraNotice(
+        key: const ValueKey<String>('qr-scan-unavailable'),
+        icon: Icons.videocam_off_outlined,
+        message: 'Este dispositivo no tiene una cámara disponible.',
+        action: _closeButton(),
+      ),
+      ProductQrCameraAccess.ready => const SizedBox.shrink(),
+    };
   }
 
   Widget _closeButton() => FilledButton(
@@ -204,26 +265,39 @@ class _CameraNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(icon, size: 48),
-            const SizedBox(height: 12),
-            Semantics(
-              liveRegion: true,
-              label: message,
-              child: ExcludeSemantics(
-                child: Text(message, textAlign: TextAlign.center),
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.72),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 48,
+                color: Theme.of(context).colorScheme.surface,
               ),
-            ),
-            if (action != null) ...<Widget>[
-              const SizedBox(height: 20),
-              action!,
+              const SizedBox(height: 12),
+              Semantics(
+                liveRegion: true,
+                label: message,
+                child: ExcludeSemantics(
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.surface,
+                    ),
+                  ),
+                ),
+              ),
+              if (action != null) ...<Widget>[
+                const SizedBox(height: 20),
+                action!,
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -232,44 +306,39 @@ class _CameraNotice extends StatelessWidget {
 
 /// The `mobile_scanner` adapter. It is only constructed on Android and iOS,
 /// where [productQrScanSupported] is true.
+///
+/// Every barcode symbology is decoded on purpose: a store shelf carries 1D
+/// barcodes too, and the sheet tells the seller that what was read is not a
+/// product QR instead of staying silent.
 class MobileScannerProductQrCamera implements ProductQrCamera {
   MobileScannerProductQrCamera({MobileScannerController? controller})
-    : _controller =
-          controller ??
-          MobileScannerController(
-            // Only product QR codes are decoded; other barcode symbologies
-            // found on packaging are reported as unusable, not as a search.
-            formats: const <BarcodeFormat>[BarcodeFormat.qrCode],
-          );
+    : _controller = controller ?? MobileScannerController();
 
   final MobileScannerController _controller;
 
   @override
   Stream<ProductQrReading> get readings =>
-      _controller.barcodes.map((BarcodeCapture capture) {
-        final Barcode? value = capture.barcodes.firstOrNull;
-        return ProductQrReading(
-          rawValue: value?.rawValue ?? '',
-          isQrCode: value?.format == BarcodeFormat.qrCode,
-        );
+      _controller.barcodes.expand((BarcodeCapture capture) sync* {
+        final ProductQrReading? reading = productQrReadingFromCapture(capture);
+        if (reading != null) yield reading;
       });
 
   @override
-  Future<ProductQrCameraAccess> start() async {
-    try {
-      await _controller.start();
-    } on MobileScannerException catch (error) {
-      return switch (error.errorCode) {
-        MobileScannerErrorCode.permissionDenied => ProductQrCameraAccess.denied,
-        _ => ProductQrCameraAccess.unavailable,
-      };
-    } catch (_) {
-      return ProductQrCameraAccess.unavailable;
-    }
-    if (!_controller.value.hasCameraPermission) {
-      return ProductQrCameraAccess.denied;
-    }
-    return ProductQrCameraAccess.ready;
+  Stream<ProductQrCameraAccess> get access {
+    // The controller is a ValueNotifier, so its state is bridged here. The
+    // current value is emitted on subscription, which is what the sheet sees
+    // before the preview has managed to start the camera.
+    late final StreamController<ProductQrCameraAccess> controller;
+    late final void Function() emit;
+    emit = () => controller.add(productQrCameraAccessFor(_controller.value));
+    controller = StreamController<ProductQrCameraAccess>.broadcast(
+      onListen: () {
+        emit();
+        _controller.addListener(emit);
+      },
+      onCancel: () => _controller.removeListener(emit),
+    );
+    return controller.stream;
   }
 
   @override
@@ -277,23 +346,11 @@ class MobileScannerProductQrCamera implements ProductQrCamera {
     key: const ValueKey<String>('qr-scan-preview'),
     controller: _controller,
     errorBuilder: (BuildContext context, MobileScannerException error) =>
-        error.errorCode == MobileScannerErrorCode.permissionDenied
-        ? const _CameraNotice(
-            icon: Icons.no_photography_outlined,
-            message:
-                'No se permitió el acceso a la cámara. Actívalo en '
-                'Ajustes para poder escanear códigos QR.',
-          )
-        : const _CameraNotice(
-            icon: Icons.videocam_off_outlined,
-            message: 'La cámara no está disponible en este momento.',
-          ),
+        const SizedBox.shrink(),
   );
 
   @override
-  Future<void> dispose() async {
-    await _controller.dispose();
-  }
+  Future<void> dispose() => _controller.dispose();
 }
 
 /// Pushes the camera sheet and returns the scanned payload, or null when the
