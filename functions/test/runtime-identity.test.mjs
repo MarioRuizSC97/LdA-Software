@@ -8,13 +8,14 @@ const PROJECT = 'lda-inventory-dev-mx';
 const GROUPS = {
   reader: ['quoteSale', 'findCorrectableSale', 'listRecentCorrectableSales',
     'previewSaleReturn', 'previewSaleExchange'],
-  writer: ['createProduct', 'setProductPrice', 'stockIntake', 'transferInventory',
+  writer: ['createProduct', 'renameProduct', 'setProductPrice', 'stockIntake', 'transferInventory',
     'submitSale', 'submitSaleReturn', 'submitSaleReplacement', 'submitSaleExchange',
     'markTransferNoticeRead'],
   profiles: ['setSellerProfile'],
 };
 const GUARD_MESSAGES = {
   createProduct: 'product creation is restricted to the local demo emulator',
+  renameProduct: 'product rename is restricted to the local demo emulator',
   setProductPrice: 'product pricing is restricted to the local demo emulator',
   stockIntake: 'stock intake is restricted to the local demo emulator',
   transferInventory: 'transfers are restricted to the local demo emulator',
@@ -55,10 +56,10 @@ for (const [group, names] of Object.entries(GROUPS)) {
   }
 }
 
-test('all fifteen callable exports are assigned exactly once', () => {
+test('all sixteen callable exports are assigned exactly once', () => {
   const names = Object.values(GROUPS).flat();
-  assert.equal(names.length, 15);
-  assert.equal(new Set(names).size, 15);
+  assert.equal(names.length, 16);
+  assert.equal(new Set(names).size, 16);
   assert.deepEqual(exportedNames(), names.sort());
 });
 

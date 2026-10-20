@@ -10,6 +10,7 @@ const ACCOUNT_BY_FUNCTION = Object.freeze({
   previewSaleReturn: 'reader',
   previewSaleExchange: 'reader',
   createProduct: 'writer',
+  renameProduct: 'writer',
   setProductPrice: 'writer',
   stockIntake: 'writer',
   transferInventory: 'writer',

@@ -41,10 +41,22 @@ Account IDs below use `@lda-inventory-dev-mx.iam.gserviceaccount.com`.
 | `lda-functions-writer` | `createProduct`, `setProductPrice`, `stockIntake`, `transferInventory`, `submitSale`, `submitSaleReturn`, `submitSaleReplacement`, `submitSaleExchange`, `markTransferNoticeRead` | `firestore-writer.json` |
 | `lda-functions-profiles` | `setSellerProfile` | `firestore-writer.json` **and** `auth-lookup.json` |
 
+### Candidate mapping (not deployed)
+
+| Account ID | Candidate function | Candidate role file | Status |
+| --- | --- | --- | --- |
+| `lda-functions-writer` | `renameProduct` | `firestore-writer.json` | Implemented in source (T8, `PRODUCT_NAMES.md`); not provisioned, not deployed. Reuses the writer's existing create/update permissions; needs no new role. The deployed set remains the 15 callables above. |
+
+The "Provisioned and deployed" statement above stays true: `renameProduct` is
+a source-level candidate only until the owner approves a deployment through
+the rollout gates.
+
 `src/runtime-identity.js` supplies explicit `serviceAccount` options to all 15
-callables, including shared sale wrappers. Unknown function names are rejected;
-there is no default-account fallback. Region, CORS, request authorization,
-project/emulator guards, and business handlers are unchanged. Importing the
+deployed callables, including shared sale wrappers. It also carries one
+not-yet-deployed candidate mapping (see the candidate table above); unknown
+function names are rejected; there is no default-account fallback. Region,
+CORS, request authorization, project/emulator guards, and business handlers
+are unchanged. Importing the
 configuration only builds SDK descriptors; it does not impersonate an account.
 Local emulators do **not** enforce these IAM roles.
 

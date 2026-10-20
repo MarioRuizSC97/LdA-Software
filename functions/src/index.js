@@ -9,6 +9,7 @@ import {
   assertLocalCatalogEmulator,
   createProductCreationService,
 } from './catalog.js';
+import { createProductRenameService } from './product-names.js';
 import {
   InventoryError,
   assertLocalInventoryEmulator,
@@ -93,6 +94,38 @@ export const createProduct = onCall(
         throw new HttpsError(error.code, error.message);
       }
       throw unexpectedFailure(error, 'product creation is temporarily unavailable');
+    }
+  },
+);
+
+/**
+ * Trusted-runtime administrator callable: renames a product without touching
+ * any other field. The catalog guard runs before Admin SDK initialization, so
+ * a function copied to any other project never connects. The immutable
+ * internal code stays the product identity; historical sale names are
+ * preserved because only `products/{id}.name` is updated.
+ */
+export const renameProduct = onCall(
+  callableRuntimeOptions('renameProduct', LOCAL_WEB_ORIGINS),
+  async (request) => {
+    try {
+      assertLocalCatalogEmulator();
+    } catch {
+      throw new HttpsError(
+        'failed-precondition',
+        'product rename is restricted to the local demo emulator',
+      );
+    }
+
+    try {
+      ensureDefaultApp();
+      const rename = createProductRenameService({ firestore: getFirestore() });
+      return await rename(request);
+    } catch (error) {
+      if (error instanceof CatalogError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      throw unexpectedFailure(error, 'product rename is temporarily unavailable');
     }
   },
 );
