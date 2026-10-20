@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/backend_environment.dart';
 import '../auth/emulator_session.dart';
@@ -25,6 +26,7 @@ import 'catalog_search.dart';
 import 'product_qr_scan.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
+import 'product_peek.dart';
 import 'product_qr.dart';
 import 'product_rename.dart';
 import 'stock_intake.dart';
@@ -3274,10 +3276,8 @@ class _ProductCard extends StatelessWidget {
   CatalogProduct get product => item.product;
 
   void _openDetails(BuildContext context) {
-    showModalBottomSheet<void>(
+    showProductPeek(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
       builder: (BuildContext context) => _ProductSheet(
         costLabel: costLabel,
         item: item,
@@ -3300,7 +3300,10 @@ class _ProductCard extends StatelessWidget {
       key: ValueKey<String>('product-card-${product.internalCode}'),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onLongPress: () => _openDetails(context),
+        onLongPress: () {
+          HapticFeedback.lightImpact();
+          _openDetails(context);
+        },
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -3352,8 +3355,7 @@ class _ProductCard extends StatelessWidget {
   }
 }
 
-/// Detail sheet for one product (S5): a scrollable modal bottom sheet on
-/// every platform, with the content capped at 560px on wide screens. The
+/// Detail content for one product (S5), presented in the S12 peek. The
 /// seller sees name, price, price mode, stock and the QR; the administrator
 /// additionally sees the IVA treatment and rate, unit and precision, the
 /// internal code, the latest cost, per-branch stock, and the pricing and
