@@ -912,7 +912,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             );
           },
         ),
-        title: const Text('LDA Inventory'),
+        title: _ShellTitle(
+          session: widget.session,
+          environment: widget.environment,
+        ),
         actions: <Widget>[
           if (corrections != null && !compactBar)
             TextButton.icon(
@@ -1005,10 +1008,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            _SessionStatus(
-              session: widget.session,
-              environment: widget.environment,
-            ),
             if (_creationSuccess case final ProductCreationResult result)
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
@@ -2416,41 +2415,47 @@ String? _creationPrecisionFieldError(int? precision) {
   return null;
 }
 
-class _SessionStatus extends StatelessWidget {
-  const _SessionStatus({required this.session, required this.environment});
+/// Display name derived from a branch id: `branch-centro-sur` reads as
+/// `Sucursal Centro Sur`. Sellers cannot read branch documents, so the id is
+/// the only source; ids are chosen to follow the branch name.
+String _branchDisplayName(String branchId) {
+  final String words = branchId
+      .replaceFirst(RegExp(r'^branch-'), '')
+      .split('-')
+      .where((String word) => word.isNotEmpty)
+      .map((String word) => word[0].toUpperCase() + word.substring(1))
+      .join(' ');
+  return 'Sucursal $words';
+}
+
+/// App title with a compact session line (role and branch, never the email)
+/// in place of a full-width session banner.
+class _ShellTitle extends StatelessWidget {
+  const _ShellTitle({required this.session, required this.environment});
 
   final EmulatorSession session;
   final BackendEnvironment environment;
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final TextStyle style = TextStyle(
-      color: colors.onSecondaryContainer,
-      fontWeight: FontWeight.w600,
-    );
-    return Semantics(
-      container: true,
-      liveRegion: true,
-      label: environment.sessionSemanticsLabel,
-      child: ColoredBox(
-        color: colors.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 12,
-            runSpacing: 4,
-            children: <Widget>[
-              Text(environment.signedInLabel, style: style),
-              Text(session.email, style: style),
-              Text('Rol: ${_roleDisplayName(session.role)}', style: style),
-              if (session.branchId case final String branchId)
-                Text('Sucursal: $branchId', style: style),
-            ],
-          ),
+    final String status = <String>[
+      ?environment.sessionStatusPrefix,
+      _roleDisplayName(session.role),
+      if (session.branchId case final String branchId)
+        _branchDisplayName(branchId),
+    ].join(' · ');
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text('LDA Inventory'),
+        Text(
+          status,
+          key: const ValueKey<String>('session-status'),
+          style: Theme.of(context).textTheme.labelMedium,
+          overflow: TextOverflow.ellipsis,
         ),
-      ),
+      ],
     );
   }
 }

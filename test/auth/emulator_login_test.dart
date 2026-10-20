@@ -441,7 +441,7 @@ void main() {
       expect(find.textContaining('emulador'), findsNothing);
     });
 
-    testWidgets('the signed-in banner says the session started', (
+    testWidgets('the signed-in app bar shows the session without the email', (
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(
@@ -462,9 +462,13 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Sesión iniciada'), findsOneWidget);
-      expect(find.text('Autenticado localmente'), findsNothing);
-      expect(find.text('Rol: Vendedor'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Emulador local'), findsNothing);
+      expect(find.textContaining('Vendedor'), findsOneWidget);
+      expect(find.text('seller@example.com'), findsNothing);
     });
   });
 
@@ -502,9 +506,10 @@ void main() {
 
     expect(gateway.submittedEmail, 'seller.north@demo-lda-inventory.invalid');
     expect(gateway.submittedPassword, 'Demo-Only-Seller-2026!');
-    expect(find.text('Autenticado localmente'), findsOneWidget);
-    expect(find.text('Rol: Vendedor'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsOneWidget);
+    expect(
+      find.text('Emulador local · Vendedor · Sucursal North'),
+      findsOneWidget,
+    );
     expect(find.text('Aún no hay productos'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -534,7 +539,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('secret network details'), findsNothing);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
   });
 
   testWidgets('logs out to the login form', (WidgetTester tester) async {
@@ -1212,7 +1217,7 @@ void main() {
     gateway.sessions.add(null);
     await tester.pumpAndSettle();
 
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -1232,8 +1237,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Administrador'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsNothing);
+    expect(find.text('Emulador local · Administrador'), findsOneWidget);
+    expect(find.textContaining('Sucursal North'), findsNothing);
 
     gateway.sessions.add(
       const EmulatorSession(
@@ -1244,9 +1249,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Vendedor'), findsOneWidget);
-    expect(find.text('Sucursal: branch-south'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsNothing);
+    expect(
+      find.text('Emulador local · Vendedor · Sucursal South'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('remote disablement clears session and fails closed', (
@@ -1259,7 +1265,7 @@ void main() {
     gateway.sessions.addError(const UntrustedSessionException());
     await tester.pumpAndSettle();
 
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.text('Sesión rechazada'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -1291,7 +1297,7 @@ void main() {
       find.text('Emulador local de autenticación no disponible'),
       findsNothing,
     );
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
   });
 
   testWidgets('connection retry reuses the initialized gateway', (
@@ -1492,7 +1498,10 @@ void main() {
         find.text('Inicio de sesión en el emulador local'),
         findsOneWidget,
       );
-      expect(find.text('Autenticado localmente'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsNothing,
+      );
       expect(catalogCalls, 0);
       expect(
         tester
@@ -1510,7 +1519,10 @@ void main() {
       newLogin.complete(_seller);
       await tester.pumpAndSettle();
 
-      expect(find.text('Autenticado localmente'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsOneWidget,
+      );
       expect(catalogCalls, 1);
     },
   );
@@ -1676,7 +1688,10 @@ void main() {
           findsNothing,
         );
         expect(find.textContaining('private'), findsNothing);
-        expect(find.text('Autenticado localmente'), findsNothing);
+        expect(
+          find.byKey(const ValueKey<String>('session-status')),
+          findsNothing,
+        );
         expect(find.byType(CircularProgressIndicator), findsNothing);
         expect(catalogCalls, 0);
         expect(
@@ -1727,7 +1742,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('private Firebase'), findsNothing);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(catalogCalls, 0);
     final Semantics announcement = tester.widget<Semantics>(
@@ -1756,7 +1771,10 @@ void main() {
     );
     gateway.loginCompleter!.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
@@ -1901,7 +1919,10 @@ void main() {
 
     newLogin.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
   });
 
@@ -1933,12 +1954,18 @@ void main() {
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
 
     login.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
   });
 
@@ -1977,7 +2004,7 @@ void main() {
     login.complete(_seller);
     await tester.pumpAndSettle();
     expect(find.text('Sesión rechazada'), findsOneWidget);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(catalogCalls, 0);
   });
 
@@ -2009,7 +2036,10 @@ void main() {
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
@@ -2018,7 +2048,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(catalogCalls, 1);
   });
 
@@ -2097,7 +2127,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Administrador'), findsOneWidget);
+    expect(find.text('Emulador local · Administrador'), findsOneWidget);
     expect(catalogCalls, 3);
   });
 
