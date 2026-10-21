@@ -54,12 +54,13 @@ class SaleAddControl extends StatelessWidget {
       } else {
         // 'Agregar' adds one product unit and shows the stepper at once
         // (S13); a larger quantity is typed by tapping the stepper's
-        // quantity. It is the card's primary action (S3).
+        // quantity. It is the card's primary action (S3), drawn with the
+        // soft tonal fill so it does not clash with the white card (S11).
         final bool inStock = controller.fitsLoadedStock(
           productId,
           BigInt.from(10).pow(product.quantitySpec.precision).toInt(),
         );
-        control = FilledButton.icon(
+        control = FilledButton.tonalIcon(
           key: ValueKey<String>('sale-add-$productId'),
           onPressed: controller.canEdit && inStock
               ? () => controller.saveEntry(
