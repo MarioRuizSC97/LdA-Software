@@ -189,3 +189,29 @@ unfocuses before checking normal cart behavior; the chained creation/pricing
 close loop waits 400 ms rather than 300 ms (assertions unchanged). Shared
 Flutter code covers Android/iOS/web without packages or platform edits.
 Browser/hardware scrolling and native simulator proof remain parent checks.
+
+## T9J: calmer detail price (S20, shared presentation S7)
+
+The listed price in `_ProductSheet` now uses `colorScheme.onSurface` rather
+than `primary`, matching the catalog card's neutral ink emphasis. Its
+`titleLarge` size, w700 weight, amount formatting, currency and Spanish copy
+are unchanged. The name header, secondary attributes, QR surface, role gates
+and actions are untouched. The only catalog source hunk is the price's color
+at `lib/catalog/catalog_page.dart:3620`; no packages or platform files change.
+
+`test/catalog/product_detail_price_palette_test.dart` opens the public page
+and detail action for seller and administrator, on Android/iOS widget layouts
+at 390×844 in light and dark themes (eight cases). It pins neutral ink,
+non-primary color, exact price text, size/weight, contrast of at least 4.5:1
+against the sheet's canvas surface, and unchanged name/attribute/QR styling.
+These widget checks are not native simulator or browser visual proof.
+
+RED: after correcting a fixture branch ID, all eight palette cases failed
+because the price was primary; the 21 existing detail/peek tests passed.
+GREEN: the source color change and an updated color expectation in the
+existing detail hierarchy test pass 29 focused tests. A test-only follow-up
+reads the effective inherited text theme (MaterialApp resolves typography)
+rather than comparing against an unresolved ThemeData text style.
+Full suite: 1237 passed + 1 existing skip (baseline 1229 + 1); analyze clean.
+Integration should retain this single price-color hunk alongside the other
+workers' disjoint catalog edits. No commits or publication performed.
