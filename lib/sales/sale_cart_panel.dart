@@ -132,13 +132,23 @@ class _ControlSwapState extends State<_ControlSwap> {
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       transitionBuilder: (Widget child, Animation<double> animation) {
-        // Reverse means the child is the outgoing control: silence it.
+        // Reverse means the child is the outgoing control: silence it for
+        // pointers, focus and assistive technology while it fades.
         return AnimatedBuilder(
           animation: animation,
-          builder: (BuildContext context, Widget? built) => IgnorePointer(
-            ignoring: animation.status == AnimationStatus.reverse,
-            child: FadeTransition(opacity: animation, child: built),
-          ),
+          builder: (BuildContext context, Widget? built) {
+            final bool outgoing = animation.status == AnimationStatus.reverse;
+            return IgnorePointer(
+              ignoring: outgoing,
+              child: ExcludeFocus(
+                excluding: outgoing,
+                child: ExcludeSemantics(
+                  excluding: outgoing,
+                  child: FadeTransition(opacity: animation, child: built),
+                ),
+              ),
+            );
+          },
           child: child,
         );
       },
