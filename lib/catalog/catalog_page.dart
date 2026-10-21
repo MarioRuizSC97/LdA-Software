@@ -2999,7 +2999,8 @@ class _CreationToolbar extends StatelessWidget {
     alignment: Alignment.centerRight,
     child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: FilledButton.icon(
+      // Same soft tonal treatment as the card's 'Agregar' (S22).
+      child: FilledButton.tonalIcon(
         onPressed: onPressed,
         icon: const Icon(Icons.add),
         label: const Text('Crear producto'),

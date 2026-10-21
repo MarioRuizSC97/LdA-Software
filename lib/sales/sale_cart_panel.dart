@@ -452,7 +452,7 @@ class SaleCartButton extends StatelessWidget {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: FilledButton.icon(
+          child: FilledButton.tonalIcon(
             key: const ValueKey<String>('sale-cart-button'),
             onPressed: onPressed,
             icon: const Icon(Icons.shopping_cart_outlined),
