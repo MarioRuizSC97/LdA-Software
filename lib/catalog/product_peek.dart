@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -26,12 +27,24 @@ Future<void> showProductPeek({
       ),
       SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          // The keyboard inset is absorbed here (not inside the sheet) so the
+          // centered card rises above the keyboard instead of growing.
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
           child: Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: 560,
-                maxHeight: MediaQuery.sizeOf(context).height * .88,
+                maxHeight: math.min(
+                  MediaQuery.sizeOf(context).height * .88,
+                  MediaQuery.sizeOf(context).height -
+                      32 -
+                      MediaQuery.viewInsetsOf(context).bottom,
+                ),
               ),
               child: _PeekCard(child: builder(context)),
             ),

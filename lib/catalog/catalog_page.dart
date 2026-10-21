@@ -3377,8 +3377,11 @@ class _ProductCard extends StatelessWidget {
   }
 }
 
-/// Detail content for one product (S5), presented in the S12 peek. The
-/// seller sees name, price, price mode, stock and the QR; the administrator
+/// Detail content for one product (S1, S5), presented in the S12 peek. The
+/// sheet hugs its content: short seller details stay compact while tall
+/// administrator details (or large text) cap and scroll. The name and price
+/// lead the visual hierarchy and the QR sits on its own surface. The seller
+/// sees name, price, price mode, stock and the QR; the administrator
 /// additionally sees the IVA treatment and rate, unit and precision, the
 /// internal code, the latest cost, per-branch stock, and the pricing and
 /// intake actions. The unauthenticated diagnostic page (role null) keeps the
@@ -3405,136 +3408,156 @@ class _ProductSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final TextStyle? secondaryStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: colors.onSurfaceVariant,
+    );
     final bool administrator = role == InventoryRole.administrator;
     final bool fullDetails = administrator || role == null;
     final CatalogPricing? pricing = product.pricing;
-    return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            24,
-            0,
-            24,
-            24 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: ConstrainedBox(
-            key: ValueKey<String>('product-sheet-${product.internalCode}'),
-            constraints: BoxConstraints(
-              maxWidth: 560,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
+    // No Center here: the sheet must size to its content so short seller
+    // details do not stretch the peek card (S1). Keyboard avoidance lives in
+    // showProductPeek.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+      child: ConstrainedBox(
+        key: ValueKey<String>('product-sheet-${product.internalCode}'),
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Row(
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Semantics(
-                          header: true,
-                          child: Text(
-                            'Detalles del producto',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ),
+                  Expanded(
+                    child: Text(
+                      'Detalles del producto',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
                       ),
-                      IconButton(
-                        key: const ValueKey<String>('product-sheet-close'),
-                        tooltip: 'Cerrar detalles',
-                        onPressed: Navigator.of(context).pop,
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    product.name,
-                    style: Theme.of(context).textTheme.titleMedium,
+                  IconButton(
+                    key: const ValueKey<String>('product-sheet-close'),
+                    tooltip: 'Cerrar detalles',
+                    onPressed: Navigator.of(context).pop,
+                    icon: const Icon(Icons.close),
                   ),
-                  if (fullDetails) ...<Widget>[
-                    const SizedBox(height: 8),
-                    SelectableText(
-                      product.internalCode,
-                      semanticsLabel: 'Código interno ${product.internalCode}',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ],
-                  if (pricing case final CatalogPricing shown) ...<Widget>[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
-                      '${shown.currency}',
-                    ),
-                    const SizedBox(height: 4),
-                    Text('Modo de precio: ${_priceModeLabel(shown.priceMode)}'),
-                    if (fullDetails) ...<Widget>[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
-                      ),
-                    ],
-                  ],
-                  if (administrator && costLabel != null) ...<Widget>[
-                    const SizedBox(height: 4),
-                    Semantics(
-                      container: true,
-                      label: costLabel,
-                      excludeSemantics: true,
-                      child: Text(costLabel!),
-                    ),
-                  ],
-                  if (fullDetails) ...<Widget>[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Unidad: ${product.quantitySpec.unit} '
-                      '(precisión ${product.quantitySpec.precision})',
-                    ),
-                  ],
-                  if (role != null) ...<Widget>[
-                    const SizedBox(height: 8),
-                    ..._holdingLines(
-                      item: item,
-                      role: role,
-                      branchChoices: branchChoices,
-                    ),
-                  ],
-                  if (administrator && onConfigurePricing != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      key: ValueKey<String>(
-                        'configure-price-${product.internalCode}',
-                      ),
-                      // Close the sheet first, then open the existing flow.
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        onConfigurePricing!(product);
-                      },
-                      icon: const Icon(Icons.price_change_outlined),
-                      label: const Text('Editar precio / IVA'),
-                    ),
-                  ],
-                  if (administrator && onRecordIntake != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      key: ValueKey<String>('intake-${product.internalCode}'),
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        onRecordIntake!(product);
-                      },
-                      icon: const Icon(Icons.inventory_outlined),
-                      label: const Text('Registrar entrada de inventario'),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  Center(child: ProductQrView(product: product)),
                 ],
               ),
-            ),
+              Semantics(
+                header: true,
+                child: Text(
+                  product.name,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (fullDetails) ...<Widget>[
+                const SizedBox(height: 4),
+                SelectableText(
+                  product.internalCode,
+                  semanticsLabel: 'Código interno ${product.internalCode}',
+                  style: secondaryStyle,
+                ),
+              ],
+              if (pricing case final CatalogPricing shown) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
+                  '${shown.currency}',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: colors.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Modo de precio: ${_priceModeLabel(shown.priceMode)}',
+                  style: secondaryStyle,
+                ),
+                if (fullDetails) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
+                    style: secondaryStyle,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
+                    style: secondaryStyle,
+                  ),
+                ],
+              ],
+              if (administrator && costLabel != null) ...<Widget>[
+                const SizedBox(height: 4),
+                Semantics(
+                  container: true,
+                  label: costLabel,
+                  excludeSemantics: true,
+                  child: Text(costLabel!, style: secondaryStyle),
+                ),
+              ],
+              if (fullDetails) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  'Unidad: ${product.quantitySpec.unit} '
+                  '(precisión ${product.quantitySpec.precision})',
+                  style: secondaryStyle,
+                ),
+              ],
+              if (role != null) ...<Widget>[
+                const SizedBox(height: 8),
+                ..._holdingLines(
+                  item: item,
+                  role: role,
+                  branchChoices: branchChoices,
+                ),
+              ],
+              if (administrator && onConfigurePricing != null) ...<Widget>[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: ValueKey<String>(
+                    'configure-price-${product.internalCode}',
+                  ),
+                  // Close the sheet first, then open the existing flow.
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    onConfigurePricing!(product);
+                  },
+                  icon: const Icon(Icons.price_change_outlined),
+                  label: const Text('Editar precio / IVA'),
+                ),
+              ],
+              if (administrator && onRecordIntake != null) ...<Widget>[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: ValueKey<String>('intake-${product.internalCode}'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    onRecordIntake!(product);
+                  },
+                  icon: const Icon(Icons.inventory_outlined),
+                  label: const Text('Registrar entrada de inventario'),
+                ),
+              ],
+              const SizedBox(height: 16),
+              // Separate QR surface (S1) so the code reads as its own block.
+              Container(
+                key: ValueKey<String>(
+                  'product-sheet-qr-${product.internalCode}',
+                ),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Center(child: ProductQrView(product: product)),
+              ),
+            ],
           ),
         ),
       ),
