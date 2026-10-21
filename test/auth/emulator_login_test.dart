@@ -319,10 +319,22 @@ Future<CatalogSnapshot> _intakeCatalog(EmulatorSession session) async =>
       ],
     );
 
-Future<void> _submitExistingPricing(WidgetTester tester) async {
-  await tester.tap(
-    find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
+/// Opens the product detail sheet (T5) and then the pricing flow from it.
+Future<void> _openProductSheet(WidgetTester tester, String code) async {
+  await tester.ensureVisible(
+    find.byKey(ValueKey<String>('product-details-$code')),
   );
+  await tester.tap(find.byKey(ValueKey<String>('product-details-$code')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _submitExistingPricing(WidgetTester tester) async {
+  await _openProductSheet(tester, 'PRD-COFFEE-001');
+  final Finder configure = find.byKey(
+    const ValueKey<String>('configure-price-PRD-COFFEE-001'),
+  );
+  await tester.ensureVisible(configure);
+  await tester.tap(configure);
   await tester.pumpAndSettle();
   final Finder save = find.widgetWithText(FilledButton, 'Guardar precio / IVA');
   await tester.ensureVisible(save);
@@ -441,7 +453,7 @@ void main() {
       expect(find.textContaining('emulador'), findsNothing);
     });
 
-    testWidgets('the signed-in banner says the session started', (
+    testWidgets('the signed-in app bar shows the session without the email', (
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(
@@ -462,9 +474,13 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Sesión iniciada'), findsOneWidget);
-      expect(find.text('Autenticado localmente'), findsNothing);
-      expect(find.text('Rol: Vendedor'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Emulador local'), findsNothing);
+      expect(find.textContaining('Vendedor'), findsOneWidget);
+      expect(find.text('seller@example.com'), findsNothing);
     });
   });
 
@@ -502,9 +518,10 @@ void main() {
 
     expect(gateway.submittedEmail, 'seller.north@demo-lda-inventory.invalid');
     expect(gateway.submittedPassword, 'Demo-Only-Seller-2026!');
-    expect(find.text('Autenticado localmente'), findsOneWidget);
-    expect(find.text('Rol: Vendedor'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsOneWidget);
+    expect(
+      find.text('Emulador local · Vendedor · Sucursal North'),
+      findsOneWidget,
+    );
     expect(find.text('Aún no hay productos'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -534,7 +551,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('secret network details'), findsNothing);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
   });
 
   testWidgets('logs out to the login form', (WidgetTester tester) async {
@@ -1212,7 +1229,7 @@ void main() {
     gateway.sessions.add(null);
     await tester.pumpAndSettle();
 
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -1232,8 +1249,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Administrador'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsNothing);
+    expect(find.text('Emulador local · Administrador'), findsOneWidget);
+    expect(find.textContaining('Sucursal North'), findsNothing);
 
     gateway.sessions.add(
       const EmulatorSession(
@@ -1244,9 +1261,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Vendedor'), findsOneWidget);
-    expect(find.text('Sucursal: branch-south'), findsOneWidget);
-    expect(find.text('Sucursal: branch-north'), findsNothing);
+    expect(
+      find.text('Emulador local · Vendedor · Sucursal South'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('remote disablement clears session and fails closed', (
@@ -1259,7 +1277,7 @@ void main() {
     gateway.sessions.addError(const UntrustedSessionException());
     await tester.pumpAndSettle();
 
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.text('Sesión rechazada'), findsOneWidget);
     expect(find.text('Coffee'), findsNothing);
   });
@@ -1291,7 +1309,7 @@ void main() {
       find.text('Emulador local de autenticación no disponible'),
       findsNothing,
     );
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
   });
 
   testWidgets('connection retry reuses the initialized gateway', (
@@ -1492,7 +1510,10 @@ void main() {
         find.text('Inicio de sesión en el emulador local'),
         findsOneWidget,
       );
-      expect(find.text('Autenticado localmente'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsNothing,
+      );
       expect(catalogCalls, 0);
       expect(
         tester
@@ -1510,7 +1531,10 @@ void main() {
       newLogin.complete(_seller);
       await tester.pumpAndSettle();
 
-      expect(find.text('Autenticado localmente'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('session-status')),
+        findsOneWidget,
+      );
       expect(catalogCalls, 1);
     },
   );
@@ -1676,7 +1700,10 @@ void main() {
           findsNothing,
         );
         expect(find.textContaining('private'), findsNothing);
-        expect(find.text('Autenticado localmente'), findsNothing);
+        expect(
+          find.byKey(const ValueKey<String>('session-status')),
+          findsNothing,
+        );
         expect(find.byType(CircularProgressIndicator), findsNothing);
         expect(catalogCalls, 0);
         expect(
@@ -1727,7 +1754,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('private Firebase'), findsNothing);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(catalogCalls, 0);
     final Semantics announcement = tester.widget<Semantics>(
@@ -1756,7 +1783,10 @@ void main() {
     );
     gateway.loginCompleter!.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
     await tester.pumpAndSettle();
@@ -1901,7 +1931,10 @@ void main() {
 
     newLogin.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
   });
 
@@ -1933,12 +1966,18 @@ void main() {
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
 
     login.complete(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
   });
 
@@ -1977,7 +2016,7 @@ void main() {
     login.complete(_seller);
     await tester.pumpAndSettle();
     expect(find.text('Sesión rechazada'), findsOneWidget);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(catalogCalls, 0);
   });
 
@@ -2009,7 +2048,10 @@ void main() {
 
     gateway.sessions.add(_seller);
     await tester.pumpAndSettle();
-    expect(find.text('Autenticado localmente'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
     expect(catalogCalls, 1);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar sesión'));
@@ -2018,7 +2060,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Inicio de sesión en el emulador local'), findsOneWidget);
-    expect(find.text('Autenticado localmente'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-status')), findsNothing);
     expect(catalogCalls, 1);
   });
 
@@ -2097,7 +2139,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Rol: Administrador'), findsOneWidget);
+    expect(find.text('Emulador local · Administrador'), findsOneWidget);
     expect(catalogCalls, 3);
   });
 
@@ -2330,11 +2372,11 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-TEA-002');
       final Finder configureTea = find.byKey(
         const ValueKey<String>('configure-price-PRD-TEA-002'),
       );
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
-      await tester.pumpAndSettle();
+      await tester.ensureVisible(configureTea);
       await tester.tap(configureTea);
       await tester.pumpAndSettle();
       expect(
@@ -2352,11 +2394,11 @@ void main() {
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       final Finder configureCoffee = find.byKey(
         const ValueKey<String>('configure-price-PRD-COFFEE-001'),
       );
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, 500));
-      await tester.pumpAndSettle();
+      await tester.ensureVisible(configureCoffee);
       await tester.tap(configureCoffee);
       await tester.pumpAndSettle();
 
@@ -2868,7 +2910,9 @@ void main() {
       await tester.pumpAndSettle();
       final EmulatorLoginShellState shell = shellKey.currentState!;
 
-      // The administrator opens the visible intake form and submits.
+      // The administrator opens the visible intake form and submits, through
+      // the product detail sheet (T5).
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
@@ -2928,6 +2972,7 @@ void main() {
       // through the visible form with a fresh gateway.
       auth.sessions.add(_administrator);
       await tester.pumpAndSettle();
+      await _openProductSheet(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
@@ -3030,6 +3075,11 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      // Notices live in the overflow menu (T10/S10); its items are built at
+      // open time.
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey<String>('notices-open')),
         findsOneWidget,

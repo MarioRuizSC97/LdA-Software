@@ -28,13 +28,10 @@ enum BackendEnvironment {
     production => 'No se pudo iniciar sesión.',
   };
 
-  String get signedInLabel => switch (this) {
-    localEmulator => 'Autenticado localmente',
-    production => 'Sesión iniciada',
-  };
-
-  String get sessionSemanticsLabel => switch (this) {
-    localEmulator => 'Sesión local autenticada del catálogo',
-    production => 'Sesión autenticada del catálogo',
+  /// Leads the app bar session status, or null for none. Production shows
+  /// only role and branch; local sessions stay visibly marked as local.
+  String? get sessionStatusPrefix => switch (this) {
+    localEmulator => 'Emulador local',
+    production => null,
   };
 }

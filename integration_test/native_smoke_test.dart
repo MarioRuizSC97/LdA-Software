@@ -53,8 +53,11 @@ void main() {
     }
 
     await _pumpUntil(tester, catalog);
-    expect(find.text('Autenticado localmente'), findsOneWidget);
-    expect(find.text(_sellerEmail), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('session-status')),
+      findsOneWidget,
+    );
+    expect(find.text(_sellerEmail), findsNothing);
     expect(catalog, findsOneWidget);
 
     // Narrow screens move Correcciones into the overflow menu.

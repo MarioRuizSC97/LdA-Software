@@ -676,7 +676,10 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Traslado entre sucursales'), findsOneWidget);
       expect(find.text('Sucursal de origen'), findsOneWidget);
-    });
+      // Desktop/web keeps this narrow-window layout with the refresh button
+      // in the bar (S2); the mobile app bar is covered in
+      // mobile_app_bar_test.dart.
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
     testWidgets('the entry adds no overflow beyond the 320px baseline', (
       WidgetTester tester,

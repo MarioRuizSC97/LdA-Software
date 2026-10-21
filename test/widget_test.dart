@@ -250,6 +250,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'rename gateway loader defaults follow the selected connected mode',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          productionEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      EmulatorLoginShell shell = tester.widget<EmulatorLoginShell>(
+        find.byType(EmulatorLoginShell),
+      );
+      expect(
+        shell.productRenameGatewayLoader,
+        same(ProductionFirebaseBootstrap.initializeProductRenameGateway),
+      );
+
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          localEmulatorsEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      shell = tester.widget<EmulatorLoginShell>(
+        find.byType(EmulatorLoginShell),
+      );
+      expect(
+        shell.productRenameGatewayLoader,
+        same(DemoEmulatorBootstrap.initializeProductRenameGateway),
+      );
+    },
+  );
+
   testWidgets('production and local-emulator flags together stay offline', (
     WidgetTester tester,
   ) async {
@@ -335,6 +374,11 @@ void main() {
         );
         await tester.pumpAndSettle();
 
+        // Notices live in the overflow menu (T10/S10); its items are built
+        // at open time.
+        await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         expect(
           find.byKey(const ValueKey<String>('notices-open')),
           findsOneWidget,
@@ -444,6 +488,11 @@ void main() {
       expect(app.title, 'LDA Inventory');
       expect(find.text('Catálogo'), findsOneWidget);
       expect(find.text('Test product'), findsOneWidget);
+      // The QR lives in the product detail sheet (S5).
+      await tester.tap(
+        find.byKey(const ValueKey<String>('product-details-PRD-TEST-001')),
+      );
+      await tester.pumpAndSettle();
       expect(
         find.bySemanticsLabel('Código QR de Test product. Código PRD-TEST-001'),
         findsOneWidget,

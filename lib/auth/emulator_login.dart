@@ -6,6 +6,8 @@ import '../app/backend_environment.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import '../catalog/product_rename.dart';
+import '../catalog/product_qr_scan.dart';
 import '../catalog/stock_intake.dart';
 import '../corrections/correction_draft.dart';
 import '../corrections/correction_receipt.dart';
@@ -38,6 +40,9 @@ typedef ProductCreationGatewayLoader = Future<ProductCreationGateway> Function(
 typedef ProductPricingGatewayLoader = Future<ProductPricingGateway> Function(
   EmulatorSession session,
 );
+typedef ProductRenameGatewayLoader = Future<ProductRenameGateway> Function(
+  EmulatorSession session,
+);
 typedef StockIntakeGatewayLoader = Future<EmulatorStockIntakeGateway> Function(
   EmulatorSession session,
 );
@@ -53,6 +58,7 @@ class EmulatorLoginShell extends StatefulWidget {
     required this.catalogLoader,
     this.productCreationGatewayLoader,
     this.productPricingGatewayLoader,
+    this.productRenameGatewayLoader,
     this.stockIntakeGatewayLoader,
     this.saleGatewayLoader,
     this.correctionGatewayLoader,
@@ -72,6 +78,10 @@ class EmulatorLoginShell extends StatefulWidget {
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader? productCreationGatewayLoader;
   final ProductPricingGatewayLoader? productPricingGatewayLoader;
+
+  /// Administrator rename gateway loader; null hides the rename section for
+  /// every role.
+  final ProductRenameGatewayLoader? productRenameGatewayLoader;
   final StockIntakeGatewayLoader? stockIntakeGatewayLoader;
 
   /// Seller sale gateway loader; null hides the cart for every role.
@@ -116,6 +126,8 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       ProductCreationDraftStore();
   final ProductPricingDraftStore _productPricingDrafts =
       ProductPricingDraftStore();
+  final _ProductRenameDraftStore _productRenameDrafts =
+      _ProductRenameDraftStore();
 
   // Intake draft retention is intentionally volatile: this store lives only in
   // this live shell state. There is no disk, preference, database, or global
@@ -1027,6 +1039,65 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     );
   }
 
+  /// Exact rename submit API consumed by the authenticated page (S7 rename
+  /// slice): freezes ownership and the immutable request under the current
+  /// exact administrator before gateway initialization or transport, then
+  /// resolves only the current attempt's proven success or deterministic
+  /// rejection. Mirrors [EmulatorLoginShellState._setProductPrice]; every
+  /// attempt — including a retry — initializes a fresh gateway bound to the
+  /// current validated session.
+  Future<ProductRenameResult> _renameProduct(ProductRenameDraft draft) async {
+    final EmulatorSession? session = _session;
+    final ProductRenameGatewayLoader? loader =
+        widget.productRenameGatewayLoader;
+    if (!_isExactAdministrator(session) || loader == null) {
+      throw const ProductRenameSessionException();
+    }
+
+    // Freeze ownership and the exact payload before gateway initialization or
+    // any network operation. Initialization failure therefore remains retryable.
+    final _ProductRenameAttempt attempt = _productRenameDrafts.begin(
+      ownerUserId: session!.userId,
+      draft: draft,
+    );
+    try {
+      final ProductRenameGateway gateway = await loader(session);
+      final ProductRenameResult result = await gateway.renameProduct(draft);
+      if (!_isSameCurrentAdministrator(session)) {
+        throw const ProductRenameUncertainException();
+      }
+      if (!_productRenameDrafts.resolve(attempt)) {
+        throw const ProductRenameStaleException();
+      }
+      return result;
+    } on ProductRenameRejectedException {
+      if (!_isSameCurrentAdministrator(session)) {
+        _productRenameDrafts.retain(attempt);
+        throw const ProductRenameUncertainException();
+      }
+      if (!_productRenameDrafts.resolve(attempt)) {
+        throw const ProductRenameStaleException();
+      }
+      rethrow;
+    } catch (_) {
+      _productRenameDrafts.retain(attempt);
+      rethrow;
+    }
+  }
+
+  /// Exact rename lookup API the authenticated page (S7 rename slice) calls
+  /// for the current exact administrator's unresolved rename draft.
+  ProductRenameDraft? _unresolvedRenameDraftFor(
+    EmulatorSession originatingSession,
+    String productId,
+  ) {
+    if (!_isSameCurrentAdministrator(originatingSession)) return null;
+    return _productRenameDrafts.unresolvedFor(
+      originatingSession.userId,
+      productId,
+    );
+  }
+
   ProductPricingDraft? _unresolvedPricingDraftFor(
     EmulatorSession originatingSession,
     String productId,
@@ -1069,6 +1140,7 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
         session,
       );
       final Widget page = AuthenticatedCatalogPage(
+        qrScan: productQrScanSupported ? showProductQrScanner : null,
         key: ValueKey<String>(
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),
@@ -1087,6 +1159,15 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
             _isExactAdministrator(session) &&
                 widget.productPricingGatewayLoader != null
             ? _setProductPrice
+            : null,
+        renameProduct:
+            _isExactAdministrator(session) &&
+                widget.productRenameGatewayLoader != null
+            ? _renameProduct
+            : null,
+        unresolvedRenameDraftForProduct: _isExactAdministrator(session)
+            ? (String productId) =>
+                  _unresolvedRenameDraftFor(session, productId)
             : null,
         unresolvedPricingDraftForProduct: _isExactAdministrator(session)
             ? (String productId) =>
@@ -1429,4 +1510,83 @@ class _LoginViewState extends State<_LoginView> {
       ),
     ),
   );
+}
+
+/// One in-flight rename per owner and product; the stored draft and its
+/// idempotency key stay frozen until a definite outcome resolves them.
+class _ProductRenameAttempt {
+  const _ProductRenameAttempt({
+    required this.ownerUserId,
+    required this.draft,
+    required this.revision,
+  });
+
+  final String ownerUserId;
+  final ProductRenameDraft draft;
+  final int revision;
+}
+
+/// Volatile, live-shell-only retention of unresolved rename requests,
+/// mirroring [ProductPricingDraftStore]: an uncertain rename survives closing
+/// the price panel, logout, role replacement, and same-UID administrator
+/// reentry on this live shell, so its retry reuses the frozen draft and
+/// idempotency key. There is no disk, preference, database, or global
+/// singleton persistence.
+class _ProductRenameDraftStore {
+  final Map<String, Map<String, _StoredProductRenameDraft>> _drafts =
+      <String, Map<String, _StoredProductRenameDraft>>{};
+
+  ProductRenameDraft? unresolvedFor(String ownerUserId, String productId) =>
+      _drafts[ownerUserId]?[productId]?.draft;
+
+  _ProductRenameAttempt begin({
+    required String ownerUserId,
+    required ProductRenameDraft draft,
+  }) {
+    if (ownerUserId.isEmpty) throw const ProductRenameSessionException();
+    draft.validate();
+    final Map<String, _StoredProductRenameDraft> ownerDrafts = _drafts
+        .putIfAbsent(ownerUserId, () => <String, _StoredProductRenameDraft>{});
+    final _StoredProductRenameDraft? current = ownerDrafts[draft.productId];
+    if (current != null && current.draft != draft) {
+      throw StateError(
+        'an unresolved rename draft already exists for ${draft.productId}',
+      );
+    }
+    final int revision = (current?.revision ?? 0) + 1;
+    ownerDrafts[draft.productId] = _StoredProductRenameDraft(draft, revision);
+    return _ProductRenameAttempt(
+      ownerUserId: ownerUserId,
+      draft: draft,
+      revision: revision,
+    );
+  }
+
+  bool isCurrent(_ProductRenameAttempt attempt) {
+    final _StoredProductRenameDraft? current =
+        _drafts[attempt.ownerUserId]?[attempt.draft.productId];
+    return current != null &&
+        current.revision == attempt.revision &&
+        current.draft == attempt.draft;
+  }
+
+  bool resolve(_ProductRenameAttempt attempt) {
+    if (!isCurrent(attempt)) return false;
+    final Map<String, _StoredProductRenameDraft> ownerDrafts =
+        _drafts[attempt.ownerUserId]!;
+    ownerDrafts.remove(attempt.draft.productId);
+    if (ownerDrafts.isEmpty) _drafts.remove(attempt.ownerUserId);
+    return true;
+  }
+
+  void retain(_ProductRenameAttempt attempt) {
+    // begin() froze the request. Stale attempts cannot recreate or replace it.
+  }
+}
+
+class _StoredProductRenameDraft {
+  const _StoredProductRenameDraft(this.draft, this.revision);
+
+  final ProductRenameDraft draft;
+  final int revision;
 }

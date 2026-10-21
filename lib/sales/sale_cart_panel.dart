@@ -19,7 +19,9 @@ String _totalLabel(SaleCartController controller) {
 }
 
 /// Per-card "Agregar" action, or the inline quantity entry for the product
-/// being added or edited.
+/// being added or edited. Once the product is in the cart the card shows the
+/// same stepper as the cart line (S11), bound to the same controller so card
+/// and cart stay in sync.
 class SaleAddControl extends StatelessWidget {
   const SaleAddControl({
     required this.controller,
@@ -43,19 +45,180 @@ class SaleAddControl extends StatelessWidget {
           quantitySpec: product.quantitySpec,
         );
       }
+      final SaleCartLine? line = controller.lineFor(productId);
+      if (line != null) {
+        return SaleLineStepper(controller: controller, line: line);
+      }
+      // 'Agregar' adds one product unit and shows the stepper at once (S13);
+      // a larger quantity is typed by tapping the stepper's quantity.
+      final bool inStock = controller.fitsLoadedStock(
+        productId,
+        BigInt.from(10).pow(product.quantitySpec.precision).toInt(),
+      );
       return OutlinedButton.icon(
         key: ValueKey<String>('sale-add-$productId'),
-        onPressed: controller.canEdit
-            ? () => controller.startEntry(productId)
+        onPressed: controller.canEdit && inStock
+            ? () => controller.saveEntry(
+                productId: productId,
+                name: product.name,
+                quantitySpec: product.quantitySpec,
+                quantity: '1',
+              )
             : null,
         icon: const Icon(Icons.add_shopping_cart_outlined),
         label: Text(
-          'Agregar',
-          semanticsLabel: 'Agregar ${product.name} al carrito',
+          inStock ? 'Agregar' : 'Agotado',
+          semanticsLabel: inStock
+              ? 'Agregar ${product.name} al carrito'
+              : '${product.name}: Agotado',
         ),
       );
     },
   );
+}
+
+/// Quantity stepper shared by the cart line and the product card (S11):
+/// trash at one unit / minus above, the quantity (tap to type), and plus.
+/// It edits exactly the given [line] through the controller, so every
+/// mounted copy shows the same cart.
+class SaleLineStepper extends StatelessWidget {
+  const SaleLineStepper({
+    required this.controller,
+    required this.line,
+    super.key,
+  });
+
+  final SaleCartController controller;
+  final SaleCartLine line;
+
+  void _step(int scaled) {
+    controller.saveEntry(
+      productId: line.productId,
+      name: line.name,
+      quantitySpec: line.quantitySpec,
+      quantity: formatScaledQuantity(scaled, line.quantitySpec.precision),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    // Step by one product unit, keeping fractional quantities exact. A
+    // quantity at or below one unit is removed instead of becoming zero.
+    final int unitScaled = BigInt.from(10)
+        .pow(line.quantitySpec.precision)
+        .toInt();
+    final bool removeOnDecrease = line.quantityScaled <= unitScaled;
+    final bool stockAllowsIncrease = controller.fitsLoadedStock(
+      line.productId,
+      line.quantityScaled + unitScaled,
+    );
+    final bool canIncrease =
+        line.quantityScaled <= maxSafeSaleInteger - unitScaled &&
+        stockAllowsIncrease;
+    // The compact product card (S4) can be far narrower than a cart line —
+    // below the shell's compact-bar width the card grid is at most two
+    // columns — so the controls shrink there instead of overflowing. The
+    // FittedBox is a final guard (it supports dry layout, unlike a
+    // LayoutBuilder inside the IntrinsicHeight grid) and scales down only
+    // when nothing else fits, e.g. extreme text scales.
+    final bool compact = MediaQuery.sizeOf(context).width < 600;
+    final BoxConstraints? iconConstraints = compact
+        ? const BoxConstraints(minWidth: 36, minHeight: 36)
+        : null;
+    final VisualDensity density = compact
+        ? VisualDensity.compact
+        : VisualDensity.standard;
+    final Widget pill = DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outline),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            IconButton(
+              visualDensity: density,
+              constraints: iconConstraints,
+              padding: compact ? EdgeInsets.zero : null,
+              key: ValueKey<String>(
+                removeOnDecrease
+                    ? 'sale-line-remove-${line.productId}'
+                    : 'sale-line-decrement-${line.productId}',
+              ),
+              tooltip: removeOnDecrease
+                  ? 'Quitar ${line.name} del carrito'
+                  : 'Disminuir cantidad de ${line.name}',
+              onPressed: !controller.canEdit
+                  ? null
+                  : removeOnDecrease
+                  ? () => controller.remove(line.productId)
+                  : () => _step(line.quantityScaled - unitScaled),
+              icon: Icon(
+                removeOnDecrease ? Icons.delete_outline : Icons.remove,
+              ),
+            ),
+            Tooltip(
+              message: 'Editar cantidad de ${line.name}',
+              child: TextButton(
+                style: compact
+                    ? TextButton.styleFrom(
+                        visualDensity: density,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      )
+                    : null,
+                key: ValueKey<String>('sale-line-edit-${line.productId}'),
+                onPressed: controller.canEdit
+                    ? () => controller.startEntry(line.productId)
+                    : null,
+                child: Text(
+                  line.quantity,
+                  semanticsLabel:
+                      'Editar cantidad de ${line.name}: '
+                      '${line.quantity} ${line.quantitySpec.unit}',
+                ),
+              ),
+            ),
+            IconButton(
+              visualDensity: density,
+              constraints: iconConstraints,
+              padding: compact ? EdgeInsets.zero : null,
+              key: ValueKey<String>('sale-line-increment-${line.productId}'),
+              tooltip: stockAllowsIncrease
+                  ? 'Aumentar cantidad de ${line.name}'
+                  : 'No hay más existencias',
+              onPressed: controller.canEdit && canIncrease
+                  ? () => _step(line.quantityScaled + unitScaled)
+                  : null,
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+      ),
+    );
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        pill,
+        // Keep direct removal available for multi-unit lines too.
+        if (!removeOnDecrease)
+          IconButton(
+            key: ValueKey<String>('sale-line-remove-${line.productId}'),
+            tooltip: 'Quitar ${line.name} del carrito',
+            onPressed: controller.canEdit
+                ? () => controller.remove(line.productId)
+                : null,
+            icon: const Icon(Icons.delete_outline),
+          ),
+      ],
+    );
+  }
 }
 
 /// Inline quantity entry validated at the product precision. Editing a
@@ -361,33 +524,7 @@ class _SaleLineTile extends StatelessWidget {
                 quantitySpec: line.quantitySpec,
               )
             else
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  TextButton.icon(
-                    key: ValueKey<String>('sale-line-edit-${line.productId}'),
-                    onPressed: controller.canEdit
-                        ? () => controller.startEntry(line.productId)
-                        : null,
-                    icon: const Icon(Icons.edit_outlined),
-                    label: Text(
-                      'Editar',
-                      semanticsLabel: 'Editar cantidad de ${line.name}',
-                    ),
-                  ),
-                  TextButton.icon(
-                    key: ValueKey<String>('sale-line-remove-${line.productId}'),
-                    onPressed: controller.canEdit
-                        ? () => controller.remove(line.productId)
-                        : null,
-                    icon: const Icon(Icons.delete_outline),
-                    label: Text(
-                      'Quitar',
-                      semanticsLabel: 'Quitar ${line.name} del carrito',
-                    ),
-                  ),
-                ],
-              ),
+              SaleLineStepper(controller: controller, line: line),
           ],
         ),
       ),

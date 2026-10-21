@@ -10,6 +10,7 @@ import '../auth/emulator_session.dart';
 import '../catalog/catalog_repository.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
+import '../catalog/product_rename.dart';
 import '../firebase_options.dart';
 import '../movements/administrator_movements.dart';
 import '../transfers/transfer_notice_controller.dart';
@@ -121,6 +122,20 @@ abstract final class ProductionFirebaseBootstrap {
   ) => _live(
     (FirebaseAuth auth, _, FirebaseFunctions functions) =>
         LiveFirebaseGateways.productPricing(
+          auth: auth,
+          functions: functions,
+          session: session,
+        ),
+  );
+
+  /// Administrator product rename over the `renameProduct` callable, built
+  /// from the production app's own Functions instance for region us-south1,
+  /// never the default singleton.
+  static Future<ProductRenameGateway> initializeProductRenameGateway(
+    EmulatorSession session,
+  ) => _live(
+    (FirebaseAuth auth, _, FirebaseFunctions functions) =>
+        LiveFirebaseGateways.productRename(
           auth: auth,
           functions: functions,
           session: session,

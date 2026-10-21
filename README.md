@@ -192,3 +192,32 @@ Validated on 2026-10-16: demo seller sign-in and the live catalog on the iOS
 Not yet validated: physical iOS devices, release signing, and store builds
 (TestFlight / Play). Android command-line tools are still missing; Gradle
 builds work without them.
+
+## Camera scan on a device
+
+`integration_test/qr_scan_device_test.dart` checks the product QR scanner on
+real hardware: it opens the sheet, waits for one of the real camera outcomes
+(ready, permission denied, or no camera), and closes it again. It never uses
+the emulators, and plain `flutter test` does not run it.
+
+`flutter test` builds, installs, runs and then uninstalls the app, so grant the
+camera permission first; otherwise the sheet shows the denied state on purpose:
+
+```sh
+adb shell pm grant com.ldasoftware.lda_inventory android.permission.CAMERA
+flutter test integration_test/qr_scan_device_test.dart -d <device-id>
+```
+
+The second test decodes a code that a person has to aim at, so it is opt-in:
+
+```sh
+flutter test integration_test/qr_scan_device_test.dart -d <device-id> \
+  --dart-define=LDA_CAMERA_DETECTION=true
+```
+
+Show a product QR on another screen while it runs: it waits up to 60 seconds
+and passes only when the decoded payload is the code the search matches
+(`PRD-COFFEE-001` in the fixture).
+
+Validated 2026-10-20 on a physical Huawei HBP-LX9 (Android 12): both tests
+green.

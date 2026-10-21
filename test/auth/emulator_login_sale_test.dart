@@ -143,15 +143,20 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _addRibbon(WidgetTester tester) async {
+  await _tap(tester, _key('sale-add-DEMO-RIBBON'));
+  await _tap(tester, _key('sale-line-edit-DEMO-RIBBON'));
+  await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
+  await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+}
+
 /// Adds two meters of ribbon and charges. A [held] submit's spinner never
 /// settles, so the charge tap only pumps its first frames.
 Future<void> _addRibbonAndCharge(
   WidgetTester tester, {
   bool held = false,
 }) async {
-  await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-  await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
-  await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+  await _addRibbon(tester);
   await _tap(tester, _key('sale-cart-button'));
   if (!held) {
     await _tap(tester, _key('sale-charge'));
@@ -230,8 +235,6 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
-    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
     await _tap(tester, _key('sale-cart-button'));
 
     expect(backend.loads, 1);
@@ -239,6 +242,10 @@ void main() {
 
     await _tap(tester, _key('sale-retry-quote'));
     expect(backend.loads, 2);
+    expect(find.textContaining('10.00 MXN'), findsWidgets);
+    await _tap(tester, _key('sale-line-edit-DEMO-RIBBON'));
+    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
+    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
     expect(find.textContaining('20.00 MXN'), findsWidgets);
 
     await _tap(tester, _key('sale-charge'));
@@ -254,9 +261,7 @@ void main() {
       _app(_SessionGateway(restored: _seller), saleLoader: backend.load),
     );
     await tester.pumpAndSettle();
-    await _tap(tester, _key('sale-add-DEMO-RIBBON'));
-    await tester.enterText(_key('sale-quantity-DEMO-RIBBON'), '2');
-    await _tap(tester, _key('sale-entry-save-DEMO-RIBBON'));
+    await _addRibbon(tester);
     await _tap(tester, _key('sale-cart-button'));
     backend.current = _otherSeller;
     await _tap(tester, _key('sale-charge'));

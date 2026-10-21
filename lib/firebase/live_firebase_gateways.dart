@@ -10,6 +10,7 @@ import '../transfers/transfer_notice_controller.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_product_creation_gateway.dart';
 import 'emulator_product_pricing_gateway.dart';
+import 'emulator_product_rename_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_seller_profile_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
@@ -82,6 +83,16 @@ abstract final class LiveFirebaseGateways {
     expectedSession: session,
     sessionChecker: activeSessionChecker(auth),
     invoke: firebaseProductPricingCallable(functions),
+  );
+
+  static EmulatorProductRenameGateway productRename({
+    required FirebaseAuth auth,
+    required FirebaseFunctions functions,
+    required EmulatorSession session,
+  }) => EmulatorProductRenameGateway(
+    expectedSession: session,
+    sessionChecker: activeSessionChecker(auth),
+    invoke: firebaseProductRenameCallable(functions),
   );
 
   static EmulatorStockIntakeGateway stockIntake({

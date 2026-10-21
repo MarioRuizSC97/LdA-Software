@@ -1,0 +1,88 @@
+# Catalog search (v1.0 UI, T6)
+
+The inventory list has a typed search input above the products, for every
+platform and for both roles. It is the store-facing way to find a product
+without scrolling the whole catalog.
+
+## What a query matches
+
+A query is matched against the product **name** and the product **internal
+code**. The internal code is also the QR payload
+(`lib/catalog/product_qr.dart`, `ProductQr.payloadFor`), so a code read from a
+printed label can be typed directly and behaves like any other query.
+
+Matching rules (`lib/catalog/catalog_search.dart`):
+
+| Rule | Example |
+| --- | --- |
+| Case-insensitive | `cafe` and `CAFE` both find `Café Grano Selecto` |
+| Spanish accents folded | `cafe` finds `Café`, `te` finds `Té` |
+| Surrounding and repeated whitespace collapsed | `"  CAFÉ  "` behaves as `cafe` |
+| Substring, not prefix | `select` finds `Café Grano Selecto` |
+| Every term must match the **same** product, in its name or its code | `agua 002` narrows to one product, `grano 002` finds nothing |
+| Term order is irrelevant | `002 agua` behaves as `agua 002` |
+| Empty or whitespace-only query | the full list, in its original order |
+
+Only the characters a Spanish catalog uses are folded (`á à ä â ã`, `é è ë ê`,
+`í ì ï î`, `ó ò ö ô õ`, `ú ù ü û`, `ñ`, `ç`). A query with no matching product
+shows a "Sin resultados" panel with a clear action instead of an empty list.
+
+## Behaviour on reload
+
+Reloading the catalog keeps the list already on screen while the new snapshot
+is fetched, so the typed query and its filtered results survive the reload.
+A failed load still shows the "Catálogo no disponible" retry panel, and the
+first load still shows the loading panel.
+
+## Test anchors
+
+`test/catalog/catalog_search_test.dart` covers the matcher rules and the list
+behaviour through the public widgets (`CatalogPage`, `AuthenticatedCatalogPage`)
+using these keys, declared in `lib/catalog/catalog_search.dart`:
+
+- `catalogSearchFieldKey` — `catalog-search`
+- `catalogSearchClearKey` — `catalog-search-clear`
+- `catalogSearchLabel` — `Buscar por nombre o código`, the visible label and the
+  announced semantics label.
+
+## Scanning the product QR with the camera
+
+On Android and iOS the search field offers a camera entry point
+(`catalog-search-scan`). One scan is enough: the camera closes, the payload is
+typed into the search field and the existing matcher filters the list, so a
+scanned code and a typed code behave identically. Web and desktop show the
+typed search only.
+
+A product QR carries the internal code (`lib/catalog/product_qr.dart`,
+`ProductQr.payloadFor`), which is exactly what the search matches. The scanner
+decodes QR codes only (`BarcodeFormat.qrCode`), so a barcode printed on
+packaging is reported as "El código leído no es un QR de producto" and the
+camera stays open instead of silently filtering the list.
+
+Permission and hardware problems are explained in Spanish and always leave a
+way out:
+
+| Situation | Message |
+| --- | --- |
+| Camera starting | `Encendiendo la cámara…` |
+| Permission denied | `No se permitió el acceso a la cámara. Actívalo en Ajustes para poder escanear códigos QR.` |
+| No camera on the device | `Este dispositivo no tiene una cámara disponible.` |
+| Code read is not a QR | `El código leído no es un QR de producto.` (the camera stays open) |
+
+Platform setup:
+
+- **iOS**: `NSCameraUsageDescription` in `ios/Runner/Info.plist`.
+- **Android**: the `mobile_scanner` plugin merges `CAMERA` and
+  `<uses-feature android:name="android.hardware.camera" android:required="false"/>`;
+  nothing to declare in the app manifest. The **bundled** ML Kit barcode model
+  is used (no `dev.steenbakker.mobile_scanner.useUnbundled` flag), so scanning
+  works offline and on devices without Google Play Services, at the cost of a
+  larger APK.
+- Cancelling, or a scan that yields nothing, leaves the search untouched.
+
+## Out of scope
+
+Advanced filters (price, stock, branch) are a future release. Scanning from a
+photo in the gallery is not offered. Real camera behaviour on a device is
+verified manually; the automated tests drive the sheet through a fake camera so
+no test needs a lens.

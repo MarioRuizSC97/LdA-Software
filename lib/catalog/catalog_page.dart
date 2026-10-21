@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/backend_environment.dart';
 import '../auth/emulator_session.dart';
@@ -20,15 +22,22 @@ import '../transfers/transfer_notice_controller.dart';
 import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
+import 'catalog_search.dart';
+import 'product_qr_scan.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
+import 'product_peek.dart';
 import 'product_qr.dart';
+import 'product_rename.dart';
 import 'stock_intake.dart';
 
 typedef CatalogSnapshotLoader = Future<CatalogSnapshot> Function(
   EmulatorSession session,
 );
 typedef ProductPricingDraftLookup = ProductPricingDraft? Function(
+  String productId,
+);
+typedef ProductRenameDraftLookup = ProductRenameDraft? Function(
   String productId,
 );
 typedef StockIntakeSubmit = Future<StockIntakeResult> Function(
@@ -41,10 +50,19 @@ typedef StockIntakeDraftLookup = StockIntakeDraft? Function(
 );
 
 class CatalogPage extends StatefulWidget {
-  const CatalogPage({required this.repository, this.statusLabel, super.key});
+  const CatalogPage({
+    required this.repository,
+    this.statusLabel,
+    this.qrScan,
+    super.key,
+  });
 
   final CatalogRepository repository;
   final String? statusLabel;
+
+  /// Opens the product QR camera and returns the code to search for. It is
+  /// offered only on Android and iOS; web and desktop keep the typed search.
+  final ProductQrScanOpener? qrScan;
 
   @override
   State<CatalogPage> createState() => _CatalogPageState();
@@ -52,6 +70,10 @@ class CatalogPage extends StatefulWidget {
 
 class _CatalogPageState extends State<CatalogPage> {
   late Future<List<CatalogProduct>> _products;
+
+  /// Products of the last successful load, kept so a reload does not unmount
+  /// the list and lose the search query typed in it.
+  List<CatalogProduct>? _lastProducts;
 
   @override
   void initState() {
@@ -73,6 +95,16 @@ class _CatalogPageState extends State<CatalogPage> {
     setState(_load);
   }
 
+  Widget _catalogList(List<CatalogProduct> products) => _CatalogList(
+    qrScan: widget.qrScan,
+    items: products
+        .map(
+          (CatalogProduct product) =>
+              CatalogItem(product: product, holdings: const <CatalogHolding>[]),
+        )
+        .toList(growable: false),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -90,26 +122,25 @@ class _CatalogPageState extends State<CatalogPage> {
                       BuildContext context,
                       AsyncSnapshot<List<CatalogProduct>> snapshot,
                     ) {
-                      if (snapshot.connectionState != ConnectionState.done) {
-                        return const _CatalogLoading();
+                      if (snapshot.data
+                          case final List<CatalogProduct> loaded) {
+                        _lastProducts = loaded;
                       }
                       if (snapshot.hasError) {
                         return _CatalogError(onRetry: _retry);
+                      }
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        // A reload keeps the list already on screen, so the
+                        // search query and its results survive it.
+                        return _lastProducts == null
+                            ? const _CatalogLoading()
+                            : _catalogList(_lastProducts!);
                       }
 
                       final List<CatalogProduct> products =
                           snapshot.data ?? const <CatalogProduct>[];
                       if (products.isEmpty) return const _EmptyCatalog();
-                      return _CatalogList(
-                        items: products
-                            .map(
-                              (CatalogProduct product) => CatalogItem(
-                                product: product,
-                                holdings: const <CatalogHolding>[],
-                              ),
-                            )
-                            .toList(growable: false),
-                      );
+                      return _catalogList(products);
                     },
               ),
             ),
@@ -133,6 +164,8 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createPricingId,
     this.unresolvedPricingDrafts = const <ProductPricingDraft>[],
     this.unresolvedPricingDraftForProduct,
+    this.renameProduct,
+    this.unresolvedRenameDraftForProduct,
     this.submitStockIntake,
     this.createIntakeId,
     this.unresolvedIntakeDraftFor,
@@ -144,6 +177,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.unresolvedTransferDraft,
     this.createTransferId,
     this.transferNotices,
+    this.qrScan,
     super.key,
   });
 
@@ -160,6 +194,15 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final ProductPricingIdFactory? createPricingId;
   final List<ProductPricingDraft> unresolvedPricingDrafts;
   final ProductPricingDraftLookup? unresolvedPricingDraftForProduct;
+
+  /// Administrator-only rename submit seam inside the price panel; null hides
+  /// the name section. Name and price stay separate operations with separate
+  /// submits, so a partial failure can never mix them.
+  final ProductRenameSubmit? renameProduct;
+
+  /// Live lookup of the shell-retained unresolved rename draft for one
+  /// product; a draft is offered back only to its owning exact administrator.
+  final ProductRenameDraftLookup? unresolvedRenameDraftForProduct;
   final StockIntakeSubmit? submitStockIntake;
   final StockIntakeIdFactory? createIntakeId;
   final StockIntakeDraftLookup? unresolvedIntakeDraftFor;
@@ -191,6 +234,10 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   /// streams stay alive while the seller navigates inside the shell.
   final TransferNoticeControllerFactory? transferNotices;
 
+  /// Opens the product QR camera and returns the code to search for. It is
+  /// offered only on Android and iOS; web and desktop keep the typed search.
+  final ProductQrScanOpener? qrScan;
+
   @override
   State<AuthenticatedCatalogPage> createState() =>
       _AuthenticatedCatalogPageState();
@@ -201,6 +248,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   final TextEditingController _unit = TextEditingController();
   final TextEditingController _listedPrice = TextEditingController();
   final TextEditingController _ivaRate = TextEditingController();
+  final TextEditingController _renameName = TextEditingController();
   final TextEditingController _intakeQuantity = TextEditingController();
   final TextEditingController _intakeCost = TextEditingController();
   CatalogSnapshot? _snapshot;
@@ -228,6 +276,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   String? _ivaTreatment;
   bool _pricingPending = false;
   bool _pricingUncertain = false;
+  ProductRenameDraft? _lockedRenameDraft;
+  ProductRenameResult? _renameSuccess;
+  String? _renameError;
+  String? _renameNameError;
+  bool _renamePending = false;
+  bool _renameUncertain = false;
+  int _renameGeneration = 0;
   CatalogProduct? _intakeProduct;
   StockIntakeDraft? _lockedIntakeDraft;
   StockIntakeResult? _intakeSuccess;
@@ -318,8 +373,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _successfulCreationDraft = null;
       _configureCreation();
     }
-    if (sessionChanged || oldWidget.setProductPrice != widget.setProductPrice) {
+    if (sessionChanged ||
+        oldWidget.setProductPrice != widget.setProductPrice ||
+        oldWidget.renameProduct != widget.renameProduct) {
       _pricingGeneration += 1;
+      _renameGeneration += 1;
       _clearPricingPresentation();
     }
     if (sessionChanged ||
@@ -595,11 +653,24 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       item.product,
   ];
 
+  int? _availableSaleStock(String productId) {
+    for (final CatalogItem item in _snapshot?.items ?? const <CatalogItem>[]) {
+      if (item.product.internalCode != productId) continue;
+      for (final CatalogHolding holding in item.holdings) {
+        if (holding.branchId == widget.session.branchId) {
+          return holding.quantityScaled;
+        }
+      }
+    }
+    return null;
+  }
+
   void _configureSale() {
     final SaleCheckout? checkout = widget.saleCheckout;
     _sale = widget.session.role == InventoryRole.seller && checkout != null
         ? SaleCartController(
             checkout: checkout,
+            availableScaled: _availableSaleStock,
             onCompleted: _saleCompleted,
             onReceiptPending: _saleReceiptPending,
           )
@@ -678,6 +749,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _unit.dispose();
     _listedPrice.dispose();
     _ivaRate.dispose();
+    _renameName.dispose();
     _intakeQuantity.dispose();
     _intakeCost.dispose();
     super.dispose();
@@ -727,22 +799,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _pricingUncertain = false;
     _listedPrice.clear();
     _ivaRate.clear();
+    _cancelSuccessNotice('rename');
+    _renameSuccess = null;
+    _lockedRenameDraft = null;
+    _renameError = null;
+    _renameNameError = null;
+    _renamePending = false;
+    _renameUncertain = false;
+    _renameName.clear();
   }
 
   void _restorePricingDraft(CatalogSnapshot snapshot) {
-    if (widget.session.role != InventoryRole.administrator ||
-        widget.setProductPrice == null ||
+    if (widget.session.role != InventoryRole.administrator) return;
+    final bool pricingAvailable = widget.setProductPrice != null;
+    final bool renameAvailable = widget.renameProduct != null;
+    if ((!pricingAvailable && !renameAvailable) ||
         _pricingProduct != null ||
-        _pricingSuccess != null) {
+        _pricingSuccess != null ||
+        _renameSuccess != null) {
       return;
     }
     for (final CatalogItem item in snapshot.items) {
-      final ProductPricingDraft? draft = _unresolvedPricingDraftFor(
-        item.product.internalCode,
-      );
-      if (draft == null) continue;
+      final ProductPricingDraft? pricing = pricingAvailable
+          ? _unresolvedPricingDraftFor(item.product.internalCode)
+          : null;
+      final ProductRenameDraft? rename = renameAvailable
+          ? _unresolvedRenameDraftFor(item.product.internalCode)
+          : null;
+      if (pricing == null && rename == null) continue;
       _pricingProduct = item.product;
-      _lockPricingDraft(draft);
+      if (pricing != null) _lockPricingDraft(pricing);
+      if (rename != null) _lockRenameDraft(rename);
       break;
     }
   }
@@ -769,6 +856,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _ivaRate.text = draft.ivaRatePercent ?? '';
     _pricingUncertain = true;
     _pricingError = _uncertainOutcomeMessage;
+  }
+
+  ProductRenameDraft? _unresolvedRenameDraftFor(String productId) =>
+      widget.unresolvedRenameDraftForProduct?.call(productId);
+
+  void _lockRenameDraft(ProductRenameDraft draft) {
+    _renameNameError = null;
+    _lockedRenameDraft = draft;
+    _renameName.text = draft.name;
+    _renameUncertain = true;
+    _renameError = _uncertainOutcomeMessage;
   }
 
   void _clearIntakePresentation() {
@@ -835,6 +933,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _snapshot = snapshot;
         _loading = false;
       });
+      // A refresh may reveal stock changes for an unchanged cart. Keep its
+      // quantities and let a fresh server quote decide availability.
+      if (_sale?.cart.isEmpty == false) _sale?.retryQuote();
       return snapshot;
     } catch (_) {
       if (!mounted || generation != _generation) return null;
@@ -866,6 +967,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool compactBar =
         MediaQuery.sizeOf(context).width <
         _compactShellWidth * MediaQuery.textScalerOf(context).scale(1);
+    // Mobile means an Android or iOS app build, never a web browser: a narrow
+    // web window must keep the desktop app bar even though a phone browser
+    // reports an Android/iOS platform (S2).
+    final TargetPlatform platform = Theme.of(context).platform;
+    final bool mobilePlatform =
+        !kIsWeb &&
+        (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
+    // On mobile the overflow menu always exists so Reload stays reachable at
+    // every window width; on web/desktop it appears only when compact.
+    final bool menuActions = mobilePlatform || compactBar;
     final VoidCallback? openCorrections = showCorrections || showTransfer
         ? null
         : _showCorrections;
@@ -882,10 +993,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
           : null,
       appBar: AppBar(
+        // The title centers on Android and iOS only (S2); desktop and web
+        // keep Flutter's platform default at every window width.
+        centerTitle: mobilePlatform ? true : null,
         // Navigation lives in the leading slot: it has its own width, so it
         // never crowds the action row or adds height above a form on a
         // narrow phone. "Volver" (left) appears only while a panel is open;
-        // "Inicio" sits to its right.
+        // "Inicio" sits to its right — on mobile only while a panel is open,
+        // because at the main panel the home icon is redundant (S2).
         leadingWidth: _openPanelClosers().isEmpty ? null : 104,
         leading: ListenableBuilder(
           listenable: Listenable.merge(<Listenable>[?sale]),
@@ -902,17 +1017,25 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     onPressed: enabled ? _goBack : null,
                     icon: const Icon(Icons.arrow_back),
                   ),
-                IconButton(
-                  key: const ValueKey<String>('shell-home'),
-                  tooltip: 'Inicio',
-                  onPressed: enabled ? _goHome : null,
-                  icon: const Icon(Icons.home_outlined),
-                ),
+                // "Inicio" appears only while a panel is open, on every
+                // platform: at the main panel the home icon is redundant
+                // (S2, extended to web/desktop by S9).
+                if (panelOpen)
+                  IconButton(
+                    key: const ValueKey<String>('shell-home'),
+                    tooltip: 'Inicio',
+                    onPressed: enabled ? _goHome : null,
+                    icon: const Icon(Icons.home_outlined),
+                  ),
               ],
             );
           },
         ),
-        title: const Text('LDA Inventory'),
+        title: _ShellTitle(
+          session: widget.session,
+          environment: widget.environment,
+          centered: mobilePlatform,
+        ),
         actions: <Widget>[
           if (corrections != null && !compactBar)
             TextButton.icon(
@@ -921,30 +1044,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               icon: const Icon(Icons.assignment_return_outlined),
               label: const Text('Correcciones'),
             ),
-          if (noticeController != null)
+          // Transfer notices (S10) live in the overflow menu wherever that
+          // menu exists — always on Android/iOS, on web/desktop when the bar
+          // is compact — as its first entry. The wide web/desktop bar keeps
+          // its own icon.
+          if (noticeController != null && !menuActions)
             IconButton(
               key: const ValueKey<String>('notices-open'),
               tooltip: 'Avisos de traslados',
               onPressed: showNotices ? null : _showNotices,
-              // Screen readers hear the badge state in words, not the bare
-              // count or the '!' glyph.
-              icon: Semantics(
-                label: unreadNotices == null
-                    ? 'sin confirmar'
-                    : unreadNotices > 0
-                    ? '$unreadNotices sin leer'
-                    : null,
-                child: ExcludeSemantics(
-                  child: Badge(
-                    isLabelVisible: unreadNotices == null || unreadNotices > 0,
-                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                    backgroundColor: unreadNotices == null
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    child: const Icon(Icons.inbox_outlined),
-                  ),
-                ),
-              ),
+              icon: _noticeBadge(context, unreadNotices),
             ),
           if (movements != null && !compactBar)
             TextButton.icon(
@@ -953,18 +1062,69 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               icon: const Icon(Icons.swap_vert),
               label: const Text('Movimientos'),
             ),
-          IconButton(
-            tooltip: 'Actualizar catálogo',
-            onPressed: _loading ? null : _requestCatalog,
-            icon: const Icon(Icons.refresh),
-          ),
-          if (compactBar)
+          // On mobile the refresh button leaves the bar (S2): Reload lives
+          // in the overflow menu below, so the bar spends no space on it.
+          // Desktop and web keep the bar button at every window width.
+          if (!mobilePlatform)
+            IconButton(
+              tooltip: 'Actualizar catálogo',
+              onPressed: _loading ? null : _requestCatalog,
+              icon: const Icon(Icons.refresh),
+            ),
+          if (menuActions)
             PopupMenuButton<VoidCallback>(
               key: const ValueKey<String>('shell-more'),
+              // Three bars on mobile (S2); web/desktop keeps the three dots.
+              // The unread-notice badge rides on the menu icon itself, and
+              // screen readers hear the unread notices named on the button.
+              // Only a session with transfer notices can have an unread
+              // badge; administrators have none.
+              icon: Semantics(
+                label: noticeController == null
+                    ? null
+                    : unreadNotices == null
+                    ? 'sin confirmar'
+                    : unreadNotices > 0
+                    ? 'Avisos de traslados: $unreadNotices sin leer'
+                    : null,
+                child: ExcludeSemantics(
+                  child: Badge(
+                    isLabelVisible:
+                        noticeController != null &&
+                        (unreadNotices == null || unreadNotices > 0),
+                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+                    backgroundColor: unreadNotices == null
+                        ? Theme.of(context).colorScheme.surfaceContainerHighest
+                        : null,
+                    child: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
+                  ),
+                ),
+              ),
               onSelected: (VoidCallback action) => action(),
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<VoidCallback>>[
-                    if (corrections != null)
+                    // First entry for the fastest access (S10); the count on
+                    // the item is read when the menu opens.
+                    if (noticeController != null)
+                      PopupMenuItem<VoidCallback>(
+                        key: const ValueKey<String>('notices-open'),
+                        enabled: !showNotices,
+                        value: _showNotices,
+                        child: ListTile(
+                          leading: _noticeBadge(context, unreadNotices),
+                          title: const Text('Avisos de traslados'),
+                        ),
+                      ),
+                    if (mobilePlatform)
+                      PopupMenuItem<VoidCallback>(
+                        enabled: !_loading,
+                        value: _requestCatalog,
+                        child: const ListTile(
+                          leading: Icon(Icons.refresh),
+                          title: Text('Actualizar catálogo'),
+                        ),
+                      ),
+                    if (corrections != null && compactBar)
                       PopupMenuItem<VoidCallback>(
                         key: const ValueKey<String>('corrections-open'),
                         enabled: openCorrections != null,
@@ -974,7 +1134,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           title: Text('Correcciones'),
                         ),
                       ),
-                    if (movements != null)
+                    if (movements != null && compactBar)
                       PopupMenuItem<VoidCallback>(
                         key: const ValueKey<String>('movements-open'),
                         enabled: openMovements != null,
@@ -984,16 +1144,19 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           title: Text('Movimientos'),
                         ),
                       ),
-                    PopupMenuItem<VoidCallback>(
-                      value: widget.onLogout,
-                      child: const ListTile(
-                        leading: Icon(Icons.logout),
-                        title: Text('Cerrar sesión'),
+                    if (compactBar)
+                      PopupMenuItem<VoidCallback>(
+                        value: widget.onLogout,
+                        child: const ListTile(
+                          leading: Icon(Icons.logout),
+                          title: Text('Cerrar sesión'),
+                        ),
                       ),
-                    ),
                   ],
-            )
-          else ...<Widget>[
+            ),
+          // The inline logout keeps its place whenever the bar is wide enough
+          // for it — mobile only moved Reload out of the bar (S2c).
+          if (!compactBar) ...<Widget>[
             OutlinedButton(
               onPressed: widget.onLogout,
               child: const Text('Cerrar sesión'),
@@ -1005,14 +1168,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            _SessionStatus(
-              session: widget.session,
-              environment: widget.environment,
-            ),
             if (_creationSuccess case final ProductCreationResult result)
               _CreationSuccess(result: result),
             if (_pricingSuccess case final ProductPricingResult result)
               _PricingSuccess(result: result),
+            if (_renameSuccess case final ProductRenameResult result)
+              _RenameSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
               _IntakeSuccess(result: result),
             if (transfer != null)
@@ -1365,6 +1526,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
       product.internalCode,
     );
+    final ProductRenameDraft? unresolvedRename = _unresolvedRenameDraftFor(
+      product.internalCode,
+    );
     final CatalogPricing? pricing = product.pricing;
     setState(() {
       _pricingProduct = product;
@@ -1392,11 +1556,26 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _ivaTreatment = null;
         _ivaRate.clear();
       }
+      // The name section is a separate operation with its own state: an
+      // unresolved rename restores its own locked draft, otherwise the field
+      // simply offers the current product name.
+      if (unresolvedRename != null) {
+        _lockRenameDraft(unresolvedRename);
+      } else {
+        _cancelSuccessNotice('rename');
+        _renameSuccess = null;
+        _renameError = null;
+        _renameNameError = null;
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameName.text = product.name;
+      }
     });
   }
 
   void _closePricing() {
-    if (_pricingPending) return;
+    if (_pricingPending || _renamePending) return;
     _presentationRevision += 1;
     setState(() {
       _pricingProduct = null;
@@ -1404,6 +1583,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _priceModeError = null;
       _ivaTreatmentError = null;
       _ivaRateError = null;
+      _renameNameError = null;
+      _renameError = null;
     });
   }
 
@@ -1547,6 +1728,111 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           _pricingUncertain = true;
           _lockedPricingDraft = draft;
           _pricingError = _uncertainOutcomeMessage;
+        }
+      });
+    }
+  }
+
+  bool get _renameLocked => _renamePending || _renameUncertain;
+
+  /// Separate rename submit (S7): name and price stay independent operations,
+  /// so a partial failure can never mix them. The uncertain pattern mirrors
+  /// [_submitPricing]: an unresolved draft keeps its frozen idempotency key
+  /// and the retry resends the exact same request.
+  Future<void> _submitRename() async {
+    final CatalogProduct? product = _pricingProduct;
+    final ProductRenameSubmit? submit = widget.renameProduct;
+    if (product == null || submit == null || _renamePending) return;
+    if (!_renameUncertain) {
+      final String? nameError = _creationNameFieldError(_renameName.text);
+      if (nameError != null) {
+        setState(() {
+          _renameError = null;
+          _renameNameError = nameError;
+        });
+        return;
+      }
+    }
+    ProductRenameDraft draft;
+    try {
+      final ProductRenameDraft? authoritative = _unresolvedRenameDraftFor(
+        product.internalCode,
+      );
+      if (authoritative != null) _lockRenameDraft(authoritative);
+      draft =
+          authoritative ??
+          (_renameUncertain
+              ? _lockedRenameDraft!
+              : ProductRenameDraft(
+                  idempotencyKey: createProductRenameIdempotencyKey(),
+                  productId: product.internalCode,
+                  name: _renameName.text,
+                ));
+      draft.validate();
+    } on ProductRenameValidationException catch (error) {
+      setState(() => _renameError = error.message);
+      return;
+    }
+
+    final int generation = ++_renameGeneration;
+    _lockedRenameDraft ??= draft;
+    setState(() {
+      _renamePending = true;
+      _renameError = null;
+    });
+    try {
+      final ProductRenameResult result = await submit(draft);
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _pricingProduct = null;
+        _renameSuccess = result;
+        _expireSuccessNotice('rename', () => _renameSuccess = null);
+      });
+      await _requestCatalog();
+    } on ProductRenameValidationException catch (error) {
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameError = error.message;
+      });
+    } on ProductRenameSessionException {
+      // Definite: the exact administrator session ended before any write.
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _renameError =
+            'Tu sesión ya no permite editar nombres. Vuelve a '
+            'iniciar sesión.';
+      });
+    } on ProductRenameRejectedException catch (error) {
+      if (!mounted || generation != _renameGeneration) return;
+      setState(() {
+        _renamePending = false;
+        _renameUncertain = false;
+        _lockedRenameDraft = null;
+        _renameError = _renameRejectionMessage(error.code);
+      });
+    } on ProductRenameStaleException {
+      // A newer attempt or session owns presentation authority.
+    } catch (_) {
+      if (!mounted || generation != _renameGeneration) return;
+      final ProductRenameDraft? authoritative = _unresolvedRenameDraftFor(
+        product.internalCode,
+      );
+      setState(() {
+        _renamePending = false;
+        if (authoritative != null) {
+          _lockRenameDraft(authoritative);
+        } else {
+          _renameUncertain = true;
+          _lockedRenameDraft = draft;
+          _renameError = _uncertainOutcomeMessage;
         }
       });
     }
@@ -1746,6 +2032,83 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   ),
                 ],
               ),
+              if (widget.renameProduct != null) ...<Widget>[
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 8),
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Nombre del producto',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _renameNameError != null,
+                  label: _renameNameError == null
+                      ? null
+                      : 'Error en el nombre del producto: $_renameNameError',
+                  child: TextFormField(
+                    key: ValueKey<String>(
+                      'rename-name-${product.internalCode}',
+                    ),
+                    controller: _renameName,
+                    enabled: !_renameLocked,
+                    maxLength: maxProductRenameNameLength,
+                    onChanged: (_) {
+                      if (_renameNameError == null) return;
+                      setState(() => _renameNameError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(
+                        labelText: 'Nombre del producto',
+                        border: _pricingFieldBorder,
+                      ),
+                      _renameNameError,
+                    ),
+                  ),
+                ),
+                if (_renameError case final String error) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    label: 'Error en el nombre del producto',
+                    liveRegion: true,
+                    child: ExcludeSemantics(child: Text(error)),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    FilledButton(
+                      key: ValueKey<String>(
+                        'rename-submit-${product.internalCode}',
+                      ),
+                      onPressed: _renamePending ? null : _submitRename,
+                      child: _renamePending
+                          ? Semantics(
+                              label: 'Guardando nombre del producto',
+                              liveRegion: true,
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              _renameUncertain
+                                  ? 'Reintentar misma solicitud'
+                                  : 'Guardar nombre',
+                            ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -2144,11 +2507,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   Widget _catalogBody() {
-    if (_loading) return const _CatalogLoading();
+    if (_loading && _snapshot == null) return const _CatalogLoading();
     if (_failed) return _CatalogError(onRetry: _requestCatalog);
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
     if (items.isEmpty) return const _EmptyCatalog();
     return _CatalogList(
+      qrScan: widget.qrScan,
       items: items,
       role: widget.session.role,
       branchChoices: _snapshot!.branchChoices,
@@ -2287,9 +2651,43 @@ void _validateBranchName(String? name) {
 /// Width of the required-error border, stronger than the 1.0 normal border.
 const double _errorBorderWidth = 2.0;
 
+/// Badge state shared by the wide-shell bar icon and the overflow menu entry
+/// (S10): the unread count, or the '!' glyph while the count is unconfirmed.
+/// Screen readers hear the state in words, never the bare count or glyph.
+Widget _noticeBadge(BuildContext context, int? unreadNotices) => Semantics(
+  label: unreadNotices == null
+      ? 'sin confirmar'
+      : unreadNotices > 0
+      ? '$unreadNotices sin leer'
+      : null,
+  child: ExcludeSemantics(
+    child: Badge(
+      isLabelVisible: unreadNotices == null || unreadNotices > 0,
+      label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+      backgroundColor: unreadNotices == null
+          ? Theme.of(context).colorScheme.surfaceContainerHighest
+          : null,
+      child: const Icon(Icons.inbox_outlined),
+    ),
+  ),
+);
+
 /// Shown when a create, pricing or intake request may or may not have landed.
 const String _uncertainOutcomeMessage =
     'El resultado es incierto. Reintenta la misma solicitud antes de editar.';
+
+/// Safe Spanish message for a proven pre-write rename rejection. The server
+/// text never reaches the UI; only its stable code is mapped here.
+String _renameRejectionMessage(String code) => switch (code) {
+  'invalid-argument' =>
+    'El nombre no es válido. Revisa el campo e inténtalo de nuevo.',
+  'unauthenticated' => 'Tu sesión ya no es válida. Vuelve a iniciar sesión.',
+  'permission-denied' => 'Tu sesión ya no permite cambiar nombres de producto.',
+  'not-found' =>
+    'El producto ya no existe en el catálogo. Actualiza e inténtalo de nuevo.',
+  'already-exists' => 'Esa solicitud de cambio de nombre ya se usó para otro cambio. Inicia uno nuevo.',
+  _ => 'Se rechazó el cambio de nombre ($code).',
+};
 
 /// Spanish display name of a session role; the wire value stays unchanged.
 String _roleDisplayName(InventoryRole role) => switch (role) {
@@ -2416,41 +2814,58 @@ String? _creationPrecisionFieldError(int? precision) {
   return null;
 }
 
-class _SessionStatus extends StatelessWidget {
-  const _SessionStatus({required this.session, required this.environment});
+/// Display name derived from a branch id: `branch-centro-sur` reads as
+/// `Sucursal Centro Sur`. Sellers cannot read branch documents, so the id is
+/// the only source; ids are chosen to follow the branch name.
+String _branchDisplayName(String branchId) {
+  final String words = branchId
+      .replaceFirst(RegExp(r'^branch-'), '')
+      .split('-')
+      .where((String word) => word.isNotEmpty)
+      .map((String word) => word[0].toUpperCase() + word.substring(1))
+      .join(' ');
+  return 'Sucursal $words';
+}
+
+/// App title with a compact session line (role and branch, never the email)
+/// in place of a full-width session banner.
+class _ShellTitle extends StatelessWidget {
+  const _ShellTitle({
+    required this.session,
+    required this.environment,
+    this.centered = false,
+  });
 
   final EmulatorSession session;
   final BackendEnvironment environment;
 
+  /// Whether the title and its session line center under the app bar's
+  /// centerTitle layout (Android and iOS only).
+  final bool centered;
+
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final TextStyle style = TextStyle(
-      color: colors.onSecondaryContainer,
-      fontWeight: FontWeight.w600,
-    );
-    return Semantics(
-      container: true,
-      liveRegion: true,
-      label: environment.sessionSemanticsLabel,
-      child: ColoredBox(
-        color: colors.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 12,
-            runSpacing: 4,
-            children: <Widget>[
-              Text(environment.signedInLabel, style: style),
-              Text(session.email, style: style),
-              Text('Rol: ${_roleDisplayName(session.role)}', style: style),
-              if (session.branchId case final String branchId)
-                Text('Sucursal: $branchId', style: style),
-            ],
-          ),
+    final String status = <String>[
+      ?environment.sessionStatusPrefix,
+      _roleDisplayName(session.role),
+      if (session.branchId case final String branchId)
+        _branchDisplayName(branchId),
+    ].join(' · ');
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      // Centered with the title on mobile (S2); left-aligned on desktop/web.
+      crossAxisAlignment: centered
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text('LDA Inventory'),
+        Text(
+          status,
+          key: const ValueKey<String>('session-status'),
+          style: Theme.of(context).textTheme.labelMedium,
+          overflow: TextOverflow.ellipsis,
         ),
-      ),
+      ],
     );
   }
 }
@@ -2588,6 +3003,33 @@ class _IntakeSuccess extends StatelessWidget {
   );
 }
 
+class _RenameSuccess extends StatelessWidget {
+  const _RenameSuccess({required this.result});
+
+  final ProductRenameResult result;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Nombre del producto actualizado',
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            const Icon(Icons.check_circle_outline),
+            const SizedBox(width: 8),
+            Flexible(child: Text('Nombre actualizado a ${result.newName}')),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _CatalogLoading extends StatelessWidget {
   const _CatalogLoading();
 
@@ -2640,7 +3082,7 @@ class _ConnectionStatus extends StatelessWidget {
   }
 }
 
-class _CatalogList extends StatelessWidget {
+class _CatalogList extends StatefulWidget {
   const _CatalogList({
     required this.items,
     this.branchChoices = const <CatalogBranchChoice>[],
@@ -2649,6 +3091,7 @@ class _CatalogList extends StatelessWidget {
     this.onConfigurePricing,
     this.onRecordIntake,
     this.saleAction,
+    this.qrScan,
   });
 
   final List<CatalogItem> items;
@@ -2659,56 +3102,162 @@ class _CatalogList extends StatelessWidget {
   final void Function(CatalogProduct product)? onRecordIntake;
   final _SaleActionBuilder? saleAction;
 
+  final ProductQrScanOpener? qrScan;
+
+  @override
+  State<_CatalogList> createState() => _CatalogListState();
+}
+
+class _CatalogListState extends State<_CatalogList> {
+  final TextEditingController _search = TextEditingController();
+
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) => setState(() => _query = value);
+
+  void _clearSearch() {
+    _search.clear();
+    setState(() => _query = '');
+  }
+
+  /// Reads one product QR and types its payload into the search field, so the
+  /// scanned code goes through the same matcher as a typed one.
+  Future<void> _scanSearch() async {
+    final ProductQrScanOpener? opener = widget.qrScan;
+    if (opener == null) return;
+    final String? scanned = await opener(context);
+    if (!mounted || scanned == null || scanned.isEmpty) return;
+    _search.value = TextEditingValue(
+      text: scanned,
+      selection: TextSelection.collapsed(offset: scanned.length),
+    );
+    setState(() => _query = scanned);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: <Widget>[
-        SliverToBoxAdapter(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 960),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                child: Semantics(
-                  header: true,
-                  child: Text(
-                    'Catálogo',
-                    style: Theme.of(context).textTheme.headlineMedium,
+    final List<CatalogItem> visible = filterCatalogItems(widget.items, _query);
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final int columns = _columnsFor(context, constraints.maxWidth);
+        return CustomScrollView(
+          slivers: <Widget>[
+            SliverToBoxAdapter(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        'Catálogo',
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-          sliver: SliverList.separated(
-            itemCount: items.length,
-            itemBuilder: (BuildContext context, int index) => Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 920),
-                child: _ProductCard(
-                  item: items[index],
-                  costLabel: role == InventoryRole.administrator
-                      ? _latestCostLabel(
-                          snapshot,
-                          items[index].product.internalCode,
-                        )
-                      : null,
-                  role: role,
-                  branchChoices: branchChoices,
-                  onConfigurePricing: onConfigurePricing,
-                  onRecordIntake: onRecordIntake,
-                  saleAction: saleAction,
+            SliverToBoxAdapter(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: CatalogSearchField(
+                      controller: _search,
+                      onChanged: _onSearchChanged,
+                      onClear: _clearSearch,
+                      onScan: widget.qrScan == null || !productQrScanSupported
+                          ? null
+                          : _scanSearch,
+                    ),
+                  ),
                 ),
               ),
             ),
-            separatorBuilder: (_, _) => const SizedBox(height: 12),
-          ),
-        ),
-      ],
+            if (visible.isEmpty)
+              SliverToBoxAdapter(
+                child: _CatalogMessage(
+                  icon: Icons.search_off,
+                  title: 'Sin resultados',
+                  message: 'Ningún producto coincide con "$_query".',
+                  action: OutlinedButton(
+                    onPressed: _clearSearch,
+                    child: const Text('Limpiar búsqueda'),
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                sliver: SliverList.separated(
+                  // The grid lays out complete rows of Expanded cards so the
+                  // row height follows the tallest card instead of a fixed
+                  // aspect ratio (S4).
+                  itemCount: (visible.length + columns - 1) ~/ columns,
+                  itemBuilder: (BuildContext context, int index) {
+                    final int first = index * columns;
+                    return IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          for (
+                            int i = first;
+                            i < first + columns && i < visible.length;
+                            i++
+                          )
+                            Expanded(
+                              child: _ProductCard(
+                                item: visible[i],
+                                costLabel:
+                                    widget.role == InventoryRole.administrator
+                                    ? _latestCostLabel(
+                                        widget.snapshot,
+                                        visible[i].product.internalCode,
+                                      )
+                                    : null,
+                                role: widget.role,
+                                branchChoices: widget.branchChoices,
+                                onConfigurePricing: widget.onConfigurePricing,
+                                onRecordIntake: widget.onRecordIntake,
+                                saleAction: widget.saleAction,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
+}
+
+/// Products per row (S4): an Android or iOS app build always shows 2, at any
+/// width — the same mobile rule the shell app bar uses. Web and desktop use
+/// width breakpoints so cards never get unreadably thin: 3 columns from 900px,
+/// 2 from 560px, and a single column below that.
+int _columnsFor(BuildContext context, double width) {
+  final TargetPlatform platform = Theme.of(context).platform;
+  final bool mobile =
+      !kIsWeb &&
+      (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
+  if (mobile) return 2;
+  if (width >= 900) return 3;
+  if (width >= 560) return 2;
+  return 1;
 }
 
 String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
@@ -2721,6 +3270,11 @@ String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
       '${formatCentavos(cost.latestUnitCostCentavos)} MXN';
 }
 
+/// Compact product card (S4). Shows only name, stock and price — the code,
+/// unit, price mode, IVA treatment and rate, cost, and QR moved to the detail
+/// sheet (S5), which opens by long-press and by the visible "Detalles" button
+/// on every platform. The seller's sale action stays on the card so selling
+/// remains one tap.
 class _ProductCard extends StatelessWidget {
   const _ProductCard({
     required this.costLabel,
@@ -2741,59 +3295,102 @@ class _ProductCard extends StatelessWidget {
 
   final String? costLabel;
 
+  CatalogProduct get product => item.product;
+
+  void _openDetails(BuildContext context) {
+    showProductPeek(
+      context: context,
+      builder: (BuildContext context) => _ProductSheet(
+        costLabel: costLabel,
+        item: item,
+        role: role,
+        branchChoices: branchChoices,
+        onConfigurePricing: onConfigurePricing,
+        onRecordIntake: onRecordIntake,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final Widget details = _ProductDetails(
-      costLabel: costLabel,
-      item: item,
-      role: role,
-      branchChoices: branchChoices,
-      onConfigurePricing: onConfigurePricing,
-      onRecordIntake: onRecordIntake,
-      saleAction: saleAction,
-    );
-    final Widget qr = ProductQrView(product: item.product);
-
+    final CatalogPricing? pricing = product.pricing;
+    final String priceLine = pricing == null
+        ? 'Sin precio'
+        : 'Precio: ${formatCentavos(pricing.listedPriceCentavos)} '
+              '${pricing.currency}';
     return Card(
+      key: ValueKey<String>('product-card-${product.internalCode}'),
       clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints constraints) {
-            if (constraints.maxWidth < 420) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  details,
-                  const SizedBox(height: 16),
-                  Align(child: qr),
-                ],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                Expanded(child: details),
-                const SizedBox(width: 20),
-                qr,
+      child: InkWell(
+        onLongPress: () {
+          HapticFeedback.lightImpact();
+          _openDetails(context);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Text(
+                  product.name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              if (role != null) ...<Widget>[
+                const SizedBox(height: 8),
+                ..._holdingLines(
+                  item: item,
+                  role: role,
+                  branchChoices: branchChoices,
+                ),
               ],
-            );
-          },
+              const SizedBox(height: 8),
+              Text(priceLine, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    key: ValueKey<String>(
+                      'product-details-${product.internalCode}',
+                    ),
+                    onPressed: () => _openDetails(context),
+                    icon: const Icon(Icons.info_outline),
+                    label: Text(
+                      'Detalles',
+                      semanticsLabel: 'Ver detalles de ${product.name}',
+                    ),
+                  ),
+                  if (saleAction?.call(product) case final Widget action)
+                    action,
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ProductDetails extends StatelessWidget {
-  const _ProductDetails({
+/// Detail content for one product (S5), presented in the S12 peek. The
+/// seller sees name, price, price mode, stock and the QR; the administrator
+/// additionally sees the IVA treatment and rate, unit and precision, the
+/// internal code, the latest cost, per-branch stock, and the pricing and
+/// intake actions. The unauthenticated diagnostic page (role null) keeps the
+/// full detail set it always showed.
+class _ProductSheet extends StatelessWidget {
+  const _ProductSheet({
     required this.costLabel,
     required this.item,
     required this.role,
     required this.branchChoices,
     required this.onConfigurePricing,
     required this.onRecordIntake,
-    this.saleAction,
   });
 
   final CatalogItem item;
@@ -2801,7 +3398,6 @@ class _ProductDetails extends StatelessWidget {
   final List<CatalogBranchChoice> branchChoices;
   final void Function(CatalogProduct product)? onConfigurePricing;
   final void Function(CatalogProduct product)? onRecordIntake;
-  final _SaleActionBuilder? saleAction;
 
   final String? costLabel;
 
@@ -2809,135 +3405,209 @@ class _ProductDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Semantics(
-          header: true,
-          child: Text(
-            product.name,
-            style: Theme.of(context).textTheme.titleLarge,
+    final bool administrator = role == InventoryRole.administrator;
+    final bool fullDetails = administrator || role == null;
+    final CatalogPricing? pricing = product.pricing;
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            0,
+            24,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: ConstrainedBox(
+            key: ValueKey<String>('product-sheet-${product.internalCode}'),
+            constraints: BoxConstraints(
+              maxWidth: 560,
+              maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Semantics(
+                          header: true,
+                          child: Text(
+                            'Detalles del producto',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey<String>('product-sheet-close'),
+                        tooltip: 'Cerrar detalles',
+                        onPressed: Navigator.of(context).pop,
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    product.name,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (fullDetails) ...<Widget>[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      product.internalCode,
+                      semanticsLabel: 'Código interno ${product.internalCode}',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ],
+                  if (pricing case final CatalogPricing shown) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
+                      '${shown.currency}',
+                    ),
+                    const SizedBox(height: 4),
+                    Text('Modo de precio: ${_priceModeLabel(shown.priceMode)}'),
+                    if (fullDetails) ...<Widget>[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
+                      ),
+                    ],
+                  ],
+                  if (administrator && costLabel != null) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Semantics(
+                      container: true,
+                      label: costLabel,
+                      excludeSemantics: true,
+                      child: Text(costLabel!),
+                    ),
+                  ],
+                  if (fullDetails) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Unidad: ${product.quantitySpec.unit} '
+                      '(precisión ${product.quantitySpec.precision})',
+                    ),
+                  ],
+                  if (role != null) ...<Widget>[
+                    const SizedBox(height: 8),
+                    ..._holdingLines(
+                      item: item,
+                      role: role,
+                      branchChoices: branchChoices,
+                    ),
+                  ],
+                  if (administrator && onConfigurePricing != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      key: ValueKey<String>(
+                        'configure-price-${product.internalCode}',
+                      ),
+                      // Close the sheet first, then open the existing flow.
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onConfigurePricing!(product);
+                      },
+                      icon: const Icon(Icons.price_change_outlined),
+                      label: const Text('Editar precio / IVA'),
+                    ),
+                  ],
+                  if (administrator && onRecordIntake != null) ...<Widget>[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      key: ValueKey<String>('intake-${product.internalCode}'),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        onRecordIntake!(product);
+                      },
+                      icon: const Icon(Icons.inventory_outlined),
+                      label: const Text('Registrar entrada de inventario'),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Center(child: ProductQrView(product: product)),
+                ],
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        SelectableText(
-          product.internalCode,
-          semanticsLabel: 'Código interno ${product.internalCode}',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Unidad: ${product.quantitySpec.unit} '
-          '(precisión ${product.quantitySpec.precision})',
-        ),
-        if (product.pricing case final CatalogPricing pricing) ...<Widget>[
-          const SizedBox(height: 4),
-          Text(
-            'Precio de lista: ${formatCentavos(pricing.listedPriceCentavos)} '
-            '${pricing.currency}',
-          ),
-          const SizedBox(height: 4),
-          Text('Modo de precio: ${_priceModeLabel(pricing.priceMode)}'),
-          const SizedBox(height: 4),
-          Text(
-            'Tratamiento de IVA: ${_ivaTreatmentLabel(pricing.ivaTreatment)}',
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Tasa de IVA: ${pricing.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
-          ),
-        ],
-        if (role == InventoryRole.administrator &&
-            costLabel != null) ...<Widget>[
-          const SizedBox(height: 4),
-          Semantics(
-            container: true,
-            label: costLabel,
-            excludeSemantics: true,
-            child: Text(costLabel!),
-          ),
-        ],
-        if (role != null) ...<Widget>[
-          const SizedBox(height: 12),
-          ..._holdingRows(),
-        ],
-        if (onConfigurePricing != null) ...<Widget>[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: ValueKey<String>('configure-price-${product.internalCode}'),
-            onPressed: () => onConfigurePricing!(product),
-            icon: const Icon(Icons.price_change_outlined),
-            label: const Text('Editar precio / IVA'),
-          ),
-        ],
-        if (onRecordIntake != null) ...<Widget>[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: ValueKey<String>('intake-${product.internalCode}'),
-            onPressed: () => onRecordIntake!(product),
-            icon: const Icon(Icons.inventory_outlined),
-            label: const Text('Registrar entrada de inventario'),
-          ),
-        ],
-        if (saleAction?.call(product) case final Widget action) ...<Widget>[
-          const SizedBox(height: 12),
-          action,
-        ],
-      ],
+      ),
     );
   }
+}
 
-  List<Widget> _holdingRows() {
-    if (role == InventoryRole.administrator && branchChoices.isNotEmpty) {
-      final Map<String, CatalogHolding> holdings = <String, CatalogHolding>{
-        for (final CatalogHolding holding in item.holdings)
-          holding.branchId: holding,
-      };
-      final Map<String, CatalogBranchChoice> choices =
-          <String, CatalogBranchChoice>{
-            for (final CatalogBranchChoice choice in branchChoices)
-              choice.branchId: choice,
-          };
-      final List<String> branchIds = <String>{
-        ...choices.keys,
-        ...holdings.keys,
-      }.toList()..sort();
-      return branchIds
-          .map((String branchId) {
-            final CatalogHolding? holding = holdings[branchId];
-            if (holding != null) return _holdingRow(holding);
-            return Text(
-              '${choices[branchId]!.branchName}: Agotado · Sin entrada registrada',
-            );
-          })
-          .toList(growable: false);
-    }
-    if (role == InventoryRole.administrator && item.holdings.isEmpty) {
-      return const <Widget>[Text('Sin existencias en sucursales')];
-    }
-    return item.holdings.map(_holdingRow).toList(growable: false);
+/// Stock lines shared by the compact card and the detail sheet. The
+/// administrator sees a short line per known branch (Agotado markers stay);
+/// the seller sees their own branch as "Existencias: N unidad" plus
+/// "Agotado" when out of stock.
+List<Widget> _holdingLines({
+  required CatalogItem item,
+  required InventoryRole? role,
+  required List<CatalogBranchChoice> branchChoices,
+}) {
+  final CatalogProduct product = item.product;
+  if (role == InventoryRole.administrator && branchChoices.isNotEmpty) {
+    final Map<String, CatalogHolding> holdings = <String, CatalogHolding>{
+      for (final CatalogHolding holding in item.holdings)
+        holding.branchId: holding,
+    };
+    final Map<String, CatalogBranchChoice> choices =
+        <String, CatalogBranchChoice>{
+          for (final CatalogBranchChoice choice in branchChoices)
+            choice.branchId: choice,
+        };
+    final List<String> branchIds = <String>{
+      ...choices.keys,
+      ...holdings.keys,
+    }.toList()..sort();
+    return branchIds
+        .map((String branchId) {
+          final CatalogHolding? holding = holdings[branchId];
+          if (holding != null) return _holdingLine(holding, product, role);
+          return Text(
+            '${choices[branchId]!.branchName}: Agotado · Sin entrada registrada',
+          );
+        })
+        .toList(growable: false);
   }
+  if (role == InventoryRole.administrator && item.holdings.isEmpty) {
+    return const <Widget>[Text('Sin existencias en sucursales')];
+  }
+  return item.holdings
+      .map((CatalogHolding holding) => _holdingLine(holding, product, role))
+      .toList(growable: false);
+}
 
-  Widget _holdingRow(CatalogHolding holding) {
-    final String quantity = formatScaledQuantity(
-      holding.quantityScaled,
-      product.quantitySpec.precision,
-    );
-    final String unit = product.quantitySpec.unit;
-    if (role == InventoryRole.administrator) {
-      final String branchName = holding.branchName!;
-      final String empty = holding.isOutOfStock ? ' · Agotado' : '';
-      return Text('$branchName: $quantity $unit$empty');
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text('Existencias: $quantity $unit'),
-        if (holding.isOutOfStock)
-          Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
-      ],
-    );
+Widget _holdingLine(
+  CatalogHolding holding,
+  CatalogProduct product,
+  InventoryRole? role,
+) {
+  final String quantity = formatScaledQuantity(
+    holding.quantityScaled,
+    product.quantitySpec.precision,
+  );
+  final String unit = product.quantitySpec.unit;
+  if (role == InventoryRole.administrator) {
+    final String branchName = holding.branchName!;
+    final String empty = holding.isOutOfStock ? ' · Agotado' : '';
+    return Text('$branchName: $quantity $unit$empty');
   }
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      Text('Existencias: $quantity $unit'),
+      if (holding.isOutOfStock)
+        Text('Agotado', style: const TextStyle(fontWeight: FontWeight.bold)),
+    ],
+  );
 }
 
 class _EmptyCatalog extends StatelessWidget {

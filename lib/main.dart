@@ -7,6 +7,7 @@ import 'catalog/catalog_load_diagnostics.dart';
 import 'catalog/catalog_page.dart';
 import 'catalog/catalog_product.dart';
 import 'catalog/catalog_repository.dart';
+import 'catalog/product_qr_scan.dart';
 import 'firebase/emulator_bootstrap.dart';
 import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
@@ -36,6 +37,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorCatalogLoader,
     this.emulatorProductCreationLoader,
     this.emulatorProductPricingLoader,
+    this.emulatorProductRenameLoader,
     this.emulatorStockIntakeLoader,
     this.emulatorSaleLoader,
     this.emulatorCorrectionLoader,
@@ -58,6 +60,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
   final CatalogSnapshotLoader? emulatorCatalogLoader;
   final ProductCreationGatewayLoader? emulatorProductCreationLoader;
   final ProductPricingGatewayLoader? emulatorProductPricingLoader;
+  final ProductRenameGatewayLoader? emulatorProductRenameLoader;
   final StockIntakeGatewayLoader? emulatorStockIntakeLoader;
   final SaleGatewayLoader? emulatorSaleLoader;
   final CorrectionGatewayLoader? emulatorCorrectionLoader;
@@ -89,6 +92,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         productPricingGatewayLoader:
             emulatorProductPricingLoader ??
             DemoEmulatorBootstrap.initializeProductPricingGateway,
+        productRenameGatewayLoader:
+            emulatorProductRenameLoader ??
+            DemoEmulatorBootstrap.initializeProductRenameGateway,
         stockIntakeGatewayLoader:
             emulatorStockIntakeLoader ??
             DemoEmulatorBootstrap.initializeStockIntakeGateway,
@@ -119,6 +125,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         productPricingGatewayLoader:
             emulatorProductPricingLoader ??
             ProductionFirebaseBootstrap.initializeProductPricingGateway,
+        productRenameGatewayLoader:
+            emulatorProductRenameLoader ??
+            ProductionFirebaseBootstrap.initializeProductRenameGateway,
         stockIntakeGatewayLoader:
             emulatorStockIntakeLoader ??
             ProductionFirebaseBootstrap.initializeStockIntakeGateway,
@@ -149,6 +158,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
     required this.catalogLoader,
     required this.productCreationGatewayLoader,
     required this.productPricingGatewayLoader,
+    required this.productRenameGatewayLoader,
     required this.stockIntakeGatewayLoader,
     this.saleGatewayLoader = DemoEmulatorBootstrap.initializeSaleGateway,
     this.correctionGatewayLoader =
@@ -170,6 +180,7 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   final CatalogSnapshotLoader catalogLoader;
   final ProductCreationGatewayLoader productCreationGatewayLoader;
   final ProductPricingGatewayLoader productPricingGatewayLoader;
+  final ProductRenameGatewayLoader productRenameGatewayLoader;
   final StockIntakeGatewayLoader stockIntakeGatewayLoader;
 
   final SaleGatewayLoader saleGatewayLoader;
@@ -211,6 +222,7 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       catalogLoader: widget.catalogLoader,
       productCreationGatewayLoader: widget.productCreationGatewayLoader,
       productPricingGatewayLoader: widget.productPricingGatewayLoader,
+      productRenameGatewayLoader: widget.productRenameGatewayLoader,
       stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
       saleGatewayLoader: widget.saleGatewayLoader,
       correctionGatewayLoader: widget.correctionGatewayLoader,
@@ -255,6 +267,7 @@ class LdaInventoryApp extends StatelessWidget {
       home: CatalogPage(
         repository: catalogRepository,
         statusLabel: statusLabel,
+        qrScan: productQrScanSupported ? showProductQrScanner : null,
       ),
     );
   }

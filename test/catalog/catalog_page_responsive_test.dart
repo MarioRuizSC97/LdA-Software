@@ -110,14 +110,20 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(tester.takeException(), isNull);
-        // Icon-only entries stay in the bar; text actions move to the menu.
-        expect(_inAppBar(_key('notices-open')), findsOneWidget);
+        // Icon-only text actions move to the menu (T10/S10): notices live in
+        // the overflow menu at compact widths, not in the bar.
+        expect(_inAppBar(_key('notices-open')), findsNothing);
         expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
         expect(_inAppBar(find.text('Correcciones')), findsNothing);
         expect(_inAppBar(find.text('Cerrar sesión')), findsNothing);
 
         await _openMore(tester);
-        expect(tester.takeException(), isNull);
+        expect(_key('notices-open'), findsOneWidget);
+        // First menu entry, ahead of Correcciones and Cerrar sesión (S10).
+        final Rect notices = tester.getRect(_key('notices-open'));
+        final Rect corrections = tester.getRect(find.text('Correcciones'));
+        expect(notices.top, lessThan(corrections.top));
+
         await tester.tap(_key('corrections-open'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
@@ -137,7 +143,9 @@ void main() {
         await tester.tap(find.text('Cerrar sesión'));
         await tester.pumpAndSettle();
         expect(shell.logouts, 1);
-      });
+        // Desktop/web keeps this narrow-window layout (S2); the mobile app
+        // bar is covered in mobile_app_bar_test.dart.
+      }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
       testWidgets(
         'administrator shell fits 320px and keeps every action reachable',
@@ -166,7 +174,10 @@ void main() {
           await tester.tap(find.text('Cerrar sesión'));
           await tester.pumpAndSettle();
           expect(shell.logouts, 1);
+          // Desktop/web keeps this narrow-window layout (S2); the mobile app
+          // bar is covered in mobile_app_bar_test.dart.
         },
+        variant: TargetPlatformVariant.only(TargetPlatform.macOS),
       );
     });
   }
@@ -195,7 +206,9 @@ void main() {
     expect(_inAppBar(find.text('Correcciones')), findsOneWidget);
     expect(_inAppBar(_key('notices-open')), findsOneWidget);
     expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);
-  });
+    // Desktop/web keeps this wide-window layout (S2); the mobile app bar is
+    // covered in mobile_app_bar_test.dart.
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('the wide seller shell meets tap target guidelines', (
     WidgetTester tester,

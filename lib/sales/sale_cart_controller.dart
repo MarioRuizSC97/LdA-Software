@@ -5,6 +5,7 @@ import '../firebase/emulator_sale_gateway.dart';
 import 'sale_cart.dart';
 import 'sale_draft.dart';
 import 'sale_quote.dart';
+import 'sale_format.dart';
 
 typedef SaleQuoteRequest = Future<SaleQuote> Function(SaleCart cart);
 typedef SaleSubmitRequest = Future<SaleReceipt> Function(SaleDraft draft);
@@ -68,6 +69,7 @@ const String salePendingReceiptMessage =
 class SaleCartController extends ChangeNotifier {
   SaleCartController({
     required SaleCheckout checkout,
+    this.availableScaled,
     this.onCompleted,
     this.onReceiptPending,
   }) : _checkout = checkout {
@@ -80,6 +82,17 @@ class SaleCartController extends ChangeNotifier {
   }
 
   SaleCheckout _checkout;
+
+  /// Current loaded branch stock, in product precision. Unknown stock leaves
+  /// validation to the server. Read on every edit so refreshes update the limit
+  /// without rewriting quantities already in the cart.
+  final int? Function(String productId)? availableScaled;
+
+  bool fitsLoadedStock(String productId, int quantityScaled) {
+    final int? available = availableScaled?.call(productId);
+    return available == null || quantityScaled <= available;
+  }
+
   final ValueChanged<SaleReceipt>? onCompleted;
 
   /// Called when a cart action finds a committed sale the seller has not
@@ -203,6 +216,18 @@ class SaleCartController extends ChangeNotifier {
       _entryError = text.isEmpty
           ? 'Escribe una cantidad.'
           : _quantityError(error.reason, quantitySpec.precision);
+      _notify();
+      return false;
+    }
+    final SaleCartLine line = next.lines.firstWhere(
+      (SaleCartLine line) => line.productId == productId,
+    );
+    final int? available = availableScaled?.call(productId);
+    if (available != null && line.quantityScaled > available) {
+      _editingProductId = productId;
+      _entryError =
+          'Solo hay ${formatScaledQuantity(available, line.quantitySpec.precision)} '
+          '${line.quantitySpec.unit} en existencia.';
       _notify();
       return false;
     }

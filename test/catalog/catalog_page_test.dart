@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SemanticsNode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -109,6 +108,47 @@ StockIntakeResult _intakeResult(
   'lineTotalCentavos': draft.lineTotalCentavos,
   'replayed': replayed,
 }, request: draft);
+
+/// Opens the product detail sheet (T5): since T4 compacted the card, the
+/// pricing and intake actions live inside it.
+Future<void> _openProductSheet(WidgetTester tester, String code) async {
+  await tester.ensureVisible(
+    find.byKey(ValueKey<String>('product-details-$code')),
+  );
+  await tester.tap(find.byKey(ValueKey<String>('product-details-$code')));
+  await tester.pumpAndSettle();
+}
+
+/// Closes the product detail sheet through its own close control.
+Future<void> _closeProductSheet(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey<String>('product-sheet-close')));
+  await tester.pumpAndSettle();
+}
+
+/// Opens the detail sheet and taps the pricing action inside it; the sheet
+/// closes first and the existing pricing form opens (T4/T5).
+Future<void> _openSheetAndConfigurePricing(
+  WidgetTester tester,
+  String code,
+) async {
+  await _openProductSheet(tester, code);
+  final Finder configure = find.byKey(
+    ValueKey<String>('configure-price-$code'),
+  );
+  await tester.ensureVisible(configure);
+  await tester.tap(configure);
+  await tester.pumpAndSettle();
+}
+
+/// Opens the detail sheet and taps the intake action inside it; the sheet
+/// closes first and the existing intake form opens (T4/T5).
+Future<void> _openSheetAndStartIntake(WidgetTester tester, String code) async {
+  await _openProductSheet(tester, code);
+  final Finder intake = find.byKey(ValueKey<String>('intake-$code'));
+  await tester.ensureVisible(intake);
+  await tester.tap(intake);
+  await tester.pumpAndSettle();
+}
 
 Widget _authenticatedApp({
   required EmulatorSession session,
@@ -241,6 +281,11 @@ void main() {
         _ => 'Entrada registrada. Folio',
       });
       Future<void> begin(WidgetTester tester) async {
+        // Since T4/T5 the pricing and intake actions live in the product
+        // detail sheet: open it first.
+        if (category != 'creation') {
+          await _openProductSheet(tester, 'PRD-COFFEE-001');
+        }
         final Finder open = category == 'creation'
             ? find.text('Crear producto')
             : find.byKey(
@@ -367,9 +412,13 @@ void main() {
           expect(requests, hasLength(2));
           expect(find.textContaining('resultado es incierto'), findsNothing);
           if (category != 'creation') {
-            expect(find.text('Coffee'), findsOneWidget);
+            // Price and cost moved into the detail sheet (T4/T5); the branch
+            // reminder stays on the card.
+            await _openProductSheet(tester, 'PRD-COFFEE-001');
+            expect(find.text('Coffee'), findsWidgets);
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
             expect(find.text('Costo no disponible'), findsOneWidget);
+            await _closeProductSheet(tester);
             expect(find.textContaining('Sin entrada registrada'), findsWidgets);
           } else {
             expect(
@@ -413,7 +462,9 @@ void main() {
               find.textContaining('Precio guardado. Auditoría'),
               findsNothing,
             );
+            await _openProductSheet(tester, 'PRD-COFFEE-001');
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
+            await _closeProductSheet(tester);
             expect(requests, hasLength(2));
             await tester.pumpWidget(const SizedBox.shrink());
           },
@@ -617,12 +668,8 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text(state.$3), findsOneWidget);
-          expect(find.bySemanticsLabel(state.$3), findsOneWidget);
-          expect(
-            find.text('Precio de lista: 129.00 MXN'),
-            product.pricing == null ? findsNothing : findsOneWidget,
-          );
+          // The branch reminders stay on the compact card; price, cost and
+          // QR moved into the detail sheet (T4/T5).
           expect(
             find.text('North Demo Branch: Agotado · Sin entrada registrada'),
             findsOneWidget,
@@ -631,7 +678,15 @@ void main() {
             find.text('South Demo Branch: Agotado · Sin entrada registrada'),
             findsOneWidget,
           );
+          await _openProductSheet(tester, _coffee.internalCode);
+          expect(find.text(state.$3), findsOneWidget);
+          expect(find.bySemanticsLabel(state.$3), findsOneWidget);
+          expect(
+            find.text('Precio de lista: 129.00 MXN'),
+            product.pricing == null ? findsNothing : findsOneWidget,
+          );
           expect(find.byType(ProductQrView), findsOneWidget);
+          await _closeProductSheet(tester);
           expect(tester.takeException(), isNull);
           semantics.dispose();
         });
@@ -676,61 +731,75 @@ void main() {
       expect(find.text('Coffee'), findsNothing);
       expect(find.textContaining('Último costo unitario:'), findsNothing);
     });
-    testWidgets('refresh replaces latest cost, clears stale states and role', (
-      WidgetTester tester,
-    ) async {
-      final _CatalogLoader loader = _CatalogLoader();
-      await tester.pumpWidget(
-        _authenticatedApp(session: _administrator, loader: loader.call),
-      );
-      loader.requests.last.complete(snapshot(cents: 345));
-      await tester.pumpAndSettle();
-      expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
-      for (final CatalogSnapshot next in <CatalogSnapshot>[
-        snapshot(cents: 678),
-        snapshot(available: false),
-        snapshot(),
-      ]) {
+    testWidgets(
+      'refresh replaces latest cost, clears stale states and role',
+      (WidgetTester tester) async {
+        final _CatalogLoader loader = _CatalogLoader();
+        await tester.pumpWidget(
+          _authenticatedApp(session: _administrator, loader: loader.call),
+        );
+        loader.requests.last.complete(snapshot(cents: 345));
+        await tester.pumpAndSettle();
+        await _openProductSheet(tester, _coffee.internalCode);
+        expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
+        await _closeProductSheet(tester);
+        for (final CatalogSnapshot next in <CatalogSnapshot>[
+          snapshot(cents: 678),
+          snapshot(available: false),
+          snapshot(),
+        ]) {
+          await tester.tap(find.byTooltip('Actualizar catálogo'));
+          await tester.pump();
+          expect(find.textContaining('Último costo unitario:'), findsNothing);
+          expect(find.text('Costo no disponible'), findsNothing);
+          expect(find.text('Sin costo registrado'), findsNothing);
+          loader.requests.last.complete(next);
+          await tester.pumpAndSettle();
+          await _openProductSheet(tester, _coffee.internalCode);
+          final String expected = !next.costsAvailable
+              ? 'Costo no disponible'
+              : next.costs.isEmpty
+              ? 'Sin costo registrado'
+              : 'Último costo unitario: 6.78 MXN';
+          expect(find.text(expected), findsOneWidget);
+          expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
+          await _closeProductSheet(tester);
+        }
         await tester.tap(find.byTooltip('Actualizar catálogo'));
         await tester.pump();
+        final Completer<CatalogSnapshot> stale = loader.requests.last;
+        await tester.pumpWidget(
+          _authenticatedApp(session: _seller, loader: loader.call),
+        );
+        await tester.pump();
+        stale.complete(snapshot(cents: 999));
+        loader.requests.last.complete(
+          _snapshot(
+            _coffee,
+            holdings: const [
+              CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Coffee'), findsOneWidget);
+        expect(find.text('Existencias: 0.00 kg'), findsOneWidget);
+        expect(find.text('Agotado'), findsOneWidget);
+        // The seller sees the price only in the detail sheet (T5), and never
+        // any cost.
+        await _openProductSheet(tester, _coffee.internalCode);
+        expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
+        await _closeProductSheet(tester);
         expect(find.textContaining('Último costo unitario:'), findsNothing);
         expect(find.text('Costo no disponible'), findsNothing);
         expect(find.text('Sin costo registrado'), findsNothing);
-        loader.requests.last.complete(next);
-        await tester.pumpAndSettle();
-        final String expected = !next.costsAvailable
-            ? 'Costo no disponible'
-            : next.costs.isEmpty
-            ? 'Sin costo registrado'
-            : 'Último costo unitario: 6.78 MXN';
-        expect(find.text(expected), findsOneWidget);
-        expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
-      }
-      await tester.tap(find.byTooltip('Actualizar catálogo'));
-      await tester.pump();
-      final Completer<CatalogSnapshot> stale = loader.requests.last;
-      await tester.pumpWidget(
-        _authenticatedApp(session: _seller, loader: loader.call),
-      );
-      await tester.pump();
-      stale.complete(snapshot(cents: 999));
-      loader.requests.last.complete(
-        _snapshot(
-          _coffee,
-          holdings: const [
-            CatalogHolding(branchId: 'branch-north', quantityScaled: 0),
-          ],
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Coffee'), findsOneWidget);
-      expect(find.text('Existencias: 0.00 kg'), findsOneWidget);
-      expect(find.text('Agotado'), findsOneWidget);
-      expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-      expect(find.textContaining('Último costo unitario:'), findsNothing);
-      expect(find.text('Costo no disponible'), findsNothing);
-      expect(find.text('Sin costo registrado'), findsNothing);
-    });
+        // The refresh tests drive the desktop app-bar button (web/desktop
+        // keeps it); the mobile menu entry is covered in
+        // mobile_app_bar_test.dart.
+      },
+      // Desktop/web keeps the bar refresh button (S2).
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
   });
   group('creation pending draft authority', () {
     const ProductCreationDraft own = ProductCreationDraft(
@@ -1126,7 +1195,10 @@ void main() {
           findsOneWidget,
         );
         expect(loader.requests, hasLength(2));
+        // Desktop/web keeps the bar refresh button (S2); the mobile menu
+        // entry is covered in mobile_app_bar_test.dart.
       },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     );
 
     testWidgets('administrator to seller replacement clears branch reminders', (
@@ -1265,6 +1337,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The QR and the full pricing detail live in the detail sheet since T5;
+    // the compact card shows only name, stock and price.
+    await tester.tap(
+      find.byKey(const ValueKey<String>('product-details-PRD-COFFEE-001')),
+    );
+    await tester.pumpAndSettle();
+
     final ProductQrView qr = tester.widget<ProductQrView>(
       find.byType(ProductQrView),
     );
@@ -1377,7 +1456,9 @@ void main() {
     expect(find.text('Coffee'), findsNothing);
     expect(find.text('Tea'), findsOneWidget);
     expect(find.text('Existencias: 4 piece'), findsOneWidget);
-  });
+    // Desktop/web keeps the bar refresh button (S2); the mobile menu entry
+    // is covered in mobile_app_bar_test.dart.
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('administrator sees named zero holdings and no-holdings state', (
     WidgetTester tester,
@@ -1614,11 +1695,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The unit line and the pricing action moved into the detail sheet
+    // (T4/T5); the per-branch stock line stays on the compact card.
+    expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
+    await _openProductSheet(tester, _coffee.internalCode);
     expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
     expect(find.text('Cantidad: kg (precisión 2)'), findsNothing);
-    expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
     expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
+    await _closeProductSheet(tester);
   });
 
   testWidgets('seller has no product creation control or callback', (
@@ -2192,6 +2277,8 @@ void main() {
 
     expect(loads, 2);
     expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+    // The QR lives in the detail sheet since T5.
+    await _openProductSheet(tester, 'PRD-NEW-0001');
     expect(
       find.byKey(const ValueKey<String>('product-qr-PRD-NEW-0001')),
       findsOneWidget,
@@ -2349,10 +2436,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The seller's sheet shows price and price mode; IVA treatment and rate
+    // are administrator-only (S5), and no pricing control ever appears.
+    await _openProductSheet(tester, _coffee.internalCode);
     expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
     expect(find.text('Modo de precio: IVA incluido'), findsOneWidget);
-    expect(find.text('Tratamiento de IVA: Gravado'), findsOneWidget);
-    expect(find.text('Tasa de IVA: 16%'), findsOneWidget);
+    await _closeProductSheet(tester);
+    expect(find.text('Tratamiento de IVA: Gravado'), findsNothing);
+    expect(find.text('Tasa de IVA: 16%'), findsNothing);
     expect(find.text('Agotado'), findsOneWidget);
     expect(find.text('Editar precio / IVA'), findsNothing);
     expect(find.text('Configure price / IVA'), findsNothing);
@@ -2393,10 +2484,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
 
     expect(find.text('Coffee'), findsOneWidget);
     expect(find.text('PRD-COFFEE-001'), findsOneWidget);
@@ -2454,10 +2542,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
 
       final Finder rateField = find.byKey(
         const ValueKey<String>('pricing-iva-rate'),
@@ -2511,10 +2596,7 @@ void main() {
 
       await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       expect(
         find.text('La tasa de IVA es obligatoria para productos gravados.'),
         findsNothing,
@@ -2578,6 +2660,7 @@ void main() {
       );
 
       Future<void> openPricing(String productId) async {
+        await _openProductSheet(tester, productId);
         final Finder configure = find.byKey(
           ValueKey<String>('configure-price-$productId'),
         );
@@ -2706,10 +2789,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       final Finder priceField = find.byKey(
         const ValueKey<String>('pricing-listed-price'),
       );
@@ -2826,10 +2906,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
 
       final ThemeData theme = Theme.of(
         tester.element(
@@ -2976,10 +3053,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       Future<void> open() async {
-        await tester.tap(
-          find.byKey(const ValueKey<String>('configure-price-PRD-UNPRICED')),
-        );
-        await tester.pumpAndSettle();
+        await _openSheetAndConfigurePricing(tester, 'PRD-UNPRICED');
       }
 
       Future<void> save() async {
@@ -3190,10 +3264,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-TEA-0002')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-TEA-0002');
 
     expect(
       tester
@@ -3252,10 +3323,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
     await tester.tap(find.widgetWithText(FilledButton, 'Guardar precio / IVA'));
     await tester.pumpAndSettle();
 
@@ -3323,10 +3391,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
       );
@@ -3380,10 +3445,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       await tester.tap(
         find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
       );
@@ -3424,10 +3486,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       await tester.tap(find.byKey(const ValueKey<String>('pricing-treatment')));
       await tester.pumpAndSettle();
       await tester.tap(
@@ -3485,10 +3544,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
     final Finder save = find.widgetWithText(
       FilledButton,
       'Guardar precio / IVA',
@@ -3569,10 +3625,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
     final Finder save = find.widgetWithText(
       FilledButton,
       'Guardar precio / IVA',
@@ -3586,6 +3639,8 @@ void main() {
       find.text('Precio guardado. Auditoría pricing-key-1'),
       findsOneWidget,
     );
+    // The refreshed pricing fields show in the detail sheet (T5).
+    await _openProductSheet(tester, _coffee.internalCode);
     expect(find.text('Precio de lista: 200.00 MXN'), findsOneWidget);
     expect(
       find.text('Modo de precio: IVA adicional en factura'),
@@ -3627,10 +3682,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
     final Finder save = find.widgetWithText(
       FilledButton,
       'Guardar precio / IVA',
@@ -3658,11 +3710,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final Finder configure = find.byKey(
-      const ValueKey<String>('configure-price-PRD-COFFEE-001'),
-    );
-    await tester.tap(configure);
-    await tester.pumpAndSettle();
+    await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
     await tester.binding.setSurfaceSize(const Size(320, 480));
     tester.view.viewInsets = const FakeViewPadding(bottom: 220);
     await tester.pump();
@@ -3750,10 +3798,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
 
       final Finder branchField = find.byKey(
         const ValueKey<String>('intake-branch'),
@@ -3887,10 +3932,7 @@ void main() {
       expect(find.text('Registrar entrada'), findsNothing);
 
       // The next intake advances to a fresh idempotency key.
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
       await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('South Demo Branch').last);
@@ -3926,10 +3968,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
 
     final Finder branchField = find.byKey(
       const ValueKey<String>('intake-branch'),
@@ -3990,10 +4029,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
     await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('North Demo Branch').last);
@@ -4071,10 +4107,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
       await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('North Demo Branch').last);
@@ -4143,10 +4176,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-    );
-    await tester.pumpAndSettle();
+    await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
     await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('North Demo Branch').last);
@@ -4208,10 +4238,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // First open: no unresolved draft, fresh form.
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
       expect(find.text('Selecciona una sucursal'), findsOneWidget);
       expect(
         tester
@@ -4227,10 +4254,7 @@ void main() {
 
       // Reopen: the draft for South is restored explicitly and locked.
       authoritative = stored;
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
 
       expect(find.text('South Demo Branch'), findsOneWidget);
       expect(
@@ -4311,10 +4335,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
       await tester.enterText(
         find.byKey(const ValueKey<String>('intake-quantity')),
         '9',
@@ -4362,10 +4383,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(
-          find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
-        );
-        await tester.pumpAndSettle();
+        await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
         await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
         await tester.pumpAndSettle();
         await tester.tap(find.text('North Demo Branch').last);
@@ -4716,12 +4734,7 @@ void main() {
           expect(creates, 1);
           expect(find.text('Reintentar misma solicitud'), findsNothing);
           if (close) {
-            await tester.tap(
-              find.byKey(
-                const ValueKey<String>('configure-price-PRD-NEW-0001'),
-              ),
-            );
-            await tester.pumpAndSettle();
+            await _openSheetAndConfigurePricing(tester, 'PRD-NEW-0001');
             expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
           }
         },
@@ -4746,6 +4759,7 @@ void main() {
           );
           loader.requests[0].complete(_snapshotWithBranches(_coffee));
           await tester.pumpAndSettle();
+          await _openProductSheet(tester, 'PRD-COFFEE-001');
           final Finder action = find.byKey(
             ValueKey<String>(
               intake
@@ -5027,7 +5041,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('PRD-COFFEE-001'), findsWidgets);
+      expect(find.text('Coffee'), findsOneWidget);
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
@@ -5056,10 +5070,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey<String>('configure-price-PRD-COFFEE-001')),
-      );
-      await tester.pumpAndSettle();
+      await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
@@ -5236,17 +5247,23 @@ void main() {
         await tester.pumpWidget(appWithNotices(streams));
         await flush(tester);
 
-        // Confirmed zero: no badge label yet, but the entry exists.
+        // Confirmed zero: no badge label yet, but the entry exists in the
+        // overflow menu (T10/S10), whose items are built at open time.
         streams.emitMovements(<CatalogDocument>[]);
         streams.emitMarkers(<CatalogDocument>[]);
         await flush(tester);
+        await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         expect(
           find.byKey(const ValueKey<String>('notices-open')),
           findsOneWidget,
         );
         expect(find.text('1'), findsNothing);
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pumpAndSettle();
 
-        // A new arrival updates the badge live.
+        // A new arrival updates the badge on the menu icon live.
         streams.emitMovements(<CatalogDocument>[
           CatalogDocument(
             path: 'inventoryMovements/m1',
@@ -5254,7 +5271,13 @@ void main() {
           ),
         ]);
         await flush(tester);
-        expect(find.text('1'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey<String>('shell-more')),
+            matching: find.text('1'),
+          ),
+          findsOneWidget,
+        );
       },
     );
 
@@ -5266,25 +5289,58 @@ void main() {
       await tester.pumpWidget(appWithNotices(streams));
       await flush(tester);
       // Before both streams confirm, the count is unknown, never zero.
-      SemanticsNode entry() => tester.getSemantics(
-        find.byKey(const ValueKey<String>('notices-open')),
+      // The entry lives in the overflow menu (T10/S10); its items are built
+      // at open time, and the badge state rides on the menu icon too.
+      Future<void> openMenu() async {
+        await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await openMenu();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.bySemanticsLabel(RegExp('sin confirmar')),
+        ),
+        findsOneWidget,
       );
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, 'sin confirmar');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.text('Avisos de traslados'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
 
       streams.emitMovements(<CatalogDocument>[
         CatalogDocument(path: 'inventoryMovements/m1', data: leg('t-a', 'm1')),
       ]);
       streams.emitMarkers(<CatalogDocument>[]);
       await flush(tester);
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, '1 sin leer');
+      await openMenu();
+      expect(
+        find.bySemanticsLabel(RegExp('Avisos de traslados: 1 sin leer')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.bySemanticsLabel(RegExp('1 sin leer')),
+        ),
+        findsOneWidget,
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
 
       // Confirmed zero announces no unread state at all.
       streams.emitMarkers(<CatalogDocument>[streams.marker('t-a')]);
       await flush(tester);
-      expect(entry().tooltip, 'Avisos de traslados');
-      expect(entry().label, isEmpty);
+      await openMenu();
+      expect(find.bySemanticsLabel(RegExp('sin confirmar')), findsNothing);
+      expect(find.bySemanticsLabel(RegExp('1 sin leer')), findsNothing);
       semantics.dispose();
     });
 
@@ -5310,6 +5366,10 @@ void main() {
       streams.emitMarkers(<CatalogDocument>[]);
       await flush(tester);
 
+      // The entry is the first item of the overflow menu (T10/S10).
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byKey(const ValueKey<String>('notices-open')));
       await tester.pumpAndSettle();
       expect(find.text('Avisos de traslados'), findsOneWidget);
@@ -5324,8 +5384,25 @@ void main() {
       streams.completeAck('t-a');
       await flush(tester);
       expect(find.text('Leído'), findsOneWidget);
-      // The badge clears once the ack settles.
-      expect(find.text('1'), findsNothing);
+      // The badge clears once the ack settles: no unread count on the menu
+      // icon, and none on the reopened menu item.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('shell-more')),
+          matching: find.text('1'),
+        ),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('notices-open')),
+          matching: find.text('1'),
+        ),
+        findsNothing,
+      );
     });
 
     testWidgets('removing the seam disposes the notice controller', (
