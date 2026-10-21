@@ -134,7 +134,7 @@ void main() {
       await stock.mount(tester);
       for (final id in ['DEMO-PIN', 'DEMO-RIBBON']) {
         expect(
-          tester.widget<OutlinedButton>(_key('sale-add-$id')).onPressed,
+          tester.widget<FilledButton>(_key('sale-add-$id')).onPressed,
           isNull,
         );
         expect(
@@ -167,7 +167,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        tester.widget<OutlinedButton>(_key('sale-add-DEMO-PIN')).onPressed,
+        tester.widget<FilledButton>(_key('sale-add-DEMO-PIN')).onPressed,
         isNotNull,
       );
       await _tap(tester, 'sale-add-DEMO-PIN');

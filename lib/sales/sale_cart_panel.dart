@@ -37,44 +37,142 @@ class SaleAddControl extends StatelessWidget {
     listenable: controller,
     builder: (BuildContext context, _) {
       final String productId = product.internalCode;
-      if (controller.editingProductId == productId) {
-        return SaleQuantityEntry(
+      final bool editing = controller.editingProductId == productId;
+      final SaleCartLine? line = controller.lineFor(productId);
+      // The state decides which control shows; the swap below animates the
+      // change without ever animating a quantity entry (S6).
+      final Widget control;
+      if (editing) {
+        control = SaleQuantityEntry(
           controller: controller,
           productId: productId,
           name: product.name,
           quantitySpec: product.quantitySpec,
         );
+      } else if (line != null) {
+        control = SaleLineStepper(controller: controller, line: line);
+      } else {
+        // 'Agregar' adds one product unit and shows the stepper at once
+        // (S13); a larger quantity is typed by tapping the stepper's
+        // quantity. It is the card's primary action (S3).
+        final bool inStock = controller.fitsLoadedStock(
+          productId,
+          BigInt.from(10).pow(product.quantitySpec.precision).toInt(),
+        );
+        control = FilledButton.icon(
+          key: ValueKey<String>('sale-add-$productId'),
+          onPressed: controller.canEdit && inStock
+              ? () => controller.saveEntry(
+                  productId: productId,
+                  name: product.name,
+                  quantitySpec: product.quantitySpec,
+                  quantity: '1',
+                )
+              : null,
+          icon: const Icon(Icons.add_shopping_cart_outlined),
+          label: Text(
+            inStock ? 'Agregar' : 'Agotado',
+            semanticsLabel: inStock
+                ? 'Agregar ${product.name} al carrito'
+                : '${product.name}: Agotado',
+          ),
+        );
       }
-      final SaleCartLine? line = controller.lineFor(productId);
-      if (line != null) {
-        return SaleLineStepper(controller: controller, line: line);
-      }
-      // 'Agregar' adds one product unit and shows the stepper at once (S13);
-      // a larger quantity is typed by tapping the stepper's quantity.
-      final bool inStock = controller.fitsLoadedStock(
-        productId,
-        BigInt.from(10).pow(product.quantitySpec.precision).toInt(),
-      );
-      return OutlinedButton.icon(
-        key: ValueKey<String>('sale-add-$productId'),
-        onPressed: controller.canEdit && inStock
-            ? () => controller.saveEntry(
-                productId: productId,
-                name: product.name,
-                quantitySpec: product.quantitySpec,
-                quantity: '1',
-              )
-            : null,
-        icon: const Icon(Icons.add_shopping_cart_outlined),
-        label: Text(
-          inStock ? 'Agregar' : 'Agotado',
-          semanticsLabel: inStock
-              ? 'Agregar ${product.name} al carrito'
-              : '${product.name}: Agotado',
+      return _ControlSwap(
+        stateKey: ValueKey<String>(
+          'sale-control-$productId-${editing
+              ? 'entry'
+              : line == null
+              ? 'add'
+              : 'stepper'}',
         ),
+        // Opening or closing the quantity entry is never animated: the entry
+        // receives focus immediately and must not fight a fade (S6).
+        enabled: !editing,
+        child: control,
       );
     },
   );
+}
+
+/// Presentation-only cross-fade between sale control states (T9/S6):
+/// 'Agregar' ↔ stepper ↔ quantity entry. It never animates a widget's first
+/// appearance (no motion on initial load), and it is skipped entirely when
+/// the system reports reduced motion. Outgoing controls stop receiving
+/// pointers during the fade, so a fast second tap can never act on a stale
+/// button or duplicate an action.
+class _ControlSwap extends StatefulWidget {
+  const _ControlSwap({
+    required this.stateKey,
+    required this.child,
+    this.enabled = true,
+  });
+
+  final Key stateKey;
+  final Widget child;
+
+  /// Set to false to force an instant swap (quantity entry involvement).
+  final bool enabled;
+
+  @override
+  State<_ControlSwap> createState() => _ControlSwapState();
+}
+
+class _ControlSwapState extends State<_ControlSwap> {
+  static const Duration _fadeDuration = Duration(milliseconds: 150);
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
+    return AnimatedSwitcher(
+      duration: widget.enabled && !reducedMotion
+          ? _fadeDuration
+          : Duration.zero,
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        // Reverse means the child is the outgoing control: silence it.
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (BuildContext context, Widget? built) => IgnorePointer(
+            ignoring: animation.status == AnimationStatus.reverse,
+            child: FadeTransition(opacity: animation, child: built),
+          ),
+          child: child,
+        );
+      },
+      child: KeyedSubtree(key: widget.stateKey, child: widget.child),
+    );
+  }
+}
+
+/// Presentation-only entrance for the whole cart panel (T9/S6): a short fade
+/// with a slight upward settle when the panel opens. Skipped entirely under
+/// reduced motion, and never re-run while the panel stays open.
+class _PanelEntrance extends StatelessWidget {
+  const _PanelEntrance({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: reducedMotion ? 1 : 0, end: 1),
+      duration: reducedMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
+      curve: Curves.easeOut,
+      builder: (BuildContext context, double t, Widget? child) => Opacity(
+        opacity: t,
+        child: Transform.translate(
+          offset: Offset(0, (1 - t) * 12),
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
 }
 
 /// Quantity stepper shared by the cart line and the product card (S11):
@@ -175,11 +273,16 @@ class SaleLineStepper extends StatelessWidget {
                 onPressed: controller.canEdit
                     ? () => controller.startEntry(line.productId)
                     : null,
-                child: Text(
-                  line.quantity,
-                  semanticsLabel:
-                      'Editar cantidad de ${line.name}: '
-                      '${line.quantity} ${line.quantitySpec.unit}',
+                child: _ControlSwap(
+                  stateKey: ValueKey<String>(
+                    'sale-quantity-value-${line.productId}-${line.quantity}',
+                  ),
+                  child: Text(
+                    line.quantity,
+                    semanticsLabel:
+                        'Editar cantidad de ${line.name}: '
+                        '${line.quantity} ${line.quantitySpec.unit}',
+                  ),
                 ),
               ),
             ),
@@ -366,105 +469,107 @@ class SaleCartPanel extends StatelessWidget {
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: controller,
-    builder: (BuildContext context, _) {
-      final ThemeData theme = Theme.of(context);
-      final SaleCart cart = controller.cart;
-      final bool canEdit = controller.canEdit;
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  children: <Widget>[
-                    Semantics(
-                      header: true,
-                      child: Text(
-                        'Carrito',
-                        style: theme.textTheme.headlineSmall,
-                      ),
-                    ),
-                    TextButton.icon(
-                      key: const ValueKey<String>('sale-close-cart'),
-                      onPressed: controller.isSubmitting ? null : onClose,
-                      icon: const Icon(Icons.arrow_back),
-                      label: const Text('Seguir vendiendo'),
-                    ),
-                  ],
-                ),
-                if (controller.message case final String message) ...<Widget>[
-                  const SizedBox(height: 12),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text(
-                      message,
-                      style: TextStyle(
-                        color: controller.isLocked
-                            ? theme.colorScheme.error
-                            : null,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                if (cart.isEmpty)
-                  const Text(
-                    'El carrito está vacío. Agrega productos desde el catálogo.',
-                  )
-                else
-                  for (final SaleCartLine line in cart.lines)
-                    _SaleLineTile(controller: controller, line: line),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  key: const ValueKey<String>('sale-invoice-switch'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Factura'),
-                  subtitle: const Text(
-                    'Calcula el IVA para una venta facturada.',
-                  ),
-                  value: cart.invoiceRequested,
-                  onChanged: canEdit ? controller.setInvoiceRequested : null,
-                ),
-                const SizedBox(height: 8),
-                Text('Método de pago', style: theme.textTheme.titleSmall),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: <Widget>[
-                    for (final SalePaymentMethod method
-                        in SalePaymentMethod.values)
-                      ChoiceChip(
-                        key: ValueKey<String>(
-                          'sale-payment-${method.wireValue}',
+  Widget build(BuildContext context) => _PanelEntrance(
+    child: ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, _) {
+        final ThemeData theme = Theme.of(context);
+        final SaleCart cart = controller.cart;
+        final bool canEdit = controller.canEdit;
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: <Widget>[
+                      Semantics(
+                        header: true,
+                        child: Text(
+                          'Carrito',
+                          style: theme.textTheme.headlineSmall,
                         ),
-                        label: Text(salePaymentLabel(method)),
-                        selected: controller.paymentMethod == method,
-                        onSelected: canEdit
-                            ? (_) => controller.setPaymentMethod(method)
-                            : null,
                       ),
+                      TextButton.icon(
+                        key: const ValueKey<String>('sale-close-cart'),
+                        onPressed: controller.isSubmitting ? null : onClose,
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Seguir vendiendo'),
+                      ),
+                    ],
+                  ),
+                  if (controller.message case final String message) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        message,
+                        style: TextStyle(
+                          color: controller.isLocked
+                              ? theme.colorScheme.error
+                              : null,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ],
-                ),
-                const SizedBox(height: 16),
-                _SaleTotals(controller: controller),
-                const SizedBox(height: 16),
-                _SaleActions(controller: controller),
-              ],
+                  const SizedBox(height: 12),
+                  if (cart.isEmpty)
+                    const Text(
+                      'El carrito está vacío. Agrega productos desde el catálogo.',
+                    )
+                  else
+                    for (final SaleCartLine line in cart.lines)
+                      _SaleLineTile(controller: controller, line: line),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    key: const ValueKey<String>('sale-invoice-switch'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Factura'),
+                    subtitle: const Text(
+                      'Calcula el IVA para una venta facturada.',
+                    ),
+                    value: cart.invoiceRequested,
+                    onChanged: canEdit ? controller.setInvoiceRequested : null,
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Método de pago', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      for (final SalePaymentMethod method
+                          in SalePaymentMethod.values)
+                        ChoiceChip(
+                          key: ValueKey<String>(
+                            'sale-payment-${method.wireValue}',
+                          ),
+                          label: Text(salePaymentLabel(method)),
+                          selected: controller.paymentMethod == method,
+                          onSelected: canEdit
+                              ? (_) => controller.setPaymentMethod(method)
+                              : null,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _SaleTotals(controller: controller),
+                  const SizedBox(height: 16),
+                  _SaleActions(controller: controller),
+                ],
+              ),
             ),
           ),
-        ),
-      );
-    },
+        );
+      },
+    ),
   );
 }
 
