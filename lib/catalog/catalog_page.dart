@@ -263,6 +263,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   ProductCreationCoordinator? _creationCoordinator;
   final Map<String, Timer> _successTimers = <String, Timer>{};
   ProductCreationResult? _creationSuccess;
+  bool _creationNoticeExpired = false;
   ProductCreationDraft? _successfulCreationDraft;
   String? _creationError;
   String? _creationNameError;
@@ -316,6 +317,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
   bool _transferVisible = false;
+  bool _transferFromMovements = false;
   bool _transferPending = false;
   bool _noticesVisible = false;
   TransferNoticeController? _noticeController;
@@ -411,6 +413,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         (widget.administratorMovements == null) !=
             (oldWidget.administratorMovements == null)) {
       _movementsVisible = false;
+      _transferFromMovements = false;
     }
     // A replaced session or a removed seam cannot keep an open transfer view:
     // the retained draft belongs to the shell, not to this presentation.
@@ -420,6 +423,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             (oldWidget.unresolvedTransferDraft == null)) {
       _transferGeneration += 1;
       _transferVisible = false;
+      _transferFromMovements = false;
       _transferSnapshot = null;
     }
     if (sessionChanged ||
@@ -476,6 +480,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     _presentationRevision += 1;
     setState(() {
       _transferSnapshot = _snapshot;
+      _transferFromMovements = _movementsVisible;
       // The transfer form takes over the whole body, so any other open admin
       // view must close here or the body priority would keep it on screen and
       // the entry would look like a dead end. Nothing else is reset.
@@ -485,9 +490,15 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     });
   }
 
-  void _closeTransfer() {
+  void _closeTransfer({bool restorePreviousPanel = false}) {
     _presentationRevision += 1;
     setState(() {
+      if (restorePreviousPanel &&
+          _transferFromMovements &&
+          _movements != null) {
+        _movementsVisible = true;
+      }
+      _transferFromMovements = false;
       _transferVisible = false;
       _transferSnapshot = null;
     });
@@ -498,12 +509,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// The open body panels, topmost first, each closed by the same action as
   /// its own "Cerrar". A sale receipt covers the panels below it, so while one
   /// is shown only the panels drawn above it are listed.
-  List<VoidCallback> _openPanelClosers() {
+  List<VoidCallback> _openPanelClosers({bool restoreTransferPanel = false}) {
     final bool receiptShown = _sale?.lastReceipt != null;
     return <VoidCallback>[
       if (_movements != null && _movementsVisible) _closeMovements,
       if (_corrections != null && _correctionsVisible) _closeCorrections,
-      if (_transfer != null && _transferVisible) _closeTransfer,
+      if (_transfer != null && _transferVisible)
+        () => _closeTransfer(restorePreviousPanel: restoreTransferPanel),
       if (widget.session.role == InventoryRole.seller &&
           _noticeController != null &&
           _noticesVisible)
@@ -530,7 +542,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// "Volver": closes the topmost panel and reveals the one below it.
   void _goBack() {
     if (_navigationBlocked) return;
-    final List<VoidCallback> closers = _openPanelClosers();
+    final List<VoidCallback> closers = _openPanelClosers(
+      restoreTransferPanel: true,
+    );
     if (closers.isNotEmpty) closers.first();
   }
 
@@ -1191,7 +1205,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         child: Column(
           children: <Widget>[
             if (_creationSuccess case final ProductCreationResult result)
-              _CreationSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _creationNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_creationNoticeExpired &&
+                      identical(_creationSuccess, result)) {
+                    setState(() => _creationSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _CreationSuccess(),
+              ),
             if (_pricingSuccess case final ProductPricingResult result)
               _PricingSuccess(result: result),
             if (_renameSuccess case final ProductRenameResult result)
@@ -1337,7 +1381,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _creationUncertain = false;
         _creationVisible = false;
         _creationSuccess = result;
-        _expireSuccessNotice('creation', () => _creationSuccess = null);
+        _creationNoticeExpired = false;
+        _expireSuccessNotice('creation', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _creationSuccess = null;
+          } else {
+            _creationNoticeExpired = true;
+          }
+        });
         _successfulCreationDraft = submittedDraft;
         _name.clear();
         _unit.clear();
@@ -3016,9 +3067,7 @@ class _PricingSuccess extends StatelessWidget {
 }
 
 class _CreationSuccess extends StatelessWidget {
-  const _CreationSuccess({required this.result});
-
-  final ProductCreationResult result;
+  const _CreationSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -3034,7 +3083,7 @@ class _CreationSuccess extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.check_circle_outline),
             const SizedBox(width: 8),
-            Flexible(child: Text('Producto creado ${result.internalCode}')),
+            const Flexible(child: Text('Producto creado correctamente')),
           ],
         ),
       ),
