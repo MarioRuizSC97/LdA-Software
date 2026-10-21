@@ -408,6 +408,14 @@ void main() {
           await tester.pump();
           // An identical SDK identity frame does not own a new deadline.
           await tester.pump(const Duration(seconds: 1));
+          if (category == 'creation') {
+            // Creation starts its short exit at the unchanged ten-second
+            // deadline: it is still on screen mid-exit, then it is gone.
+            expect(banner(), findsOneWidget);
+            await tester.pump(const Duration(milliseconds: 120));
+            expect(banner(), findsOneWidget);
+            await tester.pumpAndSettle();
+          }
           expect(banner(), findsNothing);
           expect(requests, hasLength(2));
           expect(find.textContaining('resultado es incierto'), findsNothing);
@@ -452,6 +460,9 @@ void main() {
               findsOneWidget,
             );
             await tester.pump(const Duration(seconds: 5));
+            expect(banner(), findsOneWidget);
+            await tester.pump(const Duration(milliseconds: 120));
+            await tester.pumpAndSettle();
             expect(banner(), findsNothing);
             expect(
               find.textContaining('Precio guardado. Auditoría'),
@@ -924,7 +935,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
+        expect(find.text('Producto creado correctamente'), findsNothing);
         expect(calls, 1);
         if (change.startsWith('foreign')) {
           expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -1963,7 +1974,7 @@ void main() {
         precision: 0,
       ),
     );
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets(
@@ -2108,7 +2119,7 @@ void main() {
 
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets('restored same-admin uncertainty is prefilled and must resolve', (
@@ -2183,7 +2194,7 @@ void main() {
 
     expect(attempts, <ProductCreationDraft>[unresolved]);
     expect(keyCalls, 1);
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets('duplicate taps invoke once and progress is accessible', (
@@ -2276,7 +2287,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(loads, 2);
-    expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
     // The QR lives in the detail sheet since T5.
     await _openProductSheet(tester, 'PRD-NEW-0001');
     expect(
@@ -2327,7 +2338,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(creates, 1);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
     },
   );
@@ -2409,7 +2420,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+        expect(find.text('Producto creado correctamente'), findsNothing);
         expect(tester.takeException(), isNull);
       }
     },
@@ -4712,7 +4723,7 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           await tester.tap(find.text('Crear producto'));
           await tester.pump();
           if (close) {
@@ -4793,7 +4804,7 @@ void main() {
             find.byKey(const ValueKey<String>('intake-quantity')),
             findsNothing,
           );
-          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           expect(find.text('Reintentar misma solicitud'), findsNothing);
         },
       );
@@ -4879,7 +4890,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
       expect(pricingCalls, 0);
     });
@@ -4905,7 +4916,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -4933,7 +4944,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
@@ -4963,7 +4974,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -5015,7 +5026,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(creates, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
     });
 
@@ -5050,7 +5061,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('PRD-COFFEE-001'), findsWidgets);
       expect(find.text('PRD-NEW-0001'), findsNothing);
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -5079,7 +5090,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('PRD-COFFEE-001'), findsWidgets);
       expect(find.text('PRD-NEW-0001'), findsNothing);
     });

@@ -654,7 +654,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
       expect(attempts[1].idempotencyKey, attempts[0].idempotencyKey);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
     },
   );
 
@@ -734,7 +734,7 @@ void main() {
       expect(requests, hasLength(2));
       expect(requests[1], originalRequest);
       expect(requests[1]['idempotencyKey'], originalRequest['idempotencyKey']);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
     },
   );
 
@@ -847,7 +847,7 @@ void main() {
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.textContaining('late transport detail'), findsNothing);
     },
   );
@@ -922,7 +922,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Producto creado $code'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           expect(find.textContaining('resultado es incierto'), findsNothing);
           expect(attempts, hasLength(index + 1));
         }
@@ -988,7 +988,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       // The shell has now resolved the store; a later same-identity frame
       // changes the observed draft to null during the catalog refresh await.
       auth.sessions.add(
@@ -999,7 +999,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       refresh.complete(
         CatalogSnapshot(<CatalogItem>[
           CatalogItem(
@@ -1065,9 +1065,11 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
     await tester.pump(const Duration(seconds: 10));
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+    // The notice leaves through a short exit at its deadline.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Producto creado correctamente'), findsNothing);
     sameIdentityFrame();
     await tester.pump();
     expect(find.textContaining('resultado es incierto'), findsNothing);
@@ -1084,7 +1086,7 @@ void main() {
       ]),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+    expect(find.text('Producto creado correctamente'), findsNothing);
     expect(
       tester
           .widget<TextFormField>(
@@ -1156,7 +1158,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(attempts, hasLength(2));
       expect(identical(attempts[0], attempts[1]), isTrue);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.textContaining('resultado es incierto'), findsNothing);
     },
   );
@@ -1213,7 +1215,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
+      expect(find.text('Producto creado correctamente'), findsNothing);
       expect(find.textContaining('resultado es incierto'), findsNothing);
       expect(calls, 1);
     });
