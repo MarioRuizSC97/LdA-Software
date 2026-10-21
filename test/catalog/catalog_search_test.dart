@@ -79,6 +79,9 @@ String _searchFieldValue(WidgetTester tester) {
 Future<void> _type(WidgetTester tester, String value) async {
   await tester.enterText(_searchField(), value);
   await tester.pumpAndSettle();
+  // These T6 assertions inspect the filtered grid after leaving focus mode.
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
 }
 
 void main() {

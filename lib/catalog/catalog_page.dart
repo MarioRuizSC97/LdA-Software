@@ -25,6 +25,7 @@ import 'catalog_product.dart';
 import 'catalog_repository.dart';
 import 'catalog_scroll_fade.dart';
 import 'catalog_search.dart';
+import 'catalog_search_focus.dart';
 import 'product_qr_scan.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
@@ -3157,11 +3158,22 @@ class _CatalogList extends StatefulWidget {
 
 class _CatalogListState extends State<_CatalogList> {
   final TextEditingController _search = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
 
   String _query = '';
 
   @override
+  void initState() {
+    super.initState();
+    _searchFocus.addListener(_focusChanged);
+  }
+
+  void _focusChanged() => setState(() {});
+
+  @override
   void dispose() {
+    _searchFocus.removeListener(_focusChanged);
+    _searchFocus.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -3194,12 +3206,66 @@ class _CatalogListState extends State<_CatalogList> {
     // still have products behind it. Paint only — taps, card layout, keys, the
     // scroll extent and the semantics tree stay exactly where the list puts
     // them.
-    return CatalogScrollFade(child: _catalogScroll(visible));
+    return CatalogSearchFocus(
+      focusNode: _searchFocus,
+      results: _query.trim().isEmpty ? null : _searchResults(visible),
+      builder: (liftSearch) =>
+          CatalogScrollFade(child: _catalogScroll(visible, liftSearch)),
+    );
   }
+
+  Widget _card(CatalogItem item) => _ProductCard(
+    item: item,
+    costLabel: widget.role == InventoryRole.administrator
+        ? _latestCostLabel(widget.snapshot, item.product.internalCode)
+        : null,
+    role: widget.role,
+    branchChoices: widget.branchChoices,
+    onConfigurePricing: widget.onConfigurePricing,
+    onRecordIntake: widget.onRecordIntake,
+    saleAction: widget.saleAction,
+  );
+
+  Widget _noResults() => _CatalogMessage(
+    icon: Icons.search_off,
+    title: 'Sin resultados',
+    message: 'Ningún producto coincide con "$_query".',
+    action: OutlinedButton(
+      onPressed: _clearSearch,
+      child: const Text('Limpiar búsqueda'),
+    ),
+  );
+
+  Widget _searchResults(List<CatalogItem> visible) => ListView.separated(
+    primary: false,
+    shrinkWrap: true,
+    padding: const EdgeInsets.all(12),
+    itemCount: visible.isEmpty ? 1 : visible.length,
+    itemBuilder: (_, index) =>
+        visible.isEmpty ? _noResults() : _card(visible[index]),
+    separatorBuilder: (_, _) => const SizedBox(height: 8),
+  );
+
+  Widget _guardGrid(Widget child) => IgnorePointer(
+    ignoring: _searchFocus.hasFocus,
+    child: ExcludeSemantics(
+      excluding: _searchFocus.hasFocus,
+      child: ExcludeFocus(
+        excluding: _searchFocus.hasFocus,
+        child: KeyedSubtree(
+          key: const ValueKey<String>('catalog-search-grid'),
+          child: child,
+        ),
+      ),
+    ),
+  );
 
   /// The catalog header, the search field and the product grid, sized by the
   /// panel they are given (S4 columns).
-  Widget _catalogScroll(List<CatalogItem> visible) {
+  Widget _catalogScroll(
+    List<CatalogItem> visible,
+    Widget Function(Widget) liftSearch,
+  ) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final int columns = _columnsFor(context, constraints.maxWidth);
@@ -3228,30 +3294,23 @@ class _CatalogListState extends State<_CatalogList> {
                   constraints: const BoxConstraints(maxWidth: 960),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                    child: CatalogSearchField(
-                      controller: _search,
-                      onChanged: _onSearchChanged,
-                      onClear: _clearSearch,
-                      onScan: widget.qrScan == null || !productQrScanSupported
-                          ? null
-                          : _scanSearch,
+                    child: liftSearch(
+                      CatalogSearchField(
+                        controller: _search,
+                        focusNode: _searchFocus,
+                        onChanged: _onSearchChanged,
+                        onClear: _clearSearch,
+                        onScan: widget.qrScan == null || !productQrScanSupported
+                            ? null
+                            : _scanSearch,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
             if (visible.isEmpty)
-              SliverToBoxAdapter(
-                child: _CatalogMessage(
-                  icon: Icons.search_off,
-                  title: 'Sin resultados',
-                  message: 'Ningún producto coincide con "$_query".',
-                  action: OutlinedButton(
-                    onPressed: _clearSearch,
-                    child: const Text('Limpiar búsqueda'),
-                  ),
-                ),
-              )
+              SliverToBoxAdapter(child: _guardGrid(_noResults()))
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -3262,35 +3321,21 @@ class _CatalogListState extends State<_CatalogList> {
                   itemCount: (visible.length + columns - 1) ~/ columns,
                   itemBuilder: (BuildContext context, int index) {
                     final int first = index * columns;
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          // Incomplete final rows keep their empty slots so
-                          // the loaded cards never stretch across the row
-                          // (S5). The slots are inert and noninteractive.
-                          for (int i = first; i < first + columns; i++)
-                            if (i < visible.length)
-                              Expanded(
-                                child: _ProductCard(
-                                  item: visible[i],
-                                  costLabel:
-                                      widget.role == InventoryRole.administrator
-                                      ? _latestCostLabel(
-                                          widget.snapshot,
-                                          visible[i].product.internalCode,
-                                        )
-                                      : null,
-                                  role: widget.role,
-                                  branchChoices: widget.branchChoices,
-                                  onConfigurePricing: widget.onConfigurePricing,
-                                  onRecordIntake: widget.onRecordIntake,
-                                  saleAction: widget.saleAction,
-                                ),
-                              )
-                            else
-                              const Expanded(child: SizedBox.shrink()),
-                        ],
+                    return _guardGrid(
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            // Incomplete final rows keep their empty slots so
+                            // the loaded cards never stretch across the row
+                            // (S5). The slots are inert and noninteractive.
+                            for (int i = first; i < first + columns; i++)
+                              if (i < visible.length)
+                                Expanded(child: _card(visible[i]))
+                              else
+                                const Expanded(child: SizedBox.shrink()),
+                          ],
+                        ),
                       ),
                     );
                   },

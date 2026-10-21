@@ -130,3 +130,25 @@ uses a bounded `pump(300 ms)` because a catalog refresh is still pending there.
 (the soft secondary container) instead of solid blue, so it does not clash with
 the white card. Key, label, semantics and the add-one behavior are unchanged
 (`test/sales/sale_add_tone_test.dart`).
+
+## T9F: search focus mode (S12, shared presentation S7)
+
+`CatalogSearchFocus` dims the catalog around the original search field with a
+200 ms easeOutCubic scrim (instant with reduced motion). Non-empty queries
+show full, existing product cards in a scrollable, keyboard-bounded results
+card over sigma-8 blur, with 24 px corners and theme colors. Both grid and
+results use the same card factory and unchanged matcher; cart logic, detail
+peek, panel transitions and scroll fade remain untouched. The field stays in
+its original scroll view; a measured cutout keeps it clear of the scrim without
+a duplicate field or GlobalKey. Scrim / Escape / back unfocus without clearing.
+Grid cards beneath the scrim exclude pointers, semantics and focus. Results
+join the TextField tap region so desktop mouse clicks keep focus mode open.
+
+Tests: `test/catalog/catalog_search_focus_test.dart` pins dismissal/query
+retention, full-card results, add-one/stepper, details and long-press, clear and
+no match, live semantics isolation, reduced motion, desktop mouse selling and
+360 px / text scale 2 / keyboard Android/iOS layouts. Existing search tests
+unfocus in their typing helper before inspecting the retained filtered grid;
+the cancelled/replacement scan tests do likewise at their grid assertions.
+Assertions and Spanish copy are unchanged. Native simulator and browser
+visual checks remain parent integration work.

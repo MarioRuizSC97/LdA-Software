@@ -121,10 +121,12 @@ class CatalogSearchField extends StatelessWidget {
     required this.onChanged,
     required this.onClear,
     this.onScan,
+    this.focusNode,
     super.key,
   });
 
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
 
@@ -164,6 +166,7 @@ class CatalogSearchField extends StatelessWidget {
     return TextField(
       key: catalogSearchFieldKey,
       controller: controller,
+      focusNode: focusNode,
       onChanged: onChanged,
       textInputAction: TextInputAction.search,
       autocorrect: false,
