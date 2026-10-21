@@ -170,8 +170,10 @@ visual checks remain parent integration work.
 - **S16:** shared `lib/app/smooth_scroll.dart` wraps both catalog and results
   scroll views. Mouse wheel deltas accumulate into a clamped target animated
   over 200 ms with easeOutCubic; reduced motion jumps instantly. Native
-  signal routing still chooses the scrollable. Trackpad-kind signals and
-  finger drags retain native physics; no platform physics are replaced.
+  signal routing still chooses the scrollable. On Android and iOS, finger
+  scrolling uses the gentler bouncing glide (`ScrollConfiguration` in the same
+  widget), so a fling keeps easing instead of clamping to a hard stop; web and
+  desktop keep the framework's own physics. Trackpad-kind signals stay native.
   Flutter exposes device kind, not a wheel-precision flag: devices/browsers
   reporting a precise trackpad as a mouse cannot be distinguished here.
 - **Scroll cost:** fade listeners now change state only when an edge's

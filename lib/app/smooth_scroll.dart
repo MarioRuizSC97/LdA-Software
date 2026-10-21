@@ -67,7 +67,13 @@ class _SmoothScrollState extends State<SmoothScroll> {
           _target = null;
         }
       },
-      child: widget.builder(context, _controller),
+      child: ScrollConfiguration(
+        // Finger scrolling on Android/iOS takes the gentler bouncing glide
+        // (review R3-001): a fling keeps easing instead of clamping to a hard
+        // stop. Web and desktop keep their own platform physics.
+        behavior: const _SmoothTouchScrollBehavior(),
+        child: widget.builder(context, _controller),
+      ),
     ),
   );
 }
@@ -101,5 +107,22 @@ class _WheelPosition extends ScrollPositionWithSingleContext {
   @override
   void pointerScroll(double delta) {
     if (!animate(delta)) super.pointerScroll(delta);
+  }
+}
+
+/// Gives the touch platforms the gentler bouncing glide while leaving every
+/// other platform with the framework's own physics.
+class _SmoothTouchScrollBehavior extends MaterialScrollBehavior {
+  const _SmoothTouchScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    final TargetPlatform platform = Theme.of(context).platform;
+    if (platform == TargetPlatform.android || platform == TargetPlatform.iOS) {
+      return const BouncingScrollPhysics(
+        parent: RangeMaintainingScrollPhysics(),
+      );
+    }
+    return super.getScrollPhysics(context);
   }
 }

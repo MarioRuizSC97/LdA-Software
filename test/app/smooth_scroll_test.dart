@@ -72,4 +72,72 @@ void main() {
       expect(controller.offset, greaterThan(40));
     });
   }
+
+  _touchPhysicsTests();
+}
+
+// T9G correction (review R3-001): finger scrolling on Android and iOS must be
+// smoother too, not only the mouse wheel. Those platforms get the gentler
+// bouncing glide; web and desktop keep their own platform physics.
+void _touchPhysicsTests() {
+  Future<ScrollPhysics> pumpList(
+    WidgetTester tester,
+    TargetPlatform platform,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: platform),
+        home: Scaffold(
+          body: SmoothScroll(
+            builder: (context, controller) => ListView.builder(
+              controller: controller,
+              itemExtent: 60,
+              itemCount: 50,
+              itemBuilder: (_, index) => Text('Row $index'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final ScrollableState scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable),
+    );
+    return scrollable.position.physics;
+  }
+
+  for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+    testWidgets('$platform finger scrolling glides instead of stopping hard', (
+      WidgetTester tester,
+    ) async {
+      final ScrollPhysics physics = await pumpList(tester, platform);
+      expect(physics, isA<BouncingScrollPhysics>());
+    });
+  }
+
+  // Web and desktop keep the framework's own physics for their platform.
+  testWidgets('linux keeps its own platform physics', (
+    WidgetTester tester,
+  ) async {
+    final ScrollPhysics physics = await pumpList(tester, TargetPlatform.linux);
+    expect(physics, isA<ClampingScrollPhysics>());
+  });
+
+  testWidgets('a mobile fling keeps gliding for several frames', (
+    WidgetTester tester,
+  ) async {
+    await pumpList(tester, TargetPlatform.android);
+    final ScrollableState scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable),
+    );
+    await tester.fling(find.byType(ListView), const Offset(0, -300), 1200);
+    await tester.pump();
+    final double first = scrollable.position.pixels;
+    await tester.pump(const Duration(milliseconds: 300));
+    final double second = scrollable.position.pixels;
+    expect(first, greaterThan(0));
+    expect(second, greaterThan(first));
+    await tester.pumpAndSettle();
+    expect(scrollable.position.pixels, greaterThan(second));
+  });
 }
