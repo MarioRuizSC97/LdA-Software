@@ -154,6 +154,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 110));
     expect(find.text('a'), findsOneWidget);
     expect(find.text('b'), findsOneWidget);
+    // Mid-fade both panels are visibly partial, not frozen until the end.
+    double opacityOf(String text) => tester
+        .widget<Opacity>(
+          find.ancestor(of: find.text(text), matching: find.byType(Opacity)),
+        )
+        .opacity;
+    expect(opacityOf('b'), inExclusiveRange(0, 1));
+    expect(opacityOf('a'), inExclusiveRange(0, 1));
 
     await tester.pumpAndSettle();
     expect(find.text('a'), findsNothing);

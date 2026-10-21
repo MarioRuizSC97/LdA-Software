@@ -64,16 +64,23 @@ class _PanelTransitionState extends State<PanelTransition>
   @override
   void initState() {
     super.initState();
-    _controller.addStatusListener(_onStatus);
+    _controller
+      ..addListener(_onTick)
+      ..addStatusListener(_onStatus);
   }
 
   @override
   void dispose() {
     _controller
+      ..removeListener(_onTick)
       ..removeStatusListener(_onStatus)
       ..dispose();
     super.dispose();
   }
+
+  /// [build] reads the controller's value, so every tick must rebuild the
+  /// layers; otherwise the fade would jump straight from start to end.
+  void _onTick() => setState(() {});
 
   void _onStatus(AnimationStatus status) {
     if (status == AnimationStatus.completed && _leavingIdentity != null) {
