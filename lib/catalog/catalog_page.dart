@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
+import '../app/app_bar_surface.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_transition.dart';
 import '../app/smooth_scroll.dart';
@@ -1005,6 +1006,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             )
           : null,
       appBar: CatalogSearchChrome(
+        scrollSurface: true,
         child: AppBar(
           // The title centers on Android and iOS only (S2); desktop and web
           // keep Flutter's platform default at every window width.
@@ -1274,7 +1276,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
-    return CatalogSearchChromeScope(child: scaffold);
+    return AppBarSurfaceScope(child: CatalogSearchChromeScope(child: scaffold));
   }
 
   void _showCreation() {

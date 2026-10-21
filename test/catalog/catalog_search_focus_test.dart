@@ -18,11 +18,19 @@ Future<FakeSaleCheckout> _pump(
   WidgetTester tester, {
   TargetPlatform platform = TargetPlatform.android,
   VoidCallback? onLogout,
+  bool reduceMotion = false,
 }) async {
   final sales = FakeSaleCheckout();
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(platform: platform),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations:
+              reduceMotion || MediaQuery.disableAnimationsOf(context),
+        ),
+        child: child!,
+      ),
       home: AuthenticatedCatalogPage(
         session: const EmulatorSession(
           userId: 'seller-north',
@@ -51,6 +59,66 @@ String _query(WidgetTester tester) =>
     tester.widget<TextField>(_field).controller!.text;
 
 void main() {
+  testWidgets('focus blurs the whole scrim even before typing', (tester) async {
+    await _pump(tester);
+    final resting = tester.getRect(_key('catalog-search-lift'));
+    await tester.tap(_field);
+    await tester.pumpAndSettle();
+    final blur = _key('catalog-search-blur');
+    expect(blur, findsOneWidget);
+    expect(tester.getRect(blur), tester.getRect(_key('catalog-search-scrim')));
+    final clip = tester.widget<ClipPath>(
+      find.ancestor(of: blur, matching: find.byType(ClipPath)).first,
+    );
+    final path = clip.clipper!.getClip(tester.getSize(blur));
+    expect(path.contains(resting.center), isFalse);
+    expect(path.contains(const Offset(4, 4)), isTrue);
+    await _type(tester);
+    expect(
+      find.ancestor(of: _results, matching: find.byType(BackdropFilter)),
+      findsNothing,
+    );
+  });
+
+  for (final platform in [
+    TargetPlatform.android,
+    TargetPlatform.iOS,
+    TargetPlatform.macOS,
+  ]) {
+    testWidgets('$platform focus zoom is centered and returns to rest', (
+      tester,
+    ) async {
+      await _pump(tester, platform: platform);
+      final resting = tester.getRect(_key('catalog-search-lift'));
+      await tester.tap(_field);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      final mid = tester.getRect(_key('catalog-search-lift'));
+      expect(mid.width, greaterThan(resting.width));
+      expect(mid.width, lessThan(resting.width * 1.041));
+      expect(mid.center, resting.center);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(_key('catalog-search-lift')), resting);
+    });
+  }
+
+  testWidgets('reduced motion never scales the field', (tester) async {
+    await _pump(tester, reduceMotion: true);
+    final resting = tester.getRect(_key('catalog-search-lift'));
+    await tester.tap(_field);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.getRect(_key('catalog-search-lift')), resting);
+    expect(
+      tester
+          .widget<AnimatedOpacity>(_key('catalog-search-scrim-fade'))
+          .duration,
+      Duration.zero,
+    );
+  });
+
   testWidgets('scrim covers chrome and app bar tap dismisses without action', (
     tester,
   ) async {
@@ -104,8 +172,8 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await _pump(tester, platform: TargetPlatform.macOS);
-    await _type(tester);
     final field = tester.getRect(_key('catalog-search-lift'));
+    await _type(tester);
     final results = tester.getRect(_results);
     expect(results.left, field.left);
     expect(results.right, field.right);
@@ -168,7 +236,7 @@ void main() {
       findsOneWidget,
     );
     final blur = tester.widget<BackdropFilter>(_key('catalog-search-blur'));
-    expect(blur.filter, ImageFilter.blur(sigmaX: 8, sigmaY: 8));
+    expect(blur.filter, ImageFilter.blur(sigmaX: 5, sigmaY: 5));
     await tester.tap(_result('product-details-DEMO-PIN'));
     await tester.pumpAndSettle();
     expect(_key('product-sheet-DEMO-PIN'), findsOneWidget);
