@@ -151,7 +151,8 @@ void main() {
       moreOrLessEquals(PanelTransition.settleDistance, epsilon: 0.1),
     );
 
-    await tester.pump(const Duration(milliseconds: 110));
+    expect(PanelTransition.duration, const Duration(milliseconds: 350));
+    await tester.pump(const Duration(milliseconds: 175));
     expect(find.text('a'), findsOneWidget);
     expect(find.text('b'), findsOneWidget);
     // Mid-fade both panels are visibly partial, not frozen until the end.

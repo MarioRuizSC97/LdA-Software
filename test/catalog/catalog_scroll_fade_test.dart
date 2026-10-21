@@ -161,6 +161,33 @@ Future<void> _tapCardUnderTheEdge(WidgetTester tester) async {
 void main() {
   setUp(() => tapped = <int>[]);
 
+  testWidgets('unchanged edge visibility does not rebuild edges or list', (
+    tester,
+  ) async {
+    var builds = 0;
+    await tester.pumpWidget(
+      _app(
+        CatalogScrollFade(
+          child: Builder(
+            builder: (context) {
+              builds++;
+              return _list(40);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    _scrollTo(tester, 60);
+    await tester.pumpAndSettle();
+    final edge = tester.widget(topEdge);
+    final settledBuilds = builds;
+    _scrollTo(tester, 120);
+    await tester.pumpAndSettle();
+    expect(identical(tester.widget(topEdge), edge), isTrue);
+    expect(builds, settledBuilds);
+  });
+
   testWidgets('an overflowing list keeps a bottom edge', (
     WidgetTester tester,
   ) async {
@@ -313,6 +340,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Producto 2'), findsNothing);
 
+    // Leave search focus before checking normal cart behavior (S13).
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
     // The cart bar under the band still answers, next to the faded list.
     await tester.tap(find.byKey(const ValueKey<String>('sale-cart-button')));
     await tester.pumpAndSettle();

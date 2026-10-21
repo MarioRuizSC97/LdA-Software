@@ -4,6 +4,58 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+/// Shares only focus-mode chrome silencing, without rebuilding the catalog.
+class CatalogSearchChromeScope extends StatefulWidget {
+  const CatalogSearchChromeScope({required this.child, super.key});
+  final Widget child;
+
+  static ValueNotifier<bool>? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_ChromeFocus>()?.notifier;
+
+  @override
+  State<CatalogSearchChromeScope> createState() => _ChromeScopeState();
+}
+
+class _ChromeScopeState extends State<CatalogSearchChromeScope> {
+  final ValueNotifier<bool> active = ValueNotifier(false);
+
+  @override
+  void dispose() {
+    active.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _ChromeFocus(notifier: active, child: widget.child);
+}
+
+class _ChromeFocus extends InheritedNotifier<ValueNotifier<bool>> {
+  const _ChromeFocus({required super.notifier, required super.child});
+}
+
+/// Silences the unchanged app bar/cart contents while the overlay covers them.
+class CatalogSearchChrome extends StatelessWidget
+    implements PreferredSizeWidget {
+  const CatalogSearchChrome({required this.child, super.key});
+  final Widget child;
+
+  @override
+  Size get preferredSize => (child as PreferredSizeWidget).preferredSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = CatalogSearchChromeScope.maybeOf(context)?.value ?? false;
+    return IgnorePointer(
+      ignoring: active,
+      child: ExcludeSemantics(
+        excluding: active,
+        child: ExcludeFocus(excluding: active, child: child),
+      ),
+    );
+  }
+}
+
 /// Keeps the real search field in its scroll view (never a second keyed copy),
 /// with a hole in the focus scrim and results anchored to its measured bounds.
 class CatalogSearchFocus extends StatefulWidget {
@@ -23,6 +75,7 @@ class CatalogSearchFocus extends StatefulWidget {
 }
 
 class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
+  final OverlayPortalController _overlay = OverlayPortalController();
   final GlobalKey _panel = GlobalKey();
   final GlobalKey _field = GlobalKey();
   Rect _bounds = Rect.zero;
@@ -35,6 +88,9 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
   void initState() {
     super.initState();
     widget.focusNode.addListener(_focusChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _overlay.show();
+    });
   }
 
   @override
@@ -45,6 +101,7 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
 
   void _focusChanged() {
     setState(() {});
+    CatalogSearchChromeScope.maybeOf(context)?.value = _active;
     if (_active) {
       final context = _field.currentContext;
       if (context != null) {
@@ -104,88 +161,102 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
           const SingleActivator(LogicalKeyboardKey.escape):
               widget.focusNode.unfocus,
         },
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // A resizing Scaffold has already removed the keyboard. The minimum
-            // also protects hosts that deliberately do not resize their body.
-            final bottom = math.min(
-              constraints.maxHeight,
-              MediaQuery.sizeOf(context).height -
-                  MediaQuery.viewInsetsOf(context).bottom -
-                  _globalTop,
-            );
-            final top = _bounds.bottom + 8;
-            return Stack(
-              key: _panel,
-              children: <Widget>[
-                NotificationListener<ScrollNotification>(
-                  onNotification: (_) {
-                    _measureAfterLayout();
-                    return false;
-                  },
-                  child: widget.builder(_lift),
-                ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: !_active,
-                    child: AnimatedOpacity(
-                      key: const ValueKey<String>('catalog-search-scrim-fade'),
-                      opacity: _active ? 1 : 0,
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      child: ClipPath(
-                        clipper: _SearchHole(_bounds.inflate(2)),
-                        child: GestureDetector(
-                          key: const ValueKey<String>('catalog-search-scrim'),
-                          behavior: HitTestBehavior.opaque,
-                          excludeFromSemantics: true,
-                          onTap: widget.focusNode.unfocus,
-                          child: _active && widget.results != null
-                              ? BackdropFilter(
-                                  key: const ValueKey<String>(
-                                    'catalog-search-blur',
-                                  ),
-                                  filter: ImageFilter.blur(
-                                    sigmaX: 8,
-                                    sigmaY: 8,
-                                  ),
-                                  child: ColoredBox(
-                                    color: colors.scrim.withValues(alpha: .24),
-                                  ),
-                                )
-                              : ColoredBox(
-                                  color: colors.scrim.withValues(alpha: .24),
-                                ),
+        child: OverlayPortal(
+          controller: _overlay,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (_) {
+              if (_active) _measureAfterLayout();
+              return false;
+            },
+            child: widget.builder(_lift),
+          ),
+          overlayChildBuilder: (context) => Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // A resizing Scaffold has already removed the keyboard. The minimum
+                // also protects hosts that deliberately do not resize their body.
+                final bottom = math.min(
+                  constraints.maxHeight,
+                  MediaQuery.sizeOf(context).height -
+                      MediaQuery.viewInsetsOf(context).bottom -
+                      _globalTop,
+                );
+                final top = _bounds.bottom + 8;
+                return Stack(
+                  key: _panel,
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        ignoring: !_active,
+                        child: AnimatedOpacity(
+                          key: const ValueKey<String>(
+                            'catalog-search-scrim-fade',
+                          ),
+                          opacity: _active ? 1 : 0,
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(milliseconds: 200),
+                          curve: Curves.easeOutCubic,
+                          child: ClipPath(
+                            clipper: _SearchHole(_bounds.inflate(2)),
+                            child: GestureDetector(
+                              key: const ValueKey<String>(
+                                'catalog-search-scrim',
+                              ),
+                              behavior: HitTestBehavior.opaque,
+                              excludeFromSemantics: true,
+                              onTap: widget.focusNode.unfocus,
+                              child: _active && widget.results != null
+                                  ? BackdropFilter(
+                                      key: const ValueKey<String>(
+                                        'catalog-search-blur',
+                                      ),
+                                      filter: ImageFilter.blur(
+                                        sigmaX: 8,
+                                        sigmaY: 8,
+                                      ),
+                                      child: ColoredBox(
+                                        color: colors.scrim.withValues(
+                                          alpha: .24,
+                                        ),
+                                      ),
+                                    )
+                                  : ColoredBox(
+                                      color: colors.scrim.withValues(
+                                        alpha: .24,
+                                      ),
+                                    ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                if (_active && widget.results != null && bottom > top + 24)
-                  Positioned(
-                    top: top,
-                    left: math.max(16, _bounds.left),
-                    width: math.min(
-                      560,
-                      math.min(_bounds.width, constraints.maxWidth - 32),
-                    ),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: bottom - top - 12),
-                      child: Material(
-                        key: const ValueKey<String>('catalog-search-results'),
-                        color: colors.surface,
-                        elevation: 8,
-                        borderRadius: BorderRadius.circular(24),
-                        clipBehavior: Clip.antiAlias,
-                        child: TextFieldTapRegion(child: widget.results!),
+                    if (_active && widget.results != null && bottom > top + 24)
+                      Positioned(
+                        top: top,
+                        left: _bounds.left,
+                        width: _bounds.width,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: bottom - top - 12,
+                          ),
+                          child: Material(
+                            key: const ValueKey<String>(
+                              'catalog-search-results',
+                            ),
+                            color: colors.surface,
+                            elevation: 8,
+                            borderRadius: BorderRadius.circular(24),
+                            clipBehavior: Clip.antiAlias,
+                            child: TextFieldTapRegion(child: widget.results!),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ],
-            );
-          },
+                  ],
+                );
+              },
+            ),
+          ),
         ),
       ),
     );

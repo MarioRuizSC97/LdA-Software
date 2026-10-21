@@ -17,6 +17,7 @@ Finder _result(String key) =>
 Future<FakeSaleCheckout> _pump(
   WidgetTester tester, {
   TargetPlatform platform = TargetPlatform.android,
+  VoidCallback? onLogout,
 }) async {
   final sales = FakeSaleCheckout();
   await tester.pumpWidget(
@@ -30,7 +31,9 @@ Future<FakeSaleCheckout> _pump(
           branchId: 'branch-north',
         ),
         catalogLoader: (_) async => sellerSaleSnapshot(),
-        onLogout: () async {},
+        onLogout: () async {
+          onLogout?.call();
+        },
         saleCheckout: sales.checkout,
       ),
     ),
@@ -48,6 +51,66 @@ String _query(WidgetTester tester) =>
     tester.widget<TextField>(_field).controller!.text;
 
 void main() {
+  testWidgets('scrim covers chrome and app bar tap dismisses without action', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var logouts = 0;
+    await _pump(
+      tester,
+      platform: TargetPlatform.macOS,
+      onLogout: () => logouts++,
+    );
+    expect(find.semantics.byLabel('Cerrar sesión'), findsOne);
+    expect(find.semantics.byLabel('Abrir carrito. Carrito vacío'), findsOne);
+    final cart = _key('sale-cart-button');
+    final cartPoint = tester.getCenter(cart);
+    final headerPoint = tester.getCenter(find.text('Cerrar sesión'));
+    await _type(tester);
+    final scrim = tester.getRect(_key('catalog-search-scrim'));
+    expect(scrim.contains(headerPoint), isTrue);
+    expect(scrim.contains(cartPoint), isTrue);
+    expect(find.semantics.byLabel('Cerrar sesión'), findsNothing);
+    expect(
+      find.semantics.byLabel('Abrir carrito. Carrito vacío'),
+      findsNothing,
+    );
+    for (final chrome in [find.byType(AppBar), cart]) {
+      expect(
+        find.ancestor(
+          of: chrome,
+          matching: find.byWidgetPredicate(
+            (w) => w is ExcludeFocus && w.excluding,
+          ),
+        ),
+        findsWidgets,
+      );
+    }
+    await tester.tapAt(cartPoint);
+    await tester.pumpAndSettle();
+    expect(find.text('Carrito'), findsNothing);
+    expect(_query(tester), 'Pin');
+    await _type(tester);
+    await tester.tapAt(headerPoint);
+    await tester.pumpAndSettle();
+    expect(_results, findsNothing);
+    expect(_query(tester), 'Pin');
+    expect(logouts, 0);
+    semantics.dispose();
+  });
+
+  testWidgets('desktop results share both search field edges', (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await _pump(tester, platform: TargetPlatform.macOS);
+    await _type(tester);
+    final field = tester.getRect(_key('catalog-search-lift'));
+    final results = tester.getRect(_results);
+    expect(results.left, field.left);
+    expect(results.right, field.right);
+  });
+
   testWidgets('focus fades the scrim and lifts the search field', (
     tester,
   ) async {

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 /// Soft transition between the catalog page's body panels (T9/S9): the panel
 /// being left cross-fades underneath the one arriving, which eases up a short
 /// distance into place. Complementary opacities keep the cross-fade level,
-/// `Curves.easeOutCubic` keeps it calm, and 220 ms is short enough to read as
+/// `Curves.easeOutCubic` keeps it calm, and 350 ms is short enough to read as
 /// polish rather than a wait.
 ///
 /// [identity] names the panel in front and is the whole contract:
@@ -30,7 +30,7 @@ class PanelTransition extends StatefulWidget {
   });
 
   /// How long the arriving panel takes, and with it the one before it.
-  static const Duration duration = Duration(milliseconds: 220);
+  static const Duration duration = Duration(milliseconds: 350);
 
   /// How far the arriving panel settles up from, in logical pixels.
   static const double settleDistance = 12;

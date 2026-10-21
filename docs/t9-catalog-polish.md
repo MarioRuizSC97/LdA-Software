@@ -74,7 +74,7 @@ unchanged.
   together with a stable identity — `catalog`, `corrections`, `movements`,
   `transfer`, `notices`, `receipt`, `cart`, `creation`, `pricing`, `intake` —
   and `PanelTransition` fades the panel being left underneath the one
-  arriving: 220 ms, `easeOutCubic`, a 12 px vertical settle, no bounce.
+  arriving: 350 ms (T9G/S15), `easeOutCubic`, a 12 px vertical settle, no bounce.
   - Every layer has the same shape whether it is arriving or leaving, only
     properties change, so a panel keeps one element across the transition:
     rebuilding inside a panel never re-animates it and never throws away its
@@ -118,11 +118,11 @@ unchanged.
 
 ### Tests that look up a label shared by two panels
 
-While the 220 ms cross-fade runs, both panels are in the tree, so a finder for a
+While the 350 ms cross-fade runs, both panels are in the tree, so a finder for a
 label that both panels carry (for example `Cerrar`) matches twice. Tests that
 tap such a label right after a panel change wait for the fade first; the
 `chained creation-to-pricing` close loop in `test/catalog/catalog_page_test.dart`
-uses a bounded `pump(300 ms)` because a catalog refresh is still pending there.
+uses a bounded `pump(400 ms)` because a catalog refresh is still pending there.
 
 ## T9E: softer Agregar (S11)
 
@@ -152,3 +152,38 @@ unfocus in their typing helper before inspecting the retained filtered grid;
 the cancelled/replacement scan tests do likewise at their grid assertions.
 Assertions and Spanish copy are unchanged. Native simulator and browser
 visual checks remain parent integration work.
+
+## T9G: screen-wide search and calmer motion (S13–S16, S7)
+
+- **S13:** a route-local `OverlayPortal` paints the search scrim across the
+  whole screen, including app bar and cart bar. The original field stays in
+  place behind its measured cutout; results alone sit above the scrim.
+  Chrome contents, keys and callbacks are unchanged, but chrome excludes
+  pointers, live semantics and focus while searching. Tapping even the app
+  bar/cart area dismisses focus without firing its action or clearing text.
+- **S14:** results use the measured field width and left edge, with no 560 px
+  desktop cap. Their height stays keyboard-bounded, including at 360 px and
+  text scale 2 on Android/iOS widget layouts.
+- **S15:** panel cross-fades now take 350 ms; easeOutCubic, 12 px settle,
+  stable identities and outgoing-panel silencing remain unchanged. The
+  mid-fade test samples both partial opacities at 175 ms.
+- **S16:** shared `lib/app/smooth_scroll.dart` wraps both catalog and results
+  scroll views. Mouse wheel deltas accumulate into a clamped target animated
+  over 200 ms with easeOutCubic; reduced motion jumps instantly. Native
+  signal routing still chooses the scrollable. Trackpad-kind signals and
+  finger drags retain native physics; no platform physics are replaced.
+  Flutter exposes device kind, not a wheel-precision flag: devices/browsers
+  reporting a precise trackpad as a mouse cannot be distinguished here.
+- **Scroll cost:** fade listeners now change state only when an edge's
+  visibility changes, not for every offset. The idle search does not measure
+  on scroll; active search measures but rebuilds only if field geometry
+  changes. Product rows remain lazily built; `IntrinsicHeight` still sizes
+  visible rows but neither its children nor the catalog rebuild per tick.
+  Device frame-time profiling remains integration work, not a widget-test claim.
+
+Regression evidence lives in the search-focus, panel-transition, scroll-fade
+and new smooth-scroll suites. The existing fade integration test explicitly
+unfocuses before checking normal cart behavior; the chained creation/pricing
+close loop waits 400 ms rather than 300 ms (assertions unchanged). Shared
+Flutter code covers Android/iOS/web without packages or platform edits.
+Browser/hardware scrolling and native simulator proof remain parent checks.

@@ -29,11 +29,13 @@ shows a "Sin resultados" panel with a clear action instead of an empty list.
 
 ## Focus mode (T9F / S12)
 
-Focusing the field dims the rest of the catalog panel with a 200 ms
+Focusing the field dims the whole screen, including the app bar and cart bar,
+with a 200 ms
 `easeOutCubic` scrim and lifts the original field above it. A non-empty trimmed
 query opens a scrollable results card below the field: a sigma-8 blurred
-backdrop, rounded 24 px corners, theme colors and a 560 px width cap. Its height
-is bounded by both the panel and the keyboard's visible area.
+backdrop, rounded 24 px corners and theme colors. Its width and both edges
+match the search field exactly, including on desktop. Its height is bounded
+by the screen and the keyboard's visible area.
 
 Results reuse the **full catalog cards** and the same `filterCatalogItems`
 matcher: name, stock, price, tonal Agregar / quantity stepper, Detalles and
@@ -43,10 +45,12 @@ mode. Desktop mouse actions belong to the field's tap region, so selling does
 not accidentally dismiss results.
 
 Tap the scrim, press Escape or use system back to unfocus **without clearing**
-the query. The grid remains filtered afterward. Reduced motion
+the query, even when tapping over the app bar or cart bar. Those taps never
+activate the covered controls. The grid remains filtered afterward. Reduced motion
 (`MediaQuery.disableAnimations`) makes the scrim show/hide instantly. The
-underlying grid is excluded from pointers, semantics and keyboard focus during
-focus mode; only the results copy can be used or announced. The original
+underlying grid, app bar and cart bar are excluded from pointers, live semantics
+and keyboard focus during focus mode; only the field and results can be used
+or announced. The original
 search field stays mounted in its original scroll view, never duplicated.
 
 `test/catalog/catalog_search_focus_test.dart` covers focus/dismissal, results,

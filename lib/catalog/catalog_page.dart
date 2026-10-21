@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/backend_environment.dart';
 import '../app/panel_transition.dart';
+import '../app/smooth_scroll.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -110,8 +111,10 @@ class _CatalogPageState extends State<CatalogPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('LDA Inventory')),
+    final scaffold = Scaffold(
+      appBar: CatalogSearchChrome(
+        child: AppBar(title: const Text('LDA Inventory')),
+      ),
       body: SafeArea(
         child: Column(
           children: <Widget>[
@@ -151,6 +154,7 @@ class _CatalogPageState extends State<CatalogPage> {
         ),
       ),
     );
+    return CatalogSearchChromeScope(child: scaffold);
   }
 }
 
@@ -986,187 +990,200 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final VoidCallback? openMovements = showMovements || showTransfer
         ? null
         : _showMovements;
-    return Scaffold(
+    final scaffold = Scaffold(
       bottomNavigationBar:
           sale != null &&
               receipt == null &&
               !_cartVisible &&
               !showCorrections &&
               !showNotices
-          ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
+          ? CatalogSearchChrome(
+              child: SaleCartButton(
+                controller: sale,
+                onPressed: () => _openCart(sale),
+              ),
+            )
           : null,
-      appBar: AppBar(
-        // The title centers on Android and iOS only (S2); desktop and web
-        // keep Flutter's platform default at every window width.
-        centerTitle: mobilePlatform ? true : null,
-        // Navigation lives in the leading slot: it has its own width, so it
-        // never crowds the action row or adds height above a form on a
-        // narrow phone. "Volver" (left) appears only while a panel is open;
-        // "Inicio" sits to its right — on mobile only while a panel is open,
-        // because at the main panel the home icon is redundant (S2).
-        leadingWidth: _openPanelClosers().isEmpty ? null : 104,
-        leading: ListenableBuilder(
-          listenable: Listenable.merge(<Listenable>[?sale]),
-          builder: (BuildContext context, Widget? child) {
-            final bool panelOpen = _openPanelClosers().isNotEmpty;
-            final bool enabled = panelOpen && !_navigationBlocked;
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (panelOpen)
-                  IconButton(
-                    key: const ValueKey<String>('panel-back'),
-                    tooltip: 'Volver',
-                    onPressed: enabled ? _goBack : null,
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                // "Inicio" appears only while a panel is open, on every
-                // platform: at the main panel the home icon is redundant
-                // (S2, extended to web/desktop by S9).
-                if (panelOpen)
-                  IconButton(
-                    key: const ValueKey<String>('shell-home'),
-                    tooltip: 'Inicio',
-                    onPressed: enabled ? _goHome : null,
-                    icon: const Icon(Icons.home_outlined),
-                  ),
-              ],
-            );
-          },
-        ),
-        title: _ShellTitle(
-          session: widget.session,
-          environment: widget.environment,
-          centered: mobilePlatform,
-        ),
-        actions: <Widget>[
-          if (corrections != null && !compactBar)
-            TextButton.icon(
-              key: const ValueKey<String>('corrections-open'),
-              onPressed: openCorrections,
-              icon: const Icon(Icons.assignment_return_outlined),
-              label: const Text('Correcciones'),
-            ),
-          // Transfer notices (S10) live in the overflow menu wherever that
-          // menu exists — always on Android/iOS, on web/desktop when the bar
-          // is compact — as its first entry. The wide web/desktop bar keeps
-          // its own icon.
-          if (noticeController != null && !menuActions)
-            IconButton(
-              key: const ValueKey<String>('notices-open'),
-              tooltip: 'Avisos de traslados',
-              onPressed: showNotices ? null : _showNotices,
-              icon: _noticeBadge(context, unreadNotices),
-            ),
-          if (movements != null && !compactBar)
-            TextButton.icon(
-              key: const ValueKey<String>('movements-open'),
-              onPressed: openMovements,
-              icon: const Icon(Icons.swap_vert),
-              label: const Text('Movimientos'),
-            ),
-          // On mobile the refresh button leaves the bar (S2): Reload lives
-          // in the overflow menu below, so the bar spends no space on it.
-          // Desktop and web keep the bar button at every window width.
-          if (!mobilePlatform)
-            IconButton(
-              tooltip: 'Actualizar catálogo',
-              onPressed: _loading ? null : _requestCatalog,
-              icon: const Icon(Icons.refresh),
-            ),
-          if (menuActions)
-            PopupMenuButton<VoidCallback>(
-              key: const ValueKey<String>('shell-more'),
-              // Three bars on mobile (S2); web/desktop keeps the three dots.
-              // The unread-notice badge rides on the menu icon itself, and
-              // screen readers hear the unread notices named on the button.
-              // Only a session with transfer notices can have an unread
-              // badge; administrators have none.
-              icon: Semantics(
-                label: noticeController == null
-                    ? null
-                    : unreadNotices == null
-                    ? 'sin confirmar'
-                    : unreadNotices > 0
-                    ? 'Avisos de traslados: $unreadNotices sin leer'
-                    : null,
-                child: ExcludeSemantics(
-                  child: Badge(
-                    isLabelVisible:
-                        noticeController != null &&
-                        (unreadNotices == null || unreadNotices > 0),
-                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                    backgroundColor: unreadNotices == null
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    child: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
+      appBar: CatalogSearchChrome(
+        child: AppBar(
+          // The title centers on Android and iOS only (S2); desktop and web
+          // keep Flutter's platform default at every window width.
+          centerTitle: mobilePlatform ? true : null,
+          // Navigation lives in the leading slot: it has its own width, so it
+          // never crowds the action row or adds height above a form on a
+          // narrow phone. "Volver" (left) appears only while a panel is open;
+          // "Inicio" sits to its right — on mobile only while a panel is open,
+          // because at the main panel the home icon is redundant (S2).
+          leadingWidth: _openPanelClosers().isEmpty ? null : 104,
+          leading: ListenableBuilder(
+            listenable: Listenable.merge(<Listenable>[?sale]),
+            builder: (BuildContext context, Widget? child) {
+              final bool panelOpen = _openPanelClosers().isNotEmpty;
+              final bool enabled = panelOpen && !_navigationBlocked;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (panelOpen)
+                    IconButton(
+                      key: const ValueKey<String>('panel-back'),
+                      tooltip: 'Volver',
+                      onPressed: enabled ? _goBack : null,
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                  // "Inicio" appears only while a panel is open, on every
+                  // platform: at the main panel the home icon is redundant
+                  // (S2, extended to web/desktop by S9).
+                  if (panelOpen)
+                    IconButton(
+                      key: const ValueKey<String>('shell-home'),
+                      tooltip: 'Inicio',
+                      onPressed: enabled ? _goHome : null,
+                      icon: const Icon(Icons.home_outlined),
+                    ),
+                ],
+              );
+            },
+          ),
+          title: _ShellTitle(
+            session: widget.session,
+            environment: widget.environment,
+            centered: mobilePlatform,
+          ),
+          actions: <Widget>[
+            if (corrections != null && !compactBar)
+              TextButton.icon(
+                key: const ValueKey<String>('corrections-open'),
+                onPressed: openCorrections,
+                icon: const Icon(Icons.assignment_return_outlined),
+                label: const Text('Correcciones'),
+              ),
+            // Transfer notices (S10) live in the overflow menu wherever that
+            // menu exists — always on Android/iOS, on web/desktop when the bar
+            // is compact — as its first entry. The wide web/desktop bar keeps
+            // its own icon.
+            if (noticeController != null && !menuActions)
+              IconButton(
+                key: const ValueKey<String>('notices-open'),
+                tooltip: 'Avisos de traslados',
+                onPressed: showNotices ? null : _showNotices,
+                icon: _noticeBadge(context, unreadNotices),
+              ),
+            if (movements != null && !compactBar)
+              TextButton.icon(
+                key: const ValueKey<String>('movements-open'),
+                onPressed: openMovements,
+                icon: const Icon(Icons.swap_vert),
+                label: const Text('Movimientos'),
+              ),
+            // On mobile the refresh button leaves the bar (S2): Reload lives
+            // in the overflow menu below, so the bar spends no space on it.
+            // Desktop and web keep the bar button at every window width.
+            if (!mobilePlatform)
+              IconButton(
+                tooltip: 'Actualizar catálogo',
+                onPressed: _loading ? null : _requestCatalog,
+                icon: const Icon(Icons.refresh),
+              ),
+            if (menuActions)
+              PopupMenuButton<VoidCallback>(
+                key: const ValueKey<String>('shell-more'),
+                // Three bars on mobile (S2); web/desktop keeps the three dots.
+                // The unread-notice badge rides on the menu icon itself, and
+                // screen readers hear the unread notices named on the button.
+                // Only a session with transfer notices can have an unread
+                // badge; administrators have none.
+                icon: Semantics(
+                  label: noticeController == null
+                      ? null
+                      : unreadNotices == null
+                      ? 'sin confirmar'
+                      : unreadNotices > 0
+                      ? 'Avisos de traslados: $unreadNotices sin leer'
+                      : null,
+                  child: ExcludeSemantics(
+                    child: Badge(
+                      isLabelVisible:
+                          noticeController != null &&
+                          (unreadNotices == null || unreadNotices > 0),
+                      label: Text(
+                        unreadNotices == null ? '!' : '$unreadNotices',
+                      ),
+                      backgroundColor: unreadNotices == null
+                          ? Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                          : null,
+                      child: Icon(
+                        mobilePlatform ? Icons.menu : Icons.more_vert,
+                      ),
+                    ),
                   ),
                 ),
+                onSelected: (VoidCallback action) => action(),
+                itemBuilder: (BuildContext context) =>
+                    <PopupMenuEntry<VoidCallback>>[
+                      // First entry for the fastest access (S10); the count on
+                      // the item is read when the menu opens.
+                      if (noticeController != null)
+                        PopupMenuItem<VoidCallback>(
+                          key: const ValueKey<String>('notices-open'),
+                          enabled: !showNotices,
+                          value: _showNotices,
+                          child: ListTile(
+                            leading: _noticeBadge(context, unreadNotices),
+                            title: const Text('Avisos de traslados'),
+                          ),
+                        ),
+                      if (mobilePlatform)
+                        PopupMenuItem<VoidCallback>(
+                          enabled: !_loading,
+                          value: _requestCatalog,
+                          child: const ListTile(
+                            leading: Icon(Icons.refresh),
+                            title: Text('Actualizar catálogo'),
+                          ),
+                        ),
+                      if (corrections != null && compactBar)
+                        PopupMenuItem<VoidCallback>(
+                          key: const ValueKey<String>('corrections-open'),
+                          enabled: openCorrections != null,
+                          value: openCorrections,
+                          child: const ListTile(
+                            leading: Icon(Icons.assignment_return_outlined),
+                            title: Text('Correcciones'),
+                          ),
+                        ),
+                      if (movements != null && compactBar)
+                        PopupMenuItem<VoidCallback>(
+                          key: const ValueKey<String>('movements-open'),
+                          enabled: openMovements != null,
+                          value: openMovements,
+                          child: const ListTile(
+                            leading: Icon(Icons.swap_vert),
+                            title: Text('Movimientos'),
+                          ),
+                        ),
+                      if (compactBar)
+                        PopupMenuItem<VoidCallback>(
+                          value: widget.onLogout,
+                          child: const ListTile(
+                            leading: Icon(Icons.logout),
+                            title: Text('Cerrar sesión'),
+                          ),
+                        ),
+                    ],
               ),
-              onSelected: (VoidCallback action) => action(),
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<VoidCallback>>[
-                    // First entry for the fastest access (S10); the count on
-                    // the item is read when the menu opens.
-                    if (noticeController != null)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('notices-open'),
-                        enabled: !showNotices,
-                        value: _showNotices,
-                        child: ListTile(
-                          leading: _noticeBadge(context, unreadNotices),
-                          title: const Text('Avisos de traslados'),
-                        ),
-                      ),
-                    if (mobilePlatform)
-                      PopupMenuItem<VoidCallback>(
-                        enabled: !_loading,
-                        value: _requestCatalog,
-                        child: const ListTile(
-                          leading: Icon(Icons.refresh),
-                          title: Text('Actualizar catálogo'),
-                        ),
-                      ),
-                    if (corrections != null && compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('corrections-open'),
-                        enabled: openCorrections != null,
-                        value: openCorrections,
-                        child: const ListTile(
-                          leading: Icon(Icons.assignment_return_outlined),
-                          title: Text('Correcciones'),
-                        ),
-                      ),
-                    if (movements != null && compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('movements-open'),
-                        enabled: openMovements != null,
-                        value: openMovements,
-                        child: const ListTile(
-                          leading: Icon(Icons.swap_vert),
-                          title: Text('Movimientos'),
-                        ),
-                      ),
-                    if (compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        value: widget.onLogout,
-                        child: const ListTile(
-                          leading: Icon(Icons.logout),
-                          title: Text('Cerrar sesión'),
-                        ),
-                      ),
-                  ],
-            ),
-          // The inline logout keeps its place whenever the bar is wide enough
-          // for it — mobile only moved Reload out of the bar (S2c).
-          if (!compactBar) ...<Widget>[
-            OutlinedButton(
-              onPressed: widget.onLogout,
-              child: const Text('Cerrar sesión'),
-            ),
-            const SizedBox(width: 12),
+            // The inline logout keeps its place whenever the bar is wide enough
+            // for it — mobile only moved Reload out of the bar (S2c).
+            if (!compactBar) ...<Widget>[
+              OutlinedButton(
+                onPressed: widget.onLogout,
+                child: const Text('Cerrar sesión'),
+              ),
+              const SizedBox(width: 12),
+            ],
           ],
-        ],
+        ),
       ),
       body: SafeArea(
         child: Column(
@@ -1257,6 +1274,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
+    return CatalogSearchChromeScope(child: scaffold);
   }
 
   void _showCreation() {
@@ -3236,14 +3254,17 @@ class _CatalogListState extends State<_CatalogList> {
     ),
   );
 
-  Widget _searchResults(List<CatalogItem> visible) => ListView.separated(
-    primary: false,
-    shrinkWrap: true,
-    padding: const EdgeInsets.all(12),
-    itemCount: visible.isEmpty ? 1 : visible.length,
-    itemBuilder: (_, index) =>
-        visible.isEmpty ? _noResults() : _card(visible[index]),
-    separatorBuilder: (_, _) => const SizedBox(height: 8),
+  Widget _searchResults(List<CatalogItem> visible) => SmoothScroll(
+    builder: (context, controller) => ListView.separated(
+      controller: controller,
+      primary: false,
+      shrinkWrap: true,
+      padding: const EdgeInsets.all(12),
+      itemCount: visible.isEmpty ? 1 : visible.length,
+      itemBuilder: (_, index) =>
+          visible.isEmpty ? _noResults() : _card(visible[index]),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+    ),
   );
 
   Widget _guardGrid(Widget child) => IgnorePointer(
@@ -3269,80 +3290,84 @@ class _CatalogListState extends State<_CatalogList> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final int columns = _columnsFor(context, constraints.maxWidth);
-        return CustomScrollView(
-          slivers: <Widget>[
-            SliverToBoxAdapter(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                    child: Semantics(
-                      header: true,
-                      child: Text(
-                        'Catálogo',
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                    child: liftSearch(
-                      CatalogSearchField(
-                        controller: _search,
-                        focusNode: _searchFocus,
-                        onChanged: _onSearchChanged,
-                        onClear: _clearSearch,
-                        onScan: widget.qrScan == null || !productQrScanSupported
-                            ? null
-                            : _scanSearch,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (visible.isEmpty)
-              SliverToBoxAdapter(child: _guardGrid(_noResults()))
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                sliver: SliverList.separated(
-                  // The grid lays out complete rows of Expanded cards so the
-                  // row height follows the tallest card instead of a fixed
-                  // aspect ratio (S4).
-                  itemCount: (visible.length + columns - 1) ~/ columns,
-                  itemBuilder: (BuildContext context, int index) {
-                    final int first = index * columns;
-                    return _guardGrid(
-                      IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            // Incomplete final rows keep their empty slots so
-                            // the loaded cards never stretch across the row
-                            // (S5). The slots are inert and noninteractive.
-                            for (int i = first; i < first + columns; i++)
-                              if (i < visible.length)
-                                Expanded(child: _card(visible[i]))
-                              else
-                                const Expanded(child: SizedBox.shrink()),
-                          ],
+        return SmoothScroll(
+          builder: (context, controller) => CustomScrollView(
+            controller: controller,
+            slivers: <Widget>[
+              SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                      child: Semantics(
+                        header: true,
+                        child: Text(
+                          'Catálogo',
+                          style: Theme.of(context).textTheme.headlineMedium,
                         ),
                       ),
-                    );
-                  },
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    ),
+                  ),
                 ),
               ),
-          ],
+              SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                      child: liftSearch(
+                        CatalogSearchField(
+                          controller: _search,
+                          focusNode: _searchFocus,
+                          onChanged: _onSearchChanged,
+                          onClear: _clearSearch,
+                          onScan:
+                              widget.qrScan == null || !productQrScanSupported
+                              ? null
+                              : _scanSearch,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (visible.isEmpty)
+                SliverToBoxAdapter(child: _guardGrid(_noResults()))
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  sliver: SliverList.separated(
+                    // The grid lays out complete rows of Expanded cards so the
+                    // row height follows the tallest card instead of a fixed
+                    // aspect ratio (S4).
+                    itemCount: (visible.length + columns - 1) ~/ columns,
+                    itemBuilder: (BuildContext context, int index) {
+                      final int first = index * columns;
+                      return _guardGrid(
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              // Incomplete final rows keep their empty slots so
+                              // the loaded cards never stretch across the row
+                              // (S5). The slots are inert and noninteractive.
+                              for (int i = first; i < first + columns; i++)
+                                if (i < visible.length)
+                                  Expanded(child: _card(visible[i]))
+                                else
+                                  const Expanded(child: SizedBox.shrink()),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );

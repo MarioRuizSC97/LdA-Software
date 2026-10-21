@@ -46,11 +46,11 @@ class CatalogScrollFade extends StatefulWidget {
 }
 
 class _CatalogScrollFadeState extends State<CatalogScrollFade> {
-  /// Content behind each edge, in logical pixels, from the last scroll
-  /// metrics read. Both are zero until the child has laid out, so a list that
-  /// does not scroll never shows an edge.
-  double _above = 0;
-  double _below = 0;
+  /// Visibility from the last metrics read. Offset changes within the same
+  /// visibility region must not schedule another build. Both start hidden
+  /// until layout reports whether there is any content beyond each edge.
+  bool _above = false;
+  bool _below = false;
 
   /// Below this many pixels there is nothing worth fading, which also keeps an
   /// overscroll bounce from flickering an edge in and out.
@@ -67,10 +67,12 @@ class _CatalogScrollFadeState extends State<CatalogScrollFade> {
   }
 
   void _apply(double above, double below) {
-    if (_above == above && _below == below) return;
+    final showAbove = above > _tolerance;
+    final showBelow = below > _tolerance;
+    if (_above == showAbove && _below == showBelow) return;
     setState(() {
-      _above = above;
-      _below = below;
+      _above = showAbove;
+      _below = showBelow;
     });
   }
 
@@ -90,14 +92,14 @@ class _CatalogScrollFadeState extends State<CatalogScrollFade> {
         clipBehavior: Clip.none,
         children: <Widget>[
           widget.child,
-          if (_above > _tolerance)
+          if (_above)
             _edge(
               key: catalogScrollFadeTopKey,
               extent: widget.topExtent,
               background: background,
               downward: false,
             ),
-          if (_below > _tolerance)
+          if (_below)
             _edge(
               key: catalogScrollFadeBottomKey,
               extent: widget.bottomExtent,
