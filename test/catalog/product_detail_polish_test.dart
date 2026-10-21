@@ -114,7 +114,7 @@ void main() {
     await _open(tester);
     final BuildContext sheetContext = tester.element(_peek.first);
     final TextTheme textTheme = Theme.of(sheetContext).textTheme;
-    final Color primary = Theme.of(sheetContext).colorScheme.primary;
+    final Color ink = Theme.of(sheetContext).colorScheme.onSurface;
 
     final Text name = tester.widget<Text>(
       find.descendant(of: _peek, matching: find.text(_product.name)),
@@ -128,7 +128,7 @@ void main() {
       ),
     );
     expect(price.style?.fontSize, textTheme.titleLarge?.fontSize);
-    expect(price.style?.color, primary);
+    expect(price.style?.color, ink);
     expect(name.style!.fontSize, greaterThanOrEqualTo(price.style!.fontSize!));
 
     final Text mode = tester.widget<Text>(

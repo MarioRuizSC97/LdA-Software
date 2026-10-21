@@ -3617,7 +3617,7 @@ class _ProductSheet extends StatelessWidget {
                   'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
                   '${shown.currency}',
                   style: theme.textTheme.titleLarge?.copyWith(
-                    color: colors.primary,
+                    color: colors.onSurface,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
