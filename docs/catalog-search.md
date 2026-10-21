@@ -31,10 +31,14 @@ shows a "Sin resultados" panel with a clear action instead of an empty list.
 
 Focusing the field dims the whole screen, including the app bar and cart bar,
 with a 200 ms
-`easeOutCubic` scrim and lifts the original field above it. A non-empty trimmed
-query opens a scrollable results card below the field: a sigma-8 blurred
-backdrop, rounded 24 px corners and theme colors. Its width and both edges
-match the search field exactly, including on desktop. Its height is bounded
+`easeOutCubic` scrim and lifts the original field above it. The entire scrim
+has sigma-5 backdrop blur from the moment focus begins, even before typing.
+The field scales to 104% around its center over 200 ms (`easeOutCubic`), without
+changing layout or replacing the editable field; its clear cutout follows the
+painted scale. A non-empty trimmed query opens a scrollable results card below
+the field with rounded 24 px corners and theme colors. Its width and both edges
+match the field's **resting** bounds exactly, including on desktop. Neither the
+field nor the results are blurred. Its height is bounded
 by the screen and the keyboard's visible area.
 
 Results reuse the **full catalog cards** and the same `filterCatalogItems`
@@ -47,7 +51,8 @@ not accidentally dismiss results.
 Tap the scrim, press Escape or use system back to unfocus **without clearing**
 the query, even when tapping over the app bar or cart bar. Those taps never
 activate the covered controls. The grid remains filtered afterward. Reduced motion
-(`MediaQuery.disableAnimations`) makes the scrim show/hide instantly. The
+(`MediaQuery.disableAnimations`) makes the scrim show/hide instantly and
+keeps the field at scale 1 (no zoom). The
 underlying grid, app bar and cart bar are excluded from pointers, live semantics
 and keyboard focus during focus mode; only the field and results can be used
 or announced. The original

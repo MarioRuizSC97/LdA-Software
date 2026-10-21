@@ -4,6 +4,8 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app/app_bar_surface.dart';
+
 /// Shares only focus-mode chrome silencing, without rebuilding the catalog.
 class CatalogSearchChromeScope extends StatefulWidget {
   const CatalogSearchChromeScope({required this.child, super.key});
@@ -37,8 +39,13 @@ class _ChromeFocus extends InheritedNotifier<ValueNotifier<bool>> {
 /// Silences the unchanged app bar/cart contents while the overlay covers them.
 class CatalogSearchChrome extends StatelessWidget
     implements PreferredSizeWidget {
-  const CatalogSearchChrome({required this.child, super.key});
+  const CatalogSearchChrome({
+    required this.child,
+    this.scrollSurface = false,
+    super.key,
+  });
   final Widget child;
+  final bool scrollSurface;
 
   @override
   Size get preferredSize => (child as PreferredSizeWidget).preferredSize;
@@ -50,7 +57,10 @@ class CatalogSearchChrome extends StatelessWidget
       ignoring: active,
       child: ExcludeSemantics(
         excluding: active,
-        child: ExcludeFocus(excluding: active, child: child),
+        child: ExcludeFocus(
+          excluding: active,
+          child: scrollSurface ? AppBarSurface(child: child as AppBar) : child,
+        ),
       ),
     );
   }
@@ -74,7 +84,16 @@ class CatalogSearchFocus extends StatefulWidget {
   State<CatalogSearchFocus> createState() => _CatalogSearchFocusState();
 }
 
-class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
+class _CatalogSearchFocusState extends State<CatalogSearchFocus>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _zoom = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  )..addListener(() => setState(() {}));
+
+  double get _scale => MediaQuery.disableAnimationsOf(context)
+      ? 1
+      : 1 + .04 * Curves.easeOutCubic.transform(_zoom.value);
   final OverlayPortalController _overlay = OverlayPortalController();
   final GlobalKey _panel = GlobalKey();
   final GlobalKey _field = GlobalKey();
@@ -96,11 +115,19 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
   @override
   void dispose() {
     widget.focusNode.removeListener(_focusChanged);
+    _zoom.dispose();
     super.dispose();
   }
 
   void _focusChanged() {
     setState(() {});
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _zoom.value = 0;
+    } else if (_active) {
+      _zoom.forward();
+    } else {
+      _zoom.reverse();
+    }
     CatalogSearchChromeScope.maybeOf(context)?.value = _active;
     if (_active) {
       final context = _field.currentContext;
@@ -138,12 +165,16 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
   Widget _lift(Widget child) => Padding(
     key: _field,
     padding: EdgeInsets.zero,
-    child: Material(
-      key: const ValueKey<String>('catalog-search-lift'),
-      elevation: _active ? 6 : 0,
-      borderRadius: BorderRadius.circular(4),
-      color: Theme.of(context).colorScheme.surface,
-      child: child,
+    child: Transform.scale(
+      scale: _scale,
+      alignment: Alignment.center,
+      child: Material(
+        key: const ValueKey<String>('catalog-search-lift'),
+        elevation: _active ? 6 : 0,
+        borderRadius: BorderRadius.circular(4),
+        color: Theme.of(context).colorScheme.surface,
+        child: child,
+      ),
     ),
   );
 
@@ -198,7 +229,13 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
                               : const Duration(milliseconds: 200),
                           curve: Curves.easeOutCubic,
                           child: ClipPath(
-                            clipper: _SearchHole(_bounds.inflate(2)),
+                            clipper: _SearchHole(
+                              Rect.fromCenter(
+                                center: _bounds.center,
+                                width: _bounds.width * _scale + 4,
+                                height: _bounds.height * _scale + 4,
+                              ),
+                            ),
                             child: GestureDetector(
                               key: const ValueKey<String>(
                                 'catalog-search-scrim',
@@ -206,14 +243,14 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus> {
                               behavior: HitTestBehavior.opaque,
                               excludeFromSemantics: true,
                               onTap: widget.focusNode.unfocus,
-                              child: _active && widget.results != null
+                              child: _active
                                   ? BackdropFilter(
                                       key: const ValueKey<String>(
                                         'catalog-search-blur',
                                       ),
                                       filter: ImageFilter.blur(
-                                        sigmaX: 8,
-                                        sigmaY: 8,
+                                        sigmaX: 5,
+                                        sigmaY: 5,
                                       ),
                                       child: ColoredBox(
                                         color: colors.scrim.withValues(

@@ -136,7 +136,7 @@ the white card. Key, label, semantics and the add-one behavior are unchanged
 `CatalogSearchFocus` dims the catalog around the original search field with a
 200 ms easeOutCubic scrim (instant with reduced motion). Non-empty queries
 show full, existing product cards in a scrollable, keyboard-bounded results
-card over sigma-8 blur, with 24 px corners and theme colors. Both grid and
+card over backdrop blur (now sigma 5 in T9H), with 24 px corners and theme colors. Both grid and
 results use the same card factory and unchanged matcher; cart logic, detail
 peek, panel transitions and scroll fade remain untouched. The field stays in
 its original scroll view; a measured cutout keeps it clear of the scrim without
@@ -189,3 +189,28 @@ unfocuses before checking normal cart behavior; the chained creation/pricing
 close loop waits 400 ms rather than 300 ms (assertions unchanged). Shared
 Flutter code covers Android/iOS/web without packages or platform edits.
 Browser/hardware scrolling and native simulator proof remain parent checks.
+
+## T9H: search emphasis and scroll-linked header (S18, S19, S7)
+
+- **S18:** focus immediately blurs the full-screen dimmed background at sigma 5,
+  even with an empty query. The original field paints at up to 104% scale,
+  centered, over 200 ms easeOutCubic; layout bounds and the editable element
+  never change. The scrim's cutout tracks the painted bounds. Results remain
+  sharp and keep the field's resting edges (S14); covered app/cart controls
+  remain silenced (S13). Reduced motion has no zoom and no scrim animation.
+- **S19:** `lib/app/app_bar_surface.dart` maps the primary vertical scroll offset
+  directly to a color ramp over 0–36 px, from `colorScheme.surface` to
+  `surfaceContainerLow`. A transparent, zero-elevation/tint AppBar prevents the
+  framework's binary scrolled-under change. No timed color animation is needed:
+  reduced motion also paints the exact offset color immediately. Header text,
+  session, menu and actions are unchanged; only the surface repaints on scroll.
+- **S7:** all behavior is shared Flutter code, with no dependencies or native
+  branches. Tests sample centered mid-zoom geometry on Android/iOS/macOS,
+  no-scale reduced motion, blur clipping, existing chrome blocking and results
+  alignment. `app_bar_surface_test.dart` samples seven distinct colors across
+  the ramp, endpoint clamping and reversal with/without reduced motion.
+  Device/browser visual verification remains a parent integration check.
+
+Existing search-focus tests changed only for the intended sigma-5 blur and
+resting-width comparison; their behavior assertions remain. No tests outside
+this unit's allowed surfaces were edited.
