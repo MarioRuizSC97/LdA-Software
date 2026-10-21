@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app/backend_environment.dart';
+import 'app/inventory_theme.dart';
 import 'auth/emulator_login.dart';
 import 'auth/emulator_session.dart';
 import 'catalog/catalog_load_diagnostics.dart';
@@ -317,9 +318,7 @@ class CatalogSetupApp extends StatelessWidget {
   }
 }
 
-ThemeData _theme() {
-  return ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue));
-}
+ThemeData _theme() => buildInventoryTheme();
 
 const List<CatalogProduct> _catalogFixtures = <CatalogProduct>[
   CatalogProduct(

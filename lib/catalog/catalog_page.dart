@@ -3209,28 +3209,30 @@ class _CatalogListState extends State<_CatalogList> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: <Widget>[
-                          for (
-                            int i = first;
-                            i < first + columns && i < visible.length;
-                            i++
-                          )
-                            Expanded(
-                              child: _ProductCard(
-                                item: visible[i],
-                                costLabel:
-                                    widget.role == InventoryRole.administrator
-                                    ? _latestCostLabel(
-                                        widget.snapshot,
-                                        visible[i].product.internalCode,
-                                      )
-                                    : null,
-                                role: widget.role,
-                                branchChoices: widget.branchChoices,
-                                onConfigurePricing: widget.onConfigurePricing,
-                                onRecordIntake: widget.onRecordIntake,
-                                saleAction: widget.saleAction,
-                              ),
-                            ),
+                          // Incomplete final rows keep their empty slots so
+                          // the loaded cards never stretch across the row
+                          // (S5). The slots are inert and noninteractive.
+                          for (int i = first; i < first + columns; i++)
+                            if (i < visible.length)
+                              Expanded(
+                                child: _ProductCard(
+                                  item: visible[i],
+                                  costLabel:
+                                      widget.role == InventoryRole.administrator
+                                      ? _latestCostLabel(
+                                          widget.snapshot,
+                                          visible[i].product.internalCode,
+                                        )
+                                      : null,
+                                  role: widget.role,
+                                  branchChoices: widget.branchChoices,
+                                  onConfigurePricing: widget.onConfigurePricing,
+                                  onRecordIntake: widget.onRecordIntake,
+                                  saleAction: widget.saleAction,
+                                ),
+                              )
+                            else
+                              const Expanded(child: SizedBox.shrink()),
                         ],
                       ),
                     );
@@ -3313,6 +3315,7 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     final CatalogPricing? pricing = product.pricing;
     final String priceLine = pricing == null
         ? 'Sin precio'
@@ -3334,27 +3337,46 @@ class _ProductCard extends StatelessWidget {
             children: <Widget>[
               Semantics(
                 header: true,
-                child: Text(
-                  product.name,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
+                child: Text(product.name, style: theme.textTheme.titleLarge),
               ),
               if (role != null) ...<Widget>[
                 const SizedBox(height: 8),
-                ..._holdingLines(
-                  item: item,
-                  role: role,
-                  branchChoices: branchChoices,
+                // Stock is secondary information (S2): small, muted ink under
+                // the name. The shared _holdingLines contribute only text.
+                DefaultTextStyle.merge(
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: _holdingLines(
+                      item: item,
+                      role: role,
+                      branchChoices: branchChoices,
+                    ),
+                  ),
                 ),
               ],
               const SizedBox(height: 8),
-              Text(priceLine, style: Theme.of(context).textTheme.titleMedium),
+              // The price is the card's strongest line (S2): large and bold,
+              // with the exact amount and copy unchanged.
+              Text(
+                priceLine,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 12,
                 runSpacing: 8,
                 children: <Widget>[
-                  OutlinedButton.icon(
+                  if (saleAction?.call(product) case final Widget action)
+                    action,
+                  // 'Detalles' is the discreet secondary action (S3); the
+                  // sale 'Agregar' FilledButton above keeps the primary role.
+                  TextButton.icon(
                     key: ValueKey<String>(
                       'product-details-${product.internalCode}',
                     ),
@@ -3365,8 +3387,6 @@ class _ProductCard extends StatelessWidget {
                       semanticsLabel: 'Ver detalles de ${product.name}',
                     ),
                   ),
-                  if (saleAction?.call(product) case final Widget action)
-                    action,
                 ],
               ),
             ],
