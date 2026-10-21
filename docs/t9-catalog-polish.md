@@ -62,3 +62,71 @@ all Spanish labels/semantics.
   number fade, panel entrance, no initial-load animation, reduced motion,
   rapid-double-tap safety, add-one/stock-disabled/unknown-branch pins
   (S6 + prior behavior).
+
+## T9D: panel transitions and scroll fade (S9, S10)
+
+Same page, still presentation only: inventory, sales, cart logic, role
+visibility, panel priority, navigation rules, keys and Spanish copy are
+unchanged.
+
+- **S9 – Panel cross-fade** (`lib/app/panel_transition.dart`, used by
+  `_AuthenticatedCatalogPageState`): the body chain now yields each panel
+  together with a stable identity — `catalog`, `corrections`, `movements`,
+  `transfer`, `notices`, `receipt`, `cart`, `creation`, `pricing`, `intake` —
+  and `PanelTransition` fades the panel being left underneath the one
+  arriving: 220 ms, `easeOutCubic`, a 12 px vertical settle, no bounce.
+  - Every layer has the same shape whether it is arriving or leaving, only
+    properties change, so a panel keeps one element across the transition:
+    rebuilding inside a panel never re-animates it and never throws away its
+    state or scroll offset.
+  - The fading panel is silenced from the first frame of the swap:
+    `IgnorePointer` (a fast second tap cannot act on the panel already left),
+    `ExcludeSemantics` (assistive technology reads one panel, not two) and
+    `ExcludeFocus` (no stale focus in a panel on its way out).
+  - `MediaQuery.disableAnimations` swaps instantly.
+  - Bodies that are not panels — the first load, a failed load, an empty
+    catalog — are presented outside the transition, so an initial load never
+    animates and the transition always mounts on its first panel still.
+  - Success banners, toolbars, the cart bar and Volver/Inicio stay outside the
+    transition, and navigation stays blocked exactly while a request is in
+    flight.
+- **S10 – Scroll fade edges** (`lib/catalog/catalog_scroll_fade.dart`, used by
+  `_CatalogListState`): static gradients over the product list toward the page
+  background (`Theme.scaffoldBackgroundColor`, so the soft gray and not pure
+  white) — a 48 px bottom edge while more products lie below, a slimmer 24 px
+  top edge once scrolled down, and no edge at all over a list that fits.
+  - Driven by scroll notifications (offset updates and dimension changes), so
+    the edges track filtering and resizing without any motion of their own.
+  - `IgnorePointer` plus decoration-only paint: card taps, the search field
+    and the cart bar are untouched, and `StackFit.passthrough` gives the list
+    the same constraints, scroll extent, keys and semantics as before.
+  - Holds at the native two-column rule and at web breakpoints, and at 360 px
+    with text scale 2 (pinned by tests).
+
+### T9D tests
+
+- `test/catalog/panel_transition_test.dart` — swap cross-fades and settles,
+  the fading panel takes no taps, is out of the semantics tree and keeps no
+  focus, in-panel rebuilds do not re-animate, panel state is never recreated,
+  reduced motion and the first loaded body are instant, and the real page
+  cross-fades into the cart and back through Volver.
+- `test/catalog/catalog_scroll_fade_test.dart` — bottom edge while content
+  lies below and none at the end or over a list that fits, top edge only after
+  scrolling, edges fade to the page background instead of white, taps and long
+  presses still reach cards under both edges, list layout and scroll travel
+  unchanged, and the catalog page at 390 px native and at 360 px / text scale 2.
+
+### Tests that look up a label shared by two panels
+
+While the 220 ms cross-fade runs, both panels are in the tree, so a finder for a
+label that both panels carry (for example `Cerrar`) matches twice. Tests that
+tap such a label right after a panel change wait for the fade first; the
+`chained creation-to-pricing` close loop in `test/catalog/catalog_page_test.dart`
+uses a bounded `pump(300 ms)` because a catalog refresh is still pending there.
+
+## T9E: softer Agregar (S11)
+
+`Agregar` stays the card's primary action but uses `FilledButton.tonalIcon`
+(the soft secondary container) instead of solid blue, so it does not clash with
+the white card. Key, label, semantics and the add-one behavior are unchanged
+(`test/sales/sale_add_tone_test.dart`).

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/backend_environment.dart';
+import '../app/panel_transition.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -22,6 +23,7 @@ import '../transfers/transfer_notice_controller.dart';
 import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
+import 'catalog_scroll_fade.dart';
 import 'catalog_search.dart';
 import 'product_qr_scan.dart';
 import 'product_creation.dart';
@@ -1186,52 +1188,69 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: showMovements
-                  ? MovementsView(
-                      movements: movements,
-                      productNames: _productNames(),
-                      branchChoices:
-                          _snapshot?.branchChoices ??
-                          const <CatalogBranchChoice>[],
-                      onClose: _closeMovements,
-                    )
-                  : showCorrections
-                  ? CorrectionLookupView(
-                      corrections: corrections,
-                      productNames: _productNames(),
-                      products: _catalogProducts(),
-                      onClose: _closeCorrections,
-                    )
-                  : transfer != null && _transferVisible
-                  ? _transferForm(transfer)
-                  : showNotices
-                  ? TransferNoticesView(
-                      state: noticeController.state,
-                      productNames: _productNames(),
-                      onMarkRead: _markNoticeRead,
-                      onClose: _closeNotices,
-                      onRetry: noticeController.retry,
-                    )
-                  : receipt != null
-                  ? SaleReceiptView(
-                      receipt: receipt,
-                      notice: sale?.receiptPending ?? false
-                          ? salePendingReceiptMessage
-                          : null,
-                      onNewSale: _startNewSale,
-                    )
-                  : sale != null && _cartVisible
-                  ? SaleCartPanel(
-                      controller: sale,
-                      onClose: () => setState(() => _cartVisible = false),
-                    )
-                  : _creationVisible
-                  ? _creationForm()
-                  : _pricingProduct != null
-                  ? _pricingForm()
-                  : _intakeProduct != null
-                  ? _intakeForm()
-                  : _catalogBody(),
+              child: _bodyPanel(
+                showMovements
+                    ? _panel(
+                        'movements',
+                        MovementsView(
+                          movements: movements,
+                          productNames: _productNames(),
+                          branchChoices:
+                              _snapshot?.branchChoices ??
+                              const <CatalogBranchChoice>[],
+                          onClose: _closeMovements,
+                        ),
+                      )
+                    : showCorrections
+                    ? _panel(
+                        'corrections',
+                        CorrectionLookupView(
+                          corrections: corrections,
+                          productNames: _productNames(),
+                          products: _catalogProducts(),
+                          onClose: _closeCorrections,
+                        ),
+                      )
+                    : transfer != null && _transferVisible
+                    ? _panel('transfer', _transferForm(transfer))
+                    : showNotices
+                    ? _panel(
+                        'notices',
+                        TransferNoticesView(
+                          state: noticeController.state,
+                          productNames: _productNames(),
+                          onMarkRead: _markNoticeRead,
+                          onClose: _closeNotices,
+                          onRetry: noticeController.retry,
+                        ),
+                      )
+                    : receipt != null
+                    ? _panel(
+                        'receipt',
+                        SaleReceiptView(
+                          receipt: receipt,
+                          notice: sale?.receiptPending ?? false
+                              ? salePendingReceiptMessage
+                              : null,
+                          onNewSale: _startNewSale,
+                        ),
+                      )
+                    : sale != null && _cartVisible
+                    ? _panel(
+                        'cart',
+                        SaleCartPanel(
+                          controller: sale,
+                          onClose: () => setState(() => _cartVisible = false),
+                        ),
+                      )
+                    : _creationVisible
+                    ? _panel('creation', _creationForm())
+                    : _pricingProduct != null
+                    ? _panel('pricing', _pricingForm())
+                    : _intakeProduct != null
+                    ? _panel('intake', _intakeForm())
+                    : _catalogPanel(),
+              ),
             ),
           ],
         ),
@@ -2506,34 +2525,62 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     );
   }
 
-  Widget _catalogBody() {
-    if (_loading && _snapshot == null) return const _CatalogLoading();
-    if (_failed) return _CatalogError(onRetry: _requestCatalog);
+  /// A body panel with the identity its transition is keyed by (T9/S9). The
+  /// identity names the panel, not its content, so an in-panel change never
+  /// re-animates and never recreates the panel.
+  ({String? identity, Widget child}) _panel(String identity, Widget child) =>
+      (identity: identity, child: child);
+
+  /// The body: one panel cross-fades into the next (T9/S9). A body that is not
+  /// a panel at all carries no identity and is presented without the wrapper,
+  /// so the transition always mounts on its first panel still and an initial
+  /// load never animates. Panel priority stays exactly where it was: in the
+  /// chain that produced this record.
+  Widget _bodyPanel(({String? identity, Widget child}) panel) {
+    if (panel.identity case final String identity) {
+      return PanelTransition(identity: identity, child: panel.child);
+    }
+    return panel.child;
+  }
+
+  /// The catalog list, or the body that stands in for it while there is none.
+  /// Those stand-ins are not panels (T9/S9): no identity, so no transition in
+  /// either direction.
+  ({String? identity, Widget child}) _catalogPanel() {
+    if (_loading && _snapshot == null) {
+      return (identity: null, child: const _CatalogLoading());
+    }
+    if (_failed) {
+      return (identity: null, child: _CatalogError(onRetry: _requestCatalog));
+    }
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
-    if (items.isEmpty) return const _EmptyCatalog();
-    return _CatalogList(
-      qrScan: widget.qrScan,
-      items: items,
-      role: widget.session.role,
-      branchChoices: _snapshot!.branchChoices,
-      snapshot: _snapshot,
-      onConfigurePricing:
-          widget.session.role == InventoryRole.administrator &&
-              widget.setProductPrice != null
-          ? _showPricing
-          : null,
-      onRecordIntake:
-          widget.session.role == InventoryRole.administrator &&
-              widget.submitStockIntake != null
-          ? _showIntake
-          : null,
-      saleAction: switch (_sale) {
-        final SaleCartController sale =>
-          (CatalogProduct product) => product.pricing == null
-              ? null
-              : SaleAddControl(controller: sale, product: product),
-        null => null,
-      },
+    if (items.isEmpty) return (identity: null, child: const _EmptyCatalog());
+    return (
+      identity: 'catalog',
+      child: _CatalogList(
+        qrScan: widget.qrScan,
+        items: items,
+        role: widget.session.role,
+        branchChoices: _snapshot!.branchChoices,
+        snapshot: _snapshot,
+        onConfigurePricing:
+            widget.session.role == InventoryRole.administrator &&
+                widget.setProductPrice != null
+            ? _showPricing
+            : null,
+        onRecordIntake:
+            widget.session.role == InventoryRole.administrator &&
+                widget.submitStockIntake != null
+            ? _showIntake
+            : null,
+        saleAction: switch (_sale) {
+          final SaleCartController sale =>
+            (CatalogProduct product) => product.pricing == null
+                ? null
+                : SaleAddControl(controller: sale, product: product),
+          null => null,
+        },
+      ),
     );
   }
 }
@@ -3143,6 +3190,16 @@ class _CatalogListState extends State<_CatalogList> {
   @override
   Widget build(BuildContext context) {
     final List<CatalogItem> visible = filterCatalogItems(widget.items, _query);
+    // S10: the product list melts into the page background at the edges that
+    // still have products behind it. Paint only — taps, card layout, keys, the
+    // scroll extent and the semantics tree stay exactly where the list puts
+    // them.
+    return CatalogScrollFade(child: _catalogScroll(visible));
+  }
+
+  /// The catalog header, the search field and the product grid, sized by the
+  /// panel they are given (S4 columns).
+  Widget _catalogScroll(List<CatalogItem> visible) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final int columns = _columnsFor(context, constraints.maxWidth);

@@ -4775,6 +4775,10 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
+          // Let the 220 ms panel cross-fade (T9/S9) finish so only the new
+          // panel's 'Cerrar' remains; a refresh is still pending, so a
+          // bounded pump is used instead of pumpAndSettle.
+          await tester.pump(const Duration(milliseconds: 300));
           final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
           await tester.ensureVisible(close);
           await tester.tap(close);
