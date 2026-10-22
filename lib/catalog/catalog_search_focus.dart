@@ -101,7 +101,9 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus>
   double _globalTop = 0;
   bool _measurementPending = false;
 
-  bool get _active => widget.focusNode.hasFocus;
+  bool _pressingResults = false;
+
+  bool get _active => widget.focusNode.hasFocus || _pressingResults;
 
   @override
   void initState() {
@@ -117,6 +119,21 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus>
     widget.focusNode.removeListener(_focusChanged);
     _zoom.dispose();
     super.dispose();
+  }
+
+  void _resultsPressEnded({required bool cancelled}) {
+    _pressingResults = false;
+    if (widget.focusNode.hasFocus) return;
+    if (cancelled) {
+      _focusChanged();
+      return;
+    }
+    widget.focusNode.requestFocus();
+    // Focus notifications are deferred. Let restoration run first; if the
+    // field cannot take focus, use the same exit path as a normal blur.
+    Future<void>.microtask(() {
+      if (mounted && !widget.focusNode.hasFocus) _focusChanged();
+    });
   }
 
   void _focusChanged() {
@@ -285,7 +302,14 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus>
                             elevation: 8,
                             borderRadius: BorderRadius.circular(24),
                             clipBehavior: Clip.antiAlias,
-                            child: TextFieldTapRegion(child: widget.results!),
+                            child: Listener(
+                              onPointerDown: (_) => _pressingResults = true,
+                              onPointerUp: (_) =>
+                                  _resultsPressEnded(cancelled: false),
+                              onPointerCancel: (_) =>
+                                  _resultsPressEnded(cancelled: true),
+                              child: TextFieldTapRegion(child: widget.results!),
+                            ),
                           ),
                         ),
                       ),

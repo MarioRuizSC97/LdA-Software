@@ -268,6 +268,114 @@ void main() {
     expect(_result('sale-line-edit-DEMO-PIN'), findsOneWidget);
   });
 
+  testWidgets(
+    'a results press survives a mid-gesture focus loss and the add lands',
+    (tester) async {
+      final sales = await _pump(tester, platform: TargetPlatform.macOS);
+      await _type(tester);
+      final gesture = await tester.startGesture(
+        tester.getCenter(_result('sale-add-DEMO-PIN')),
+        kind: PointerDeviceKind.mouse,
+      );
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      expect(_results, findsOneWidget);
+      expect(_key('catalog-search-blur'), findsOneWidget);
+      expect(
+        tester
+            .widget<AnimatedOpacity>(_key('catalog-search-scrim-fade'))
+            .opacity,
+        1,
+      );
+      expect(tester.widget<Material>(_key('catalog-search-lift')).elevation, 6);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(_result('sale-line-edit-DEMO-PIN'), findsOneWidget);
+      expect(sales.quotedCarts.single.lines.single.quantity, '1');
+      expect(_key('catalog-search-blur'), findsOneWidget);
+      expect(tester.widget<TextField>(_field).focusNode!.hasFocus, isTrue);
+    },
+  );
+
+  testWidgets(
+    'a press on empty results space keeps focus mode and restores focus',
+    (tester) async {
+      await _pump(tester, platform: TargetPlatform.macOS);
+      await _type(tester);
+      final gesture = await tester.startGesture(
+        tester.getTopLeft(_results) + const Offset(30, 8),
+        kind: PointerDeviceKind.mouse,
+      );
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      expect(_results, findsOneWidget);
+      expect(_key('catalog-search-blur'), findsOneWidget);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(_results, findsOneWidget);
+      expect(_key('catalog-search-blur'), findsOneWidget);
+      expect(tester.widget<TextField>(_field).focusNode!.hasFocus, isTrue);
+    },
+  );
+
+  testWidgets('a cancelled press that lost focus exits cleanly', (
+    tester,
+  ) async {
+    final sales = await _pump(tester, platform: TargetPlatform.macOS);
+    await _type(tester);
+    final resting = tester.getRect(_key('catalog-search-lift'));
+    final gesture = await tester.startGesture(
+      tester.getCenter(_result('sale-add-DEMO-PIN')),
+      kind: PointerDeviceKind.mouse,
+    );
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(_results, findsOneWidget);
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(_results, findsNothing);
+    expect(_key('catalog-search-blur'), findsNothing);
+    expect(
+      tester.widget<AnimatedOpacity>(_key('catalog-search-scrim-fade')).opacity,
+      0,
+    );
+    expect(
+      tester.getRect(_key('catalog-search-lift')).width,
+      lessThan(resting.width),
+    );
+    expect(tester.widget<TextField>(_field).focusNode!.hasFocus, isFalse);
+    expect(sales.quotedCarts, isEmpty);
+  });
+
+  testWidgets('a results release exits when the field cannot regain focus', (
+    tester,
+  ) async {
+    await _pump(tester, platform: TargetPlatform.macOS);
+    await _type(tester);
+    final focus = tester.widget<TextField>(_field).focusNode!;
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(_results) + const Offset(30, 8),
+      kind: PointerDeviceKind.mouse,
+    );
+    focus.canRequestFocus = false;
+    await tester.pump();
+    expect(_results, findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(focus.hasFocus, isFalse);
+    expect(_results, findsNothing);
+    expect(_key('catalog-search-blur'), findsNothing);
+    expect(tester.widget<Material>(_key('catalog-search-lift')).elevation, 0);
+    expect(
+      tester.widget<AnimatedOpacity>(_key('catalog-search-scrim-fade')).opacity,
+      0,
+    );
+    // Chrome must be usable again, not left silenced after failed restoration.
+    await tester.tap(_key('sale-cart-button'));
+    await tester.pumpAndSettle();
+    expect(find.text('Carrito'), findsOneWidget);
+  });
+
   testWidgets('long press on a result opens the unchanged detail peek', (
     tester,
   ) async {

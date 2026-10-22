@@ -240,3 +240,21 @@ workers' disjoint catalog edits. No commits or publication performed.
 Existing search-focus tests changed only for the intended sigma-5 blur and
 resting-width comparison; their behavior assertions remain. No tests outside
 this unit's allowed surfaces were edited.
+
+## T9L: results presses survive web blur (S23, shared presentation S7)
+
+`CatalogSearchFocus` now defines active mode as field focus **or** an ongoing
+results press. A pointer `Listener` inside the overlay keeps the results,
+scrim/blur, field zoom and silenced chrome alive when the browser blurs its
+hidden input before pointer-up. The existing `TextFieldTapRegion` remains.
+Release restores field focus; cancellation never requests it. If restoration
+is unavailable, a deferred check runs the normal exit path after focus
+notifications have had a chance to settle. Scrim, Escape, back and clear
+behavior remain unchanged, as do timing, blur, geometry, keys and Spanish copy.
+
+Four new widget regressions simulate mid-gesture focus loss: Agregar still
+adds exactly one line, empty results space restores focus, cancellation exits
+without selling, and a non-focusable field exits with usable chrome. The
+21 existing search-focus tests are unchanged. All code is shared Flutter;
+widget-level simulated blur is not proof of browser DOM event ordering or
+native keyboard behavior. Parent integration owns browser/device verification.

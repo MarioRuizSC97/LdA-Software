@@ -46,7 +46,11 @@ matcher: name, stock, price, tonal Agregar / quantity stepper, Detalles and
 long-press details. No match keeps the existing Sin resultados and Limpiar
 búsqueda action. Clearing or whitespace-only input closes results, not focus
 mode. Desktop mouse actions belong to the field's tap region, so selling does
-not accidentally dismiss results.
+not accidentally dismiss results. If web blurs its hidden text input during a
+results press, focus mode stays active until the gesture ends: the overlay,
+blur, zoom and silenced chrome survive so Agregar/stepper taps can land.
+Releasing restores field focus; cancellation does not. If the field cannot
+regain focus, the normal dismissal path restores the surrounding chrome.
 
 Tap the scrim, press Escape or use system back to unfocus **without clearing**
 the query, even when tapping over the app bar or cart bar. Those taps never
