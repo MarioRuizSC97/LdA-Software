@@ -121,6 +121,11 @@ class _CatalogSearchFocusState extends State<CatalogSearchFocus>
     super.dispose();
   }
 
+  /// Ends a press that started inside the results cards. A cancelled gesture
+  /// (interrupted tap, Escape, back) re-evaluates search mode through the
+  /// normal blur path; a completed press outside the tap region asks the
+  /// field for focus again; a press during which the field kept focus needs
+  /// no focus work at all.
   void _resultsPressEnded({required bool cancelled}) {
     _pressingResults = false;
     if (widget.focusNode.hasFocus) return;

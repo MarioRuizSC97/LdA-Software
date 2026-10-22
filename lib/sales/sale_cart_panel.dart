@@ -18,6 +18,25 @@ String _totalLabel(SaleCartController controller) {
       : 'Total no disponible';
 }
 
+/// The summed quantity with its unit when every line shares a unit and
+/// precision; null for mixed-unit carts, whose quantities never add up.
+String? _summedUniformQuantity(SaleCart cart) {
+  if (cart.lines.isEmpty) return null;
+  final SaleCartLine first = cart.lines.first;
+  final bool uniform = cart.lines.every(
+    (SaleCartLine line) =>
+        line.quantitySpec.unit == first.quantitySpec.unit &&
+        line.quantitySpec.precision == first.quantitySpec.precision,
+  );
+  if (!uniform) return null;
+  int totalScaled = 0;
+  for (final SaleCartLine line in cart.lines) {
+    totalScaled += line.quantityScaled;
+  }
+  return '${formatScaledQuantity(totalScaled, first.quantitySpec.precision)} '
+      '${first.quantitySpec.unit}';
+}
+
 /// Per-card "Agregar" action, or the inline quantity entry for the product
 /// being added or edited. Once the product is in the cart the card shows the
 /// same stepper as the cart line (S11), bound to the same controller so card
@@ -451,24 +470,9 @@ class SaleCartButton extends StatelessWidget {
         // summed quantity (S24): one product added twice reads 2, and it does
         // so even when the quantity equals the line count. Mixed units never
         // add up, so those carts keep counting product lines.
-        final SaleCartLine first = cart.lines.first;
-        final bool uniform = cart.lines.every(
-          (SaleCartLine line) =>
-              line.quantitySpec.unit == first.quantitySpec.unit &&
-              line.quantitySpec.precision == first.quantitySpec.precision,
-        );
-        int totalScaled = 0;
-        if (uniform) {
-          for (final SaleCartLine line in cart.lines) {
-            totalScaled += line.quantityScaled;
-          }
-        }
-        label = uniform
-            ? 'Carrito · '
-                  '${formatScaledQuantity(totalScaled, first.quantitySpec.precision)} '
-                  '${first.quantitySpec.unit} · ${_totalLabel(controller)}'
-            : 'Carrito · $count ${count == 1 ? 'producto' : 'productos'} · '
-                  '${_totalLabel(controller)}';
+        final String amount = _summedUniformQuantity(cart) ??
+            '$count ${count == 1 ? 'producto' : 'productos'}';
+        label = 'Carrito · $amount · ${_totalLabel(controller)}';
       }
       return SafeArea(
         top: false,
