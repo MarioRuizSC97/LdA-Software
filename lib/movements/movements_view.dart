@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../catalog/catalog_stock.dart';
 import '../sales/sale_format.dart';
 import 'administrator_movements.dart';
@@ -8,6 +9,11 @@ import 'seller_profiles.dart';
 
 /// Rows stop growing past this width so they stay readable on wide screens.
 const double _maxContentWidth = 920;
+
+/// On wide screens the list yields width to the summary rail: 760 keeps rows
+/// readable and still fits beside the rail at ~1200 px.
+const double _widePrimaryWidth = 760;
+const double _wideContextWidth = 320;
 
 /// Below this row width (in unscaled text units) the name action moves
 /// under the row details.
@@ -212,15 +218,65 @@ class _MovementsViewState extends State<MovementsView> {
           ),
         ),
         Expanded(
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: _maxContentWidth),
-              child: _body(),
+          child: PanelLayout(
+            maxPrimaryWidth: _widePrimaryWidth,
+            maxContextWidth: _wideContextWidth,
+            primary: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+                child: _body(),
+              ),
             ),
+            context: _summary(context),
           ),
         ),
       ],
+    );
+  }
+
+  /// Wide-only rail: the active filter and the counts of the loaded set.
+  Widget _summary(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool ready = !_loading && _failure == null;
+    final Map<MovementType, int> byType = <MovementType, int>{};
+    int unreadable = 0;
+    for (final MovementEntry entry in _entries) {
+      switch (entry) {
+        case InventoryMovement(:final MovementType type):
+          byType[type] = (byType[type] ?? 0) + 1;
+        case UnreadableMovement():
+          unreadable += 1;
+      }
+    }
+    return Card(
+      key: const ValueKey<String>('movements-context'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Resumen', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Filtro: ${_branchId == null ? 'Todas' : _branchLabel(_branchId!)}',
+            ),
+            const SizedBox(height: 8),
+            if (!ready)
+              const Text('Resumen no disponible')
+            else ...<Widget>[
+              Text(
+                'Movimientos: ${_entries.length}',
+                style: theme.textTheme.titleSmall,
+              ),
+              for (final MovementType type in MovementType.values)
+                if (byType[type] case final int count)
+                  Text('${type.label}: $count'),
+              if (unreadable > 0) Text('Ilegibles: $unreadable'),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

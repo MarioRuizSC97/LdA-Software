@@ -358,6 +358,9 @@ void main() {
   testWidgets('assigning a name updates every row of that seller', (
     WidgetTester tester,
   ) async {
+    // The default 800 px surface now renders the narrower wide-layout list;
+    // a taller viewport keeps all five lazy rows built.
+    useViewport(tester, const Size(800, 1200));
     backend.onLoad = (_) async => <MovementEntry>[
       ..._standardEntries(),
       _entry(
