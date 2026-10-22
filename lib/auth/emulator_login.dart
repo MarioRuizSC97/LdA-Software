@@ -1459,119 +1459,142 @@ class _LoginViewState extends State<_LoginView> {
       fit: StackFit.expand,
       children: <Widget>[
         LayoutBuilder(
-          builder: (context, constraints) => PanelLayout(
-            maxPrimaryWidth: 488,
-            context: Padding(
-              padding: const EdgeInsets.only(top: 24),
-              child: Card.filled(
-                key: const ValueKey<String>('login-context'),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: DefaultTextStyle(
-                    style: Theme.of(context).textTheme.bodyMedium!.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          '$appName\n$appVersionLabel\n'
-                          '${widget.environment.loginTitle}\n\n'
-                          'Ingresa con las credenciales de tu tienda.',
-                        ),
-                        const SizedBox(height: 24),
-                        Text(
-                          'Recordatorios',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'El servidor asigna el código interno permanente y la identidad QR.',
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Solo el administrador puede crear productos, ver movimientos y registrar traslados.',
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            primary: Center(
-              heightFactor: constraints.maxWidth >= panelWideBreakpoint
-                  ? 1
-                  : null,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Semantics(
-                        header: true,
-                        child: Text(
-                          widget.environment.loginTitle,
-                          style: Theme.of(context).textTheme.headlineMedium,
-                          textAlign: TextAlign.center,
-                        ),
+          builder: (context, constraints) {
+            final panel = PanelLayout(
+              maxPrimaryWidth: 488,
+              context: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Card.filled(
+                  key: const ValueKey<String>('login-context'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: DefaultTextStyle(
+                      style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
-                      if (widget.environment.loginNote
-                          case final String note) ...[
-                        const SizedBox(height: 12),
-                        Text(note, textAlign: TextAlign.center),
-                      ],
-                      const SizedBox(height: 24),
-                      TextFormField(
-                        key: const ValueKey<String>('login-email'),
-                        controller: _email,
-                        enabled: !_submitting,
-                        keyboardType: TextInputType.emailAddress,
-                        autofillHints: const <String>[AutofillHints.username],
-                        decoration: const InputDecoration(
-                          labelText: 'Correo electrónico',
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        key: const ValueKey<String>('login-password'),
-                        controller: _password,
-                        enabled: !_submitting,
-                        obscureText: true,
-                        autofillHints: const <String>[AutofillHints.password],
-                        decoration: const InputDecoration(
-                          labelText: 'Contraseña',
-                        ),
-                        onFieldSubmitted: (_) => _submitting ? null : _submit(),
-                      ),
-                      if (_error case final String error) ...<Widget>[
-                        const SizedBox(height: 12),
-                        Semantics(liveRegion: true, child: Text(error)),
-                      ],
-                      const SizedBox(height: 20),
-                      FilledButton(
-                        onPressed: _submitting ? null : _submit,
-                        child: _submitting
-                            ? const SizedBox.square(
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            '$appName\n$appVersionLabel\n'
+                            '${widget.environment.loginTitle}\n\n'
+                            'Ingresa con las credenciales de tu tienda.',
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            'Recordatorios',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
-                              )
-                            : const Text('Iniciar sesión'),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'El servidor asigna el código interno permanente y la identidad QR.',
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Solo el administrador puede crear productos, ver movimientos y registrar traslados.',
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+              primary: Center(
+                heightFactor: constraints.maxWidth >= panelWideBreakpoint
+                    ? 1
+                    : null,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            widget.environment.loginTitle,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        if (widget.environment.loginNote
+                            case final String note) ...[
+                          const SizedBox(height: 12),
+                          Text(note, textAlign: TextAlign.center),
+                        ],
+                        const SizedBox(height: 24),
+                        TextFormField(
+                          key: const ValueKey<String>('login-email'),
+                          controller: _email,
+                          enabled: !_submitting,
+                          keyboardType: TextInputType.emailAddress,
+                          autofillHints: const <String>[AutofillHints.username],
+                          decoration: const InputDecoration(
+                            labelText: 'Correo electrónico',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          key: const ValueKey<String>('login-password'),
+                          controller: _password,
+                          enabled: !_submitting,
+                          obscureText: true,
+                          autofillHints: const <String>[AutofillHints.password],
+                          decoration: const InputDecoration(
+                            labelText: 'Contraseña',
+                          ),
+                          onFieldSubmitted: (_) =>
+                              _submitting ? null : _submit(),
+                        ),
+                        if (_error case final String error) ...<Widget>[
+                          const SizedBox(height: 12),
+                          Semantics(liveRegion: true, child: Text(error)),
+                        ],
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: _submitting ? null : _submit,
+                          child: _submitting
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Iniciar sesión'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+            if (constraints.maxWidth < panelWideBreakpoint) return panel;
+
+            // Together with the app bar, the top inset balances the footer
+            // space so the whole group centers on the page, not just the body.
+            // Keep scrolling content out of the fixed footer's touch targets.
+            final bottomSpace = 80 + MediaQuery.paddingOf(context).bottom;
+            return Padding(
+              padding: EdgeInsets.only(top: 24, bottom: bottomSpace),
+              child: SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: (constraints.maxHeight - 24 - bottomSpace).clamp(
+                      0,
+                      double.infinity,
+                    ),
+                  ),
+                  child: Center(child: panel),
+                ),
+              ),
+            );
+          },
         ),
         Positioned(
           left: 80,

@@ -31,12 +31,13 @@ Future<void> _pumpLogin(
   WidgetTester tester, {
   required double width,
   required Brightness brightness,
+  double height = 900,
   double bottomInset = 0,
   double textScale = 1,
   BackendEnvironment environment = BackendEnvironment.localEmulator,
 }) async {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = Size(width, 900);
+  tester.view.physicalSize = Size(width, height);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
   SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -116,6 +117,73 @@ void main() {
       expect(railRect.top, lessThan(tester.getRect(email).top));
     });
   }
+
+  testWidgets('1200px centers the wide group on the page', (tester) async {
+    await _pumpLogin(tester, width: 1200, brightness: Brightness.light);
+    final titleRect = tester.getRect(
+      find.text(BackendEnvironment.localEmulator.loginTitle),
+    );
+    final railRect = tester.getRect(rail);
+    final buttonRect = tester.getRect(
+      find.widgetWithText(FilledButton, 'Iniciar sesión'),
+    );
+    final groupRect = titleRect
+        .expandToInclude(railRect)
+        .expandToInclude(buttonRect);
+    debugPrint(
+      'wide title=$titleRect rail=$railRect button=$buttonRect group=$groupRect',
+    );
+    expect(groupRect.center.dy, closeTo(450, 2));
+    expect(titleRect.top, closeTo(railRect.top, 1));
+  });
+
+  testWidgets('short wide viewport scrolls above the reachable footer', (
+    tester,
+  ) async {
+    await _pumpLogin(
+      tester,
+      width: 1200,
+      height: 500,
+      brightness: Brightness.light,
+    );
+    expect(tester.takeException(), isNull);
+    final scrollables = tester.stateList<ScrollableState>(
+      find.byType(Scrollable),
+    );
+    expect(
+      scrollables.any((state) => state.position.maxScrollExtent > 0),
+      isTrue,
+    );
+    final button = find.widgetWithText(FilledButton, 'Iniciar sesión');
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    final buttonRect = tester.getRect(button);
+    final caption = find.text('v1.0.0');
+    final control = find.byType(ThemeModeSwitch);
+    expect(caption, findsOneWidget);
+    expect(control, findsOneWidget);
+    final captionRect = tester.getRect(caption);
+    final controlRect = tester.getRect(control);
+    debugPrint(
+      'short button=$buttonRect caption=$captionRect control=$controlRect',
+    );
+    expect(button.hitTestable(), findsOneWidget);
+    expect(control.hitTestable(), findsOneWidget);
+    expect(buttonRect.bottom, lessThan(captionRect.top));
+    expect(buttonRect.bottom, lessThan(controlRect.top));
+    expect(captionRect.overlaps(controlRect), isFalse);
+    expect(captionRect.bottom, lessThanOrEqualTo(500));
+    expect(controlRect.bottom, lessThanOrEqualTo(500));
+    final lastReminder = find.text(_reminderFacts.last);
+    await tester.ensureVisible(lastReminder);
+    await tester.pumpAndSettle();
+    final reminderRect = tester.getRect(lastReminder);
+    expect(lastReminder.hitTestable(), findsOneWidget);
+    expect(reminderRect.top, greaterThanOrEqualTo(80));
+    expect(reminderRect.bottom, lessThan(controlRect.top));
+    expect(reminderRect.bottom, lessThan(captionRect.top));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('wide rail presents each verified reminder as a separate line', (
     tester,
