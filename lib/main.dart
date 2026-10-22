@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/backend_environment.dart';
 import 'app/inventory_theme.dart';
@@ -217,6 +218,12 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
   Widget build(BuildContext context) => InventoryThemeHost(
     builder: (context, mode) => MaterialApp(
       title: 'LDA Inventory',
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('es')],
       theme: _theme(),
       darkTheme: buildDarkInventoryTheme(),
       themeMode: mode,
@@ -270,6 +277,12 @@ class LdaInventoryApp extends StatelessWidget {
     return InventoryThemeHost(
       builder: (context, mode) => MaterialApp(
         title: 'LDA Inventory',
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [Locale('es')],
         theme: _theme(),
         darkTheme: buildDarkInventoryTheme(),
         themeMode: mode,
@@ -291,6 +304,12 @@ class CatalogSetupApp extends StatelessWidget {
     return InventoryThemeHost(
       builder: (context, mode) => MaterialApp(
         title: 'LDA Inventory',
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [Locale('es')],
         theme: _theme(),
         darkTheme: buildDarkInventoryTheme(),
         themeMode: mode,
