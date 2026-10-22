@@ -1778,7 +1778,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey<String>('create-product-precision')),
-          matching: find.text('Selecciona 0–6'),
+          matching: find.text('Selecciona de 0 a 6 decimales'),
         ),
         findsOneWidget,
       );
@@ -1789,7 +1789,7 @@ void main() {
             )
             .decoration
             .labelText,
-        'Precisión de cantidad',
+        'Decimales del producto',
       );
       final Finder nameField = find.byKey(
         const ValueKey<String>('create-product-name'),
@@ -2018,7 +2018,7 @@ void main() {
       expect(
         find.descendant(
           of: precisionField,
-          matching: find.text('Selecciona 0–6'),
+          matching: find.text('Selecciona de 0 a 6 decimales'),
         ),
         findsOneWidget,
       );
@@ -2056,7 +2056,7 @@ void main() {
       expect(
         find.descendant(
           of: precisionField,
-          matching: find.text('Selecciona 0–6'),
+          matching: find.text('Selecciona de 0 a 6 decimales'),
         ),
         findsOneWidget,
       );

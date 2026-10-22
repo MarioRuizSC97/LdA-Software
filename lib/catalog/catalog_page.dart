@@ -1536,7 +1536,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     context,
                     const InputDecoration(
                       labelText: 'Identificador de unidad',
-                      helperText: 'Identificador en minúsculas, por ejemplo piece o kg.',
+                      helperText: 'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
                     ),
                     _creationUnitError,
                   ),
@@ -1556,12 +1556,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Precisión de cantidad',
-                      helperText: 'Entero del 0 al 6.',
+                      labelText: 'Decimales del producto',
+                      helperText: 'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).',
                     ),
                     _creationPrecisionError,
                   ),
-                  hint: const Text('Selecciona 0–6'),
+                  hint: const Text('Selecciona de 0 a 6 decimales'),
                   items: List<DropdownMenuItem<int>>.generate(
                     7,
                     (int index) => DropdownMenuItem<int>(
@@ -1644,13 +1644,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Identificador en minúsculas, por ejemplo piece o kg.',
+                'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
               ),
               const SizedBox(height: 16),
               Text(
                 _creationPrecision == null
-                    ? 'Selecciona 0–6'
-                    : 'Precisión de cantidad: $_creationPrecision',
+                    ? 'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).'
+                    : 'Las cantidades de este producto se trabajarán con $_creationPrecision decimales.',
               ),
               const SizedBox(height: 16),
               const Text(
