@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:lda_inventory/app/panel_layout.dart';
 import 'package:lda_inventory/movements/inventory_movement.dart';
 import 'package:lda_inventory/transfers/transfer_notice.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
@@ -28,39 +29,42 @@ class TransferNoticesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 600),
-        child: Column(
-          children: <Widget>[
-            Semantics(
-              header: true,
-              child: Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          'Avisos de traslados',
-                          style: theme.textTheme.titleLarge,
+    return PanelLayout(
+      context: _NoticesSummary(state: state),
+      primary: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: Column(
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            'Avisos de traslados',
+                            style: theme.textTheme.titleLarge,
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        key: const ValueKey<String>('notices-close'),
-                        tooltip: 'Cerrar bandeja de avisos',
-                        onPressed: onClose,
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
+                        IconButton(
+                          key: const ValueKey<String>('notices-close'),
+                          tooltip: 'Cerrar bandeja de avisos',
+                          onPressed: onClose,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            const Divider(height: 1),
-            Expanded(child: _body(context)),
-          ],
+              const Divider(height: 1),
+              Expanded(child: _body(context)),
+            ],
+          ),
         ),
       ),
     );
@@ -78,6 +82,42 @@ class TransferNoticesView extends StatelessWidget {
         onMarkRead: onMarkRead,
       ),
     };
+  }
+}
+
+/// Wide-only rail: unread and read counts, never a guessed zero while the
+/// book is loading or failed.
+class _NoticesSummary extends StatelessWidget {
+  const _NoticesSummary({required this.state});
+
+  final TransferNoticeState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final int? unread = state.unreadCount;
+    return Card(
+      key: const ValueKey<String>('notices-context'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Resumen', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (unread == null)
+              const Text('Resumen no disponible')
+            else if (state.notices.isEmpty)
+              const Text('Sin avisos por revisar')
+            else ...<Widget>[
+              Text('Sin leer: $unread', style: theme.textTheme.titleSmall),
+              Text('Leídos: ${state.notices.length - unread}'),
+              Text('Total: ${state.notices.length}'),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 
