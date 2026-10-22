@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/app/app_info.dart';
 import 'package:lda_inventory/app/backend_environment.dart';
 import 'package:lda_inventory/app/inventory_theme.dart';
 import 'package:lda_inventory/app/inventory_theme_host.dart';
@@ -31,6 +32,8 @@ Future<void> _pumpLogin(
   required double width,
   required Brightness brightness,
   double bottomInset = 0,
+  double textScale = 1,
+  BackendEnvironment environment = BackendEnvironment.localEmulator,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 900);
@@ -49,12 +52,15 @@ Future<void> _pumpLogin(
             : buildDarkInventoryTheme(),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: true,
             padding: EdgeInsets.only(bottom: bottomInset),
             viewPadding: EdgeInsets.only(bottom: bottomInset),
           ),
           child: child!,
         ),
         home: EmulatorLoginShell(
+          environment: environment,
           sessionGateway: Future.value(_SignedOutGateway()),
           catalogLoader: (_) async => throw StateError('Must stay signed out.'),
         ),
@@ -65,6 +71,79 @@ Future<void> _pumpLogin(
 }
 
 void main() {
+  final rail = find.byKey(const ValueKey<String>('login-context'));
+  final email = find.byKey(const ValueKey<String>('login-email'));
+  final password = find.byKey(const ValueKey<String>('login-password'));
+
+  testWidgets('400px preserves the compact login without a context rail', (
+    tester,
+  ) async {
+    await _pumpLogin(tester, width: 400, brightness: Brightness.light);
+    expect(rail, findsNothing);
+    expect(email, findsOneWidget);
+    expect(password, findsOneWidget);
+    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('v1.0.0'), findsOneWidget);
+    expect(tester.getRect(email).left, 24);
+    expect(tester.getSize(email).width, 352);
+    final control = find.byType(ThemeModeSwitch);
+    expect(control, findsOneWidget);
+    final controlRect = tester.getRect(control);
+    expect(controlRect.width, controlRect.height);
+    expect(controlRect.right, 384);
+    expect(controlRect.bottom, 884);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final environment in BackendEnvironment.values) {
+    testWidgets('1200px shows honest context beside the form: '
+        '${environment.name}', (tester) async {
+      await _pumpLogin(
+        tester,
+        width: 1200,
+        brightness: Brightness.light,
+        environment: environment,
+      );
+      expect(rail, findsOneWidget);
+      for (final content in <String>[
+        appName,
+        appVersionLabel,
+        environment.loginTitle,
+        'Ingresa con las credenciales de tu tienda.',
+      ]) {
+        expect(
+          find.descendant(of: rail, matching: find.textContaining(content)),
+          findsOneWidget,
+        );
+      }
+      final formRect = tester.getRect(email);
+      final railRect = tester.getRect(rail);
+      expect(railRect.left, greaterThan(formRect.right));
+      expect(formRect.width, lessThanOrEqualTo(440));
+      expect(railRect.right, lessThanOrEqualTo(1180));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final width in <double>[400, 601, 1200]) {
+    testWidgets('login has no overflow at ${width.toInt()}px, text scale 2', (
+      tester,
+    ) async {
+      await _pumpLogin(
+        tester,
+        width: width,
+        brightness: Brightness.light,
+        textScale: 2,
+      );
+      expect(rail, width < 600 ? findsNothing : findsOneWidget);
+      expect(email, findsOneWidget);
+      expect(password, findsOneWidget);
+      expect(find.byType(ThemeModeSwitch), findsOneWidget);
+      expect(find.text('v1.0.0'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final width in <double>[400, 1200]) {
     for (final brightness in Brightness.values) {
       final scenario = '${width.toInt()}px ${brightness.name}';
