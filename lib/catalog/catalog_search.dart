@@ -27,9 +27,6 @@ const ValueKey<String> catalogSearchScanKey = ValueKey<String>(
   'catalog-search-scan',
 );
 
-/// Label announced for the search input, also used as its visible label.
-const String catalogSearchLabel = 'Buscar por nombre o código';
-
 /// Accented letters folded to their base letter, limited to what a Spanish
 /// catalog uses, so a query typed without accents still matches.
 const Map<String, String> _foldedAccents = <String, String>{
@@ -172,10 +169,11 @@ class CatalogSearchField extends StatelessWidget {
       autocorrect: false,
       decoration: InputDecoration(
         isDense: true,
-        labelText: catalogSearchLabel,
         hintText: 'Nombre o código',
         prefixIcon: const Icon(Icons.search),
-        border: const OutlineInputBorder(),
+        border: const OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(999)),
+        ),
         suffixIcon: _suffix(),
       ),
     );

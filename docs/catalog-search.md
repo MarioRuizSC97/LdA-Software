@@ -82,8 +82,11 @@ using these keys, declared in `lib/catalog/catalog_search.dart`:
 
 - `catalogSearchFieldKey` — `catalog-search`
 - `catalogSearchClearKey` — `catalog-search-clear`
-- `catalogSearchLabel` — `Buscar por nombre o código`, the visible label and the
-  announced semantics label.
+
+The pill-shaped search field has no visible or announced label. Its hint,
+`Nombre o código`, provides its accessible name. The dense layout, search icon
+and theme colors are unchanged. `test/catalog/catalog_search_shape_test.dart`
+covers the rounded outline and hint semantics in light and dark themes.
 
 ## Scanning the product QR with the camera
 
