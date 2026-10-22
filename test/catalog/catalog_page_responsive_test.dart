@@ -135,9 +135,7 @@ void main() {
         // inline button.
         await _openMore(tester);
         expect(
-          tester
-              .widget<PopupMenuItem<VoidCallback>>(_key('corrections-open'))
-              .enabled,
+          tester.widget<ListTile>(_key('corrections-open')).enabled,
           isFalse,
         );
         await tester.tap(find.text('Cerrar sesión'));
@@ -166,9 +164,7 @@ void main() {
 
           await _openMore(tester);
           expect(
-            tester
-                .widget<PopupMenuItem<VoidCallback>>(_key('movements-open'))
-                .enabled,
+            tester.widget<ListTile>(_key('movements-open')).enabled,
             isFalse,
           );
           await tester.tap(find.text('Cerrar sesión'));
@@ -194,15 +190,14 @@ void main() {
     },
   );
 
-  testWidgets('wide shell keeps every action inline without a menu', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('wide shell keeps every action inline and still offers the '
+      'side panel (T10 S6)', (WidgetTester tester) async {
     useViewport(tester, const Size(1000, 800));
     await tester.pumpWidget(_Shell().seller());
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(_key('shell-more'), findsNothing);
+    expect(_key('shell-more'), findsOneWidget);
     expect(_inAppBar(find.text('Correcciones')), findsOneWidget);
     expect(_inAppBar(_key('notices-open')), findsOneWidget);
     expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);

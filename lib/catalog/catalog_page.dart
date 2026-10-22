@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/app_bar_surface.dart';
+import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_transition.dart';
 import '../app/smooth_scroll.dart';
@@ -996,8 +997,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool mobilePlatform =
         !kIsWeb &&
         (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
-    // On mobile the overflow menu always exists so Reload stays reachable at
-    // every window width; on web/desktop it appears only when compact.
+    // The side panel exists everywhere (T10 S6); on mobile and in a compact
+    // web/desktop bar the notices entry lives only there, while a wide
+    // web/desktop bar also keeps its own notices icon.
     final bool menuActions = mobilePlatform || compactBar;
     final VoidCallback? openCorrections = showCorrections || showTransfer
         ? null
@@ -1100,95 +1102,76 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 onPressed: _loading ? null : _requestCatalog,
                 icon: const Icon(Icons.refresh),
               ),
-            if (menuActions)
-              PopupMenuButton<VoidCallback>(
-                key: const ValueKey<String>('shell-more'),
-                // Three bars on mobile (S2); web/desktop keeps the three dots.
-                // The unread-notice badge rides on the menu icon itself, and
-                // screen readers hear the unread notices named on the button.
-                // Only a session with transfer notices can have an unread
-                // badge; administrators have none.
-                icon: Semantics(
-                  label: noticeController == null
-                      ? null
-                      : unreadNotices == null
-                      ? 'sin confirmar'
-                      : unreadNotices > 0
-                      ? 'Avisos de traslados: $unreadNotices sin leer'
-                      : null,
-                  child: ExcludeSemantics(
-                    child: Badge(
-                      isLabelVisible:
-                          noticeController != null &&
-                          (unreadNotices == null || unreadNotices > 0),
-                      label: Text(
-                        unreadNotices == null ? '!' : '$unreadNotices',
-                      ),
-                      backgroundColor: unreadNotices == null
-                          ? Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                          : null,
-                      child: Icon(
-                        mobilePlatform ? Icons.menu : Icons.more_vert,
-                      ),
-                    ),
+            // The three bars open the side panel on every platform and width
+            // (T10 S6): it lists every shell action plus the app information,
+            // so nothing depends on how much of the bar fits inline. The
+            // unread-notice badge rides on the icon, and screen readers hear
+            // the unread notices named on the button. Only a session with
+            // transfer notices can have an unread badge; administrators have
+            // none.
+            AppMenuButton(
+              key: const ValueKey<String>('shell-more'),
+              // A wide web/desktop bar keeps its own notices icon and badge,
+              // so the menu icon carries the badge only where the notices
+              // entry lives in the panel alone.
+              decorate: (Widget icon) => Semantics(
+                label: noticeController == null || !menuActions
+                    ? null
+                    : unreadNotices == null
+                    ? 'sin confirmar'
+                    : unreadNotices > 0
+                    ? 'Avisos de traslados: $unreadNotices sin leer'
+                    : null,
+                child: ExcludeSemantics(
+                  child: Badge(
+                    isLabelVisible:
+                        noticeController != null &&
+                        menuActions &&
+                        (unreadNotices == null || unreadNotices > 0),
+                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
+                    backgroundColor: unreadNotices == null
+                        ? Theme.of(context).colorScheme.surfaceContainerHighest
+                        : null,
+                    child: icon,
                   ),
                 ),
-                onSelected: (VoidCallback action) => action(),
-                itemBuilder: (BuildContext context) =>
-                    <PopupMenuEntry<VoidCallback>>[
-                      // First entry for the fastest access (S10); the count on
-                      // the item is read when the menu opens.
-                      if (noticeController != null)
-                        PopupMenuItem<VoidCallback>(
-                          key: const ValueKey<String>('notices-open'),
-                          enabled: !showNotices,
-                          value: _showNotices,
-                          child: ListTile(
-                            leading: _noticeBadge(context, unreadNotices),
-                            title: const Text('Avisos de traslados'),
-                          ),
-                        ),
-                      if (mobilePlatform)
-                        PopupMenuItem<VoidCallback>(
-                          enabled: !_loading,
-                          value: _requestCatalog,
-                          child: const ListTile(
-                            leading: Icon(Icons.refresh),
-                            title: Text('Actualizar catálogo'),
-                          ),
-                        ),
-                      if (corrections != null && compactBar)
-                        PopupMenuItem<VoidCallback>(
-                          key: const ValueKey<String>('corrections-open'),
-                          enabled: openCorrections != null,
-                          value: openCorrections,
-                          child: const ListTile(
-                            leading: Icon(Icons.assignment_return_outlined),
-                            title: Text('Correcciones'),
-                          ),
-                        ),
-                      if (movements != null && compactBar)
-                        PopupMenuItem<VoidCallback>(
-                          key: const ValueKey<String>('movements-open'),
-                          enabled: openMovements != null,
-                          value: openMovements,
-                          child: const ListTile(
-                            leading: Icon(Icons.swap_vert),
-                            title: Text('Movimientos'),
-                          ),
-                        ),
-                      if (compactBar)
-                        PopupMenuItem<VoidCallback>(
-                          value: widget.onLogout,
-                          child: const ListTile(
-                            leading: Icon(Icons.logout),
-                            title: Text('Cerrar sesión'),
-                          ),
-                        ),
-                    ],
               ),
+              entries: () => <AppSidePanelEntry>[
+                // First entry for the fastest access (S10); the count on the
+                // entry is read when the panel opens.
+                if (noticeController != null)
+                  AppSidePanelEntry(
+                    key: const ValueKey<String>('notices-open'),
+                    icon: _noticeBadge(context, unreadNotices),
+                    label: 'Avisos de traslados',
+                    onSelected: showNotices ? null : _showNotices,
+                  ),
+                AppSidePanelEntry(
+                  icon: const Icon(Icons.refresh),
+                  label: 'Actualizar catálogo',
+                  onSelected: _loading ? null : _requestCatalog,
+                ),
+                if (corrections != null)
+                  AppSidePanelEntry(
+                    key: const ValueKey<String>('corrections-open'),
+                    icon: const Icon(Icons.assignment_return_outlined),
+                    label: 'Correcciones',
+                    onSelected: openCorrections,
+                  ),
+                if (movements != null)
+                  AppSidePanelEntry(
+                    key: const ValueKey<String>('movements-open'),
+                    icon: const Icon(Icons.swap_vert),
+                    label: 'Movimientos',
+                    onSelected: openMovements,
+                  ),
+                AppSidePanelEntry(
+                  icon: const Icon(Icons.logout),
+                  label: 'Cerrar sesión',
+                  onSelected: widget.onLogout,
+                ),
+              ],
+            ),
             // The inline logout keeps its place whenever the bar is wide enough
             // for it — mobile only moved Reload out of the bar (S2c).
             if (!compactBar) ...<Widget>[
