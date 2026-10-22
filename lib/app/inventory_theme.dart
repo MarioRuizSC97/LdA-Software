@@ -9,6 +9,12 @@ ThemeData buildInventoryTheme() {
   return ThemeData(
     colorScheme: scheme,
     scaffoldBackgroundColor: const Color(0xFFF6F7F9),
+    inputDecorationTheme: const InputDecorationTheme(
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.all(Radius.circular(999)),
+      ),
+      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    ),
     cardTheme: CardThemeData(
       color: Colors.white,
       elevation: 0,
@@ -39,7 +45,10 @@ ThemeData buildDarkInventoryTheme() {
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
-      filled: true,
+      border: const OutlineInputBorder(
+        borderRadius: BorderRadius.all(Radius.circular(999)),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       fillColor: scheme.surfaceContainerHighest,
     ),
   );
