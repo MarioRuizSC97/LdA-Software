@@ -1511,10 +1511,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   },
                   decoration: _requiredErrorDecoration(
                     context,
-                    const InputDecoration(
-                      labelText: 'Nombre del producto',
-                      border: _pricingFieldBorder,
-                    ),
+                    const InputDecoration(labelText: 'Nombre del producto'),
                     _creationNameError,
                   ),
                 ),
@@ -1538,7 +1535,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     context,
                     const InputDecoration(
                       labelText: 'Identificador de unidad',
-                      border: _pricingFieldBorder,
                       helperText: 'Identificador en minúsculas, por ejemplo piece o kg.',
                     ),
                     _creationUnitError,
@@ -1560,7 +1556,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     context,
                     const InputDecoration(
                       labelText: 'Precisión de cantidad',
-                      border: _pricingFieldBorder,
                       helperText: 'Entero del 0 al 6.',
                     ),
                     _creationPrecisionError,

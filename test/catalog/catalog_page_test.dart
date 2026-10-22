@@ -4439,83 +4439,102 @@ void main() {
     },
   );
 
-  testWidgets('creation outline stays stable in default and custom themes', (
-    WidgetTester tester,
-  ) async {
-    for (final ThemeData theme in <ThemeData>[
-      ThemeData(),
-      ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.green)),
-    ]) {
-      await tester.pumpWidget(const SizedBox());
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: theme,
-          home: AuthenticatedCatalogPage(
-            session: _administrator,
-            catalogLoader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
-            onLogout: () async {},
-            createDraftId: () => 'outline-key',
-            createProduct: (_) => throw StateError('must not submit'),
+  testWidgets(
+    'creation outline inherits its theme and stays stable on errors',
+    (WidgetTester tester) async {
+      for (final ThemeData theme in <ThemeData>[
+        ThemeData(
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+            ),
           ),
         ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Crear producto'));
-      await tester.pumpAndSettle();
-      InputDecoration decoration(String key) {
-        final Finder field = find.byKey(ValueKey<String>(key));
-        if (key == 'create-product-precision') {
-          return tester.widget<DropdownButtonFormField<int>>(field).decoration;
-        }
-        return tester
-            .widget<TextField>(
-              find.descendant(of: field, matching: find.byType(TextField)),
-            )
-            .decoration!;
-      }
-
-      final List<OutlineInputBorder> normal = <OutlineInputBorder>[];
-      for (final String key in <String>[
-        'create-product-name',
-        'create-product-unit',
-        'create-product-precision',
+        ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(40)),
+            ),
+          ),
+        ),
       ]) {
-        final InputDecoration input = decoration(key);
-        expect(input.border, isA<OutlineInputBorder>());
-        normal.add(input.border! as OutlineInputBorder);
-        expect(input.focusedBorder ?? input.border, isA<OutlineInputBorder>());
-      }
-      final Finder create = find.widgetWithText(FilledButton, 'Crear');
-      await tester.ensureVisible(create);
-      await tester.tap(create);
-      await tester.pumpAndSettle();
-      var index = 0;
-      for (final String key in <String>[
-        'create-product-name',
-        'create-product-unit',
-        'create-product-precision',
-      ]) {
-        final InputDecoration input = decoration(key);
-        for (final InputBorder? border in <InputBorder?>[
-          input.border,
-          input.errorBorder,
-          input.focusedErrorBorder,
-        ]) {
-          expect(border, isA<OutlineInputBorder>());
-          final OutlineInputBorder outline = border! as OutlineInputBorder;
-          expect(outline.borderRadius, normal[index].borderRadius);
-          expect(outline.gapPadding, normal[index].gapPadding);
-        }
-        expect(input.errorBorder!.borderSide.width, 2);
-        expect(
-          input.focusedErrorBorder!.borderSide.color,
-          theme.colorScheme.error,
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: AuthenticatedCatalogPage(
+              session: _administrator,
+              catalogLoader: (_) async =>
+                  CatalogSnapshot(const <CatalogItem>[]),
+              onLogout: () async {},
+              createDraftId: () => 'outline-key',
+              createProduct: (_) => throw StateError('must not submit'),
+            ),
+          ),
         );
-        index += 1;
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Crear producto'));
+        await tester.pumpAndSettle();
+        InputDecoration decoration(String key) {
+          final Finder field = find.byKey(ValueKey<String>(key));
+          return tester
+              .widget<InputDecorator>(
+                find.descendant(
+                  of: field,
+                  matching: find.byType(InputDecorator),
+                ),
+              )
+              .decoration;
+        }
+
+        final List<OutlineInputBorder> normal = <OutlineInputBorder>[];
+        for (final String key in <String>[
+          'create-product-name',
+          'create-product-unit',
+          'create-product-precision',
+        ]) {
+          final InputDecoration input = decoration(key);
+          expect(input.border, isA<OutlineInputBorder>());
+          normal.add(input.border! as OutlineInputBorder);
+          expect(input.border, theme.inputDecorationTheme.border);
+          expect(
+            input.focusedBorder ?? input.border,
+            isA<OutlineInputBorder>(),
+          );
+        }
+        final Finder create = find.widgetWithText(FilledButton, 'Crear');
+        await tester.ensureVisible(create);
+        await tester.tap(create);
+        await tester.pumpAndSettle();
+        var index = 0;
+        for (final String key in <String>[
+          'create-product-name',
+          'create-product-unit',
+          'create-product-precision',
+        ]) {
+          final InputDecoration input = decoration(key);
+          for (final InputBorder? border in <InputBorder?>[
+            input.border,
+            input.errorBorder,
+            input.focusedErrorBorder,
+          ]) {
+            expect(border, isA<OutlineInputBorder>());
+            final OutlineInputBorder outline = border! as OutlineInputBorder;
+            expect(outline.borderRadius, normal[index].borderRadius);
+            expect(outline.gapPadding, normal[index].gapPadding);
+          }
+          expect(input.errorBorder!.borderSide.width, 2);
+          expect(
+            input.focusedErrorBorder!.borderSide.color,
+            theme.colorScheme.error,
+          );
+          index += 1;
+        }
+        expect(find.byIcon(Icons.error_outline), findsNWidgets(3));
       }
-      expect(find.byIcon(Icons.error_outline), findsNWidgets(3));
-    }
-  });
+    },
+  );
 
   for (final bool validation in <bool>[false, true]) {
     testWidgets(

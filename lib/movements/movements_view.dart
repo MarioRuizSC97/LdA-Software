@@ -180,19 +180,27 @@ class _MovementsViewState extends State<MovementsView> {
               ),
               Semantics(
                 label: 'Filtrar por sucursal',
-                child: DropdownButton<String?>(
-                  key: const ValueKey<String>('movements-branch-filter'),
-                  value: _branchId,
-                  onChanged: _selectBranch,
-                  items: <DropdownMenuItem<String?>>[
-                    const DropdownMenuItem<String?>(child: Text('Todas')),
-                    for (final CatalogBranchChoice choice
-                        in widget.branchChoices)
-                      DropdownMenuItem<String?>(
-                        value: choice.branchId,
-                        child: Text(choice.branchName),
+                child: IntrinsicWidth(
+                  child: InputDecorator(
+                    decoration: const InputDecoration(isDense: true)
+                        .applyDefaults(Theme.of(context).inputDecorationTheme),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String?>(
+                        key: const ValueKey<String>('movements-branch-filter'),
+                        value: _branchId,
+                        onChanged: _selectBranch,
+                        items: <DropdownMenuItem<String?>>[
+                          const DropdownMenuItem<String?>(child: Text('Todas')),
+                          for (final CatalogBranchChoice choice
+                              in widget.branchChoices)
+                            DropdownMenuItem<String?>(
+                              value: choice.branchId,
+                              child: Text(choice.branchName),
+                            ),
+                        ],
                       ),
-                  ],
+                    ),
+                  ),
                 ),
               ),
               FilledButton.tonalIcon(
