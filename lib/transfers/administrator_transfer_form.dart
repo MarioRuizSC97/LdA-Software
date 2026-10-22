@@ -6,6 +6,7 @@ import '../app/panel_layout.dart';
 import '../catalog/catalog_product.dart';
 import '../catalog/catalog_stock.dart';
 import '../firebase/emulator_transfer_gateway.dart';
+import '../sales/sale_format.dart' show formatScaledQuantity;
 import 'transfer_draft.dart';
 
 /// Mints the stable idempotency key for a fresh transfer.
@@ -127,11 +128,15 @@ class AdministratorTransferForm extends StatefulWidget {
     required this.onCompleted,
     this.createTransferId = createTransferUuidV4,
     this.initialSourceBranchId,
+    this.holdingsByProduct,
   });
 
   final String ownerUserId;
   final List<CatalogBranchChoice> branches;
   final List<CatalogProduct> products;
+
+  /// Loaded catalog holdings, keyed by product code; null means unavailable.
+  final Map<String, List<CatalogHolding>>? holdingsByProduct;
   final TransferSubmit submitTransfer;
   final TransferDraftLookup unresolvedDraft;
   final VoidCallback onClose;
@@ -688,6 +693,29 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           totals[productId] ?? (BigInt.zero, spec);
       totals[productId] = (current.$1 + scaled, spec);
     }
+    final Map<String, List<CatalogHolding>>? holdings =
+        widget.holdingsByProduct;
+    final Set<String> selectedProducts = <String>{
+      for (final _LineRow row in _rows)
+        if (row.productId != null && products.containsKey(row.productId))
+          row.productId!,
+    };
+    final List<String> stockLines = <String>[];
+    if (holdings != null && _sourceBranchId != null) {
+      for (final String productId in selectedProducts) {
+        final CatalogProduct product = products[productId]!;
+        final CatalogHolding? holding =
+            (holdings[productId] ?? const <CatalogHolding>[])
+                .where(
+                  (CatalogHolding value) => value.branchId == _sourceBranchId,
+                )
+                .firstOrNull;
+        final String stock = holding == null
+            ? 'Sin entrada registrada'
+            : '${formatScaledQuantity(holding.quantityScaled, product.quantitySpec.precision)} ${product.quantitySpec.unit}';
+        stockLines.add('${product.name}: $stock');
+      }
+    }
     return Card(
       key: const ValueKey<String>('transfer-context'),
       child: Padding(
@@ -706,6 +734,12 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
                 '${products[entry.key]?.name ?? entry.key}: '
                 '${_formatTotal(entry.value.$1, entry.value.$2.precision, entry.value.$2.unit)}',
               ),
+            if (stockLines.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 16),
+              Text('Existencias en origen', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              for (final String line in stockLines) Text(line),
+            ],
           ],
         ),
       ),

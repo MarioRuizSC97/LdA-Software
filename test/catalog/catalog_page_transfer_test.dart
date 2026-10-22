@@ -454,7 +454,12 @@ void main() {
     testWidgets('the form receives the whole global admin snapshot', (
       WidgetTester tester,
     ) async {
-      await _pump(tester, _administrator, backend, idFactory: _mintId);
+      final _Loader loader = await _pump(
+        tester,
+        _administrator,
+        backend,
+        idFactory: _mintId,
+      );
       // The visible list shows the north-only holding for Cinta.
       expect(find.textContaining('Sur: Agotado'), findsOneWidget);
 
@@ -469,6 +474,17 @@ void main() {
         'PRD-COFFEE-001',
         'DEMO-RIBBON-01',
       ]);
+      expect(form.holdingsByProduct!.keys, <String>[
+        'PRD-COFFEE-001',
+        'DEMO-RIBBON-01',
+      ]);
+      for (final CatalogItem item in loader.snapshot.items) {
+        expect(
+          form.holdingsByProduct![item.product.internalCode],
+          same(item.holdings),
+        );
+      }
+      expect(loader.calls, 1); // Plumbing must not add a catalog read.
       expect(form.createTransferId(), 'key-page-1');
     });
 
