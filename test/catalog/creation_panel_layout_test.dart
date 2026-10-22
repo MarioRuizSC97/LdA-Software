@@ -66,7 +66,25 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Cerrar'), findsOneWidget);
     expect(find.text('Nombre del producto'), findsOneWidget);
     expect(find.text('Identificador de unidad'), findsOneWidget);
-    expect(find.text('Precisión de cantidad'), findsOneWidget);
+    expect(find.text('Decimales del producto'), findsOneWidget);
+    expect(
+      find.text(
+        'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Identificador en minúsculas, por ejemplo piece o kg.'),
+      findsNothing,
+    );
+    expect(
+      find.text(
+        'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Selecciona de 0 a 6 decimales'), findsOneWidget);
+    expect(find.text('Entero del 0 al 6.'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -82,9 +100,16 @@ void main() {
     );
     expect(_previewText('Nombre del producto'), findsOneWidget);
     expect(_previewText('Identificador de unidad'), findsOneWidget);
-    expect(_previewText('Selecciona 0–6'), findsOneWidget);
     expect(
-      _previewText('Identificador en minúsculas, por ejemplo piece o kg.'),
+      _previewText(
+        'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      _previewText(
+        'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
+      ),
       findsOneWidget,
     );
     expect(
@@ -98,11 +123,32 @@ void main() {
     await tester.pump();
     expect(_previewText('Tornillo'), findsOneWidget);
     expect(_previewText('piece'), findsOneWidget);
-    await tester.tap(find.byKey(_precisionKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('3').last);
-    await tester.pumpAndSettle();
-    expect(_previewText('Precisión de cantidad: 3'), findsOneWidget);
+    final dropdown = tester.widget<DropdownButton<int>>(
+      find.descendant(
+        of: find.byKey(_precisionKey),
+        matching: find.byType(DropdownButton<int>),
+      ),
+    );
+    expect(
+      dropdown.items!.map((item) => item.value),
+      orderedEquals([0, 1, 2, 3, 4, 5, 6]),
+    );
+    expect(
+      dropdown.items!.map((item) => (item.child as Text).data),
+      orderedEquals(['0', '1', '2', '3', '4', '5', '6']),
+    );
+    for (final decimals in [3, 0, 6]) {
+      await tester.tap(find.byKey(_precisionKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('$decimals').last);
+      await tester.pumpAndSettle();
+      expect(
+        _previewText(
+          'Las cantidades de este producto se trabajarán con $decimals decimales.',
+        ),
+        findsOneWidget,
+      );
+    }
     await tester.enterText(find.byKey(_nameKey), '');
     await tester.enterText(find.byKey(_unitKey), 'kg');
     await tester.pump();
