@@ -70,6 +70,11 @@ Future<void> _pumpLogin(
   await tester.pumpAndSettle();
 }
 
+const _reminderFacts = <String>[
+  'El servidor asigna el código interno permanente y la identidad QR.',
+  'Solo el administrador puede crear productos, ver movimientos y registrar traslados.',
+];
+
 void main() {
   final rail = find.byKey(const ValueKey<String>('login-context'));
   final email = find.byKey(const ValueKey<String>('login-email'));
@@ -80,6 +85,10 @@ void main() {
   ) async {
     await _pumpLogin(tester, width: 400, brightness: Brightness.light);
     expect(rail, findsNothing);
+    expect(find.text('Recordatorios'), findsNothing);
+    for (final fact in _reminderFacts) {
+      expect(find.text(fact), findsNothing);
+    }
     expect(email, findsOneWidget);
     expect(password, findsOneWidget);
     expect(find.text('Iniciar sesión'), findsOneWidget);
@@ -93,6 +102,37 @@ void main() {
     expect(controlRect.right, 384);
     expect(controlRect.bottom, 884);
     expect(tester.takeException(), isNull);
+  });
+
+  for (final width in <double>[601, 1200]) {
+    testWidgets('rail shares the form top at ${width.toInt()}px', (
+      tester,
+    ) async {
+      await _pumpLogin(tester, width: width, brightness: Brightness.light);
+      final title = find.text(BackendEnvironment.localEmulator.loginTitle);
+      final titleRect = tester.getRect(title);
+      final railRect = tester.getRect(rail);
+      expect(railRect.top, closeTo(titleRect.top, 1));
+      expect(railRect.top, lessThan(tester.getRect(email).top));
+    });
+  }
+
+  testWidgets('wide rail presents each verified reminder as a separate line', (
+    tester,
+  ) async {
+    await _pumpLogin(tester, width: 1200, brightness: Brightness.light);
+    expect(
+      find.descendant(of: rail, matching: find.text('Recordatorios')),
+      findsOneWidget,
+    );
+    Rect? previous;
+    for (final fact in _reminderFacts) {
+      final line = find.descendant(of: rail, matching: find.text(fact));
+      expect(line, findsOneWidget);
+      final rect = tester.getRect(line);
+      if (previous != null) expect(rect.top, greaterThan(previous.bottom));
+      previous = rect;
+    }
   });
 
   for (final environment in BackendEnvironment.values) {
