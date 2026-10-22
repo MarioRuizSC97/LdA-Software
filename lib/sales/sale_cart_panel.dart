@@ -447,26 +447,23 @@ class SaleCartButton extends StatelessWidget {
       final int count = cart.lineCount;
       String label = 'Carrito vacío';
       if (count > 0) {
-        // When every line shares a unit and precision, the bar can count
-        // pieces too: one product added twice reads 2, not 1 line. Mixed
-        // units never add up, so those carts keep counting product lines.
+        // When every line shares a unit and precision, the bar shows the
+        // summed quantity (S24): one product added twice reads 2, and it does
+        // so even when the quantity equals the line count. Mixed units never
+        // add up, so those carts keep counting product lines.
         final SaleCartLine first = cart.lines.first;
         final bool uniform = cart.lines.every(
           (SaleCartLine line) =>
               line.quantitySpec.unit == first.quantitySpec.unit &&
               line.quantitySpec.precision == first.quantitySpec.precision,
         );
-        final int unitScaled = BigInt.from(10)
-            .pow(first.quantitySpec.precision)
-            .toInt();
         int totalScaled = 0;
         if (uniform) {
           for (final SaleCartLine line in cart.lines) {
             totalScaled += line.quantityScaled;
           }
         }
-        final bool countsPieces = uniform && totalScaled != count * unitScaled;
-        label = countsPieces
+        label = uniform
             ? 'Carrito · '
                   '${formatScaledQuantity(totalScaled, first.quantitySpec.precision)} '
                   '${first.quantitySpec.unit} · ${_totalLabel(controller)}'

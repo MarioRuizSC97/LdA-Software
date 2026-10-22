@@ -53,7 +53,9 @@ void main() {
     expect(find.textContaining('1 producto'), findsNothing);
   });
 
-  testWidgets('a single piece keeps the product wording', (
+  // S24/R3-001: a uniform-unit cart always shows its summed quantity, even
+  // when that quantity equals the number of lines.
+  testWidgets('a single piece shows its piece count, not the line count', (
     WidgetTester tester,
   ) async {
     await _cart(tester, [
@@ -63,7 +65,23 @@ void main() {
         spec: pinProduct.quantitySpec,
       ),
     ]);
-    expect(find.textContaining('Carrito · 1 producto ·'), findsOneWidget);
+    expect(find.textContaining('Carrito · 1 piece ·'), findsOneWidget);
+    expect(find.textContaining('producto'), findsNothing);
+  });
+
+  testWidgets('two single-unit lines of one unit add up, not count lines', (
+    WidgetTester tester,
+  ) async {
+    await _cart(tester, [
+      (
+        id: pinProduct.internalCode,
+        quantity: '1',
+        spec: pinProduct.quantitySpec,
+      ),
+      (id: 'DEMO-PIN-2', quantity: '1', spec: pinProduct.quantitySpec),
+    ]);
+    expect(find.textContaining('Carrito · 2 piece ·'), findsOneWidget);
+    expect(find.textContaining('productos'), findsNothing);
   });
 
   testWidgets('mixed units keep the line count', (WidgetTester tester) async {
