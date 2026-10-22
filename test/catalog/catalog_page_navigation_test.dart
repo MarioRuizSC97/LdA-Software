@@ -131,7 +131,11 @@ void main() {
     await tester.tap(_back);
     await tester.pumpAndSettle();
     expect(find.byType(AdministratorTransferForm), findsNothing);
-    expect(find.text(_creationIntro), findsOneWidget);
+    // The wide preview repeats the intro; identify the restored form itself.
+    expect(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      findsOneWidget,
+    );
 
     await tester.tap(_back);
     await tester.pumpAndSettle();
@@ -201,7 +205,11 @@ void main() {
     expect(_enabled(tester, _back), isFalse);
     await tester.tap(_back, warnIfMissed: false);
     await tester.pump();
-    expect(find.text(_creationIntro), findsOneWidget);
+    // The form remains mounted even though back navigation was attempted.
+    expect(
+      find.byKey(const ValueKey<String>('create-product-name')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a seller returns home from Correcciones', (

@@ -8,6 +8,7 @@ import '../app/app_bar_surface.dart';
 import '../app/app_info.dart';
 import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
+import '../app/panel_layout.dart';
 import '../app/panel_transition.dart';
 import '../app/smooth_scroll.dart';
 import '../app/theme_mode_switch.dart';
@@ -1469,7 +1470,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   Widget _creationForm() {
     final bool locked = _creationPending || _creationUncertain;
-    return SingleChildScrollView(
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -1617,7 +1618,50 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _creationPreview());
   }
+
+  Widget _creationPreview() => ValueListenableBuilder<TextEditingValue>(
+    valueListenable: _name,
+    builder: (context, name, _) => ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _unit,
+      builder: (context, unit, _) => Card(
+        key: const ValueKey<String>('create-product-preview'),
+        margin: const EdgeInsets.symmetric(vertical: 20),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                name.text.isEmpty ? 'Nombre del producto' : name.text,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                unit.text.isEmpty ? 'Identificador de unidad' : unit.text,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Identificador en minúsculas, por ejemplo piece o kg.',
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _creationPrecision == null
+                    ? 'Selecciona 0–6'
+                    : 'Precisión de cantidad: $_creationPrecision',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'El servidor asigna el código interno permanente y la identidad QR.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 
   void _showPricing(CatalogProduct product) {
     _presentationRevision += 1;

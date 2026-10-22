@@ -1775,7 +1775,13 @@ void main() {
       expect(find.bySemanticsLabel('Identificador de unidad'), findsOneWidget);
       // The collapsed precision dropdown announces through its hint until a
       // value is selected, so assert the hint and the decoration label.
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('create-product-precision')),
+          matching: find.text('Selecciona 0–6'),
+        ),
+        findsOneWidget,
+      );
       expect(
         tester
             .widget<DropdownButtonFormField<int>>(
@@ -2009,7 +2015,13 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: precisionField,
+          matching: find.text('Selecciona 0–6'),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
@@ -2041,7 +2053,13 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: precisionField,
+          matching: find.text('Selecciona 0–6'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
       await tester.tap(find.text('0').last);
