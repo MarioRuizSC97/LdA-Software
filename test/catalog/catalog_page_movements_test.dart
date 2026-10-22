@@ -42,6 +42,45 @@ Future<void> _open(WidgetTester tester) async {
 }
 
 void main() {
+  for (final double width in <double>[400, 1400]) {
+    for (final bool withMovements in <bool>[true, false]) {
+      for (final EmulatorSession session in <EmulatorSession>[
+        movementsSeller,
+        movementsAdministrator,
+      ]) {
+        testWidgets(
+          'side panel movements: ${session.role}, controller=$withMovements, '
+          'width=$width',
+          (WidgetTester tester) async {
+            tester.view.physicalSize = Size(width, 900);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            await tester.pumpWidget(
+              _page(session, withMovements: withMovements),
+            );
+            await tester.pumpAndSettle();
+            await tester.tap(find.byKey(const ValueKey<String>('shell-more')));
+            await tester.pumpAndSettle();
+            final Finder entry = find.descendant(
+              of: find.byKey(const ValueKey<String>('app-side-panel')),
+              matching: find.text('Movimientos'),
+            );
+            // This is administrator-only even when a seller receives the
+            // operations object; the panel must not expand role permissions.
+            final bool allowed =
+                session.role == InventoryRole.administrator && withMovements;
+            expect(entry, allowed ? findsOneWidget : findsNothing);
+            if (allowed) {
+              await tester.tap(entry);
+              await tester.pumpAndSettle();
+              expect(find.text('No hay movimientos'), findsOneWidget);
+            }
+          },
+        );
+      }
+    }
+  }
+
   testWidgets('sellers never get the entry, even if handed one', (
     WidgetTester tester,
   ) async {

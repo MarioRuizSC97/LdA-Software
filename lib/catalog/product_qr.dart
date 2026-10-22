@@ -19,11 +19,18 @@ class ProductQrView extends StatelessWidget {
       image: true,
       label: 'Código QR de ${product.name}. Código ${product.internalCode}',
       child: ExcludeSemantics(
-        child: QrImageView(
-          key: ValueKey<String>('product-qr-${product.internalCode}'),
-          data: ProductQr.payloadFor(product),
-          version: QrVersions.auto,
-          size: 136,
+        // Keep the quiet zone light in both themes so black modules scan.
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+          child: QrImageView(
+            key: ValueKey<String>('product-qr-${product.internalCode}'),
+            data: ProductQr.payloadFor(product),
+            version: QrVersions.auto,
+            size: 136,
+          ),
         ),
       ),
     );
