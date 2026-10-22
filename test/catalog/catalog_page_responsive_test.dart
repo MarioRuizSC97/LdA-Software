@@ -2,6 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lda_inventory/app/app_side_panel.dart';
+import 'package:lda_inventory/app/inventory_theme_host.dart';
+import 'package:lda_inventory/app/theme_mode_store.dart';
+import 'package:lda_inventory/app/theme_mode_switch.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
@@ -190,19 +195,107 @@ void main() {
     },
   );
 
-  testWidgets('wide shell keeps every action inline and still offers the '
-      'side panel (T10 S6)', (WidgetTester tester) async {
-    useViewport(tester, const Size(1000, 800));
+  testWidgets(
+    'wide shell keeps every action inline without a side menu (T11 S2)',
+    (WidgetTester tester) async {
+      useViewport(tester, const Size(1000, 800));
+      await tester.pumpWidget(_Shell().seller());
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(_key('shell-more'), findsNothing);
+      expect(_inAppBar(find.text('Correcciones')), findsOneWidget);
+      expect(_inAppBar(_key('notices-open')), findsOneWidget);
+      expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);
+      // Desktop/web keeps this wide-window layout (S2); the mobile app bar is
+      // covered in mobile_app_bar_test.dart.
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
+  for (final double width in <double>[600, 601, 1000, 1400]) {
+    testWidgets('wide header at ${width}px shows version and cycles theme', (
+      WidgetTester tester,
+    ) async {
+      useViewport(tester, Size(width, 800));
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final store = ThemeModeStore();
+      await store.loaded;
+      addTearDown(store.dispose);
+      await tester.pumpWidget(
+        InventoryThemeHost(
+          store: store,
+          builder: (_, mode) => _Shell().seller(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AppMenuButton), findsNothing);
+      expect(_inAppBar(find.byType(ThemeModeSwitch)), findsOneWidget);
+      final title = tester.getRect(find.text('LDA Inventory'));
+      final session = tester.getRect(_key('session-status'));
+      final version = tester.getRect(find.text('Versión 1.0.0 (1)'));
+      expect(title.top, lessThan(session.top));
+      expect(session.right, lessThanOrEqualTo(version.left));
+      expect(version.width, greaterThan(0));
+      expect(title.width, greaterThan(0));
+      expect(
+        version.right,
+        lessThanOrEqualTo(
+          tester.getRect(_inAppBar(find.text('Correcciones'))).left,
+        ),
+      );
+      final themeButton = tester.widget<IconButton>(
+        find.descendant(
+          of: find.byType(ThemeModeSwitch),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(
+        themeButton.style!.shape!.resolve(<WidgetState>{}),
+        isA<CircleBorder>(),
+      );
+      final logoutButton = _inAppBar(find.byType(OutlinedButton));
+      final row = tester.widget<Row>(
+        find.ancestor(of: logoutButton, matching: find.byType(Row)).first,
+      );
+      expect(
+        row.children.where((action) => action is! SizedBox).last,
+        isA<OutlinedButton>(),
+      );
+      final logout = tester.getRect(_inAppBar(find.text('Cerrar sesión')));
+      expect(
+        tester.getRect(find.byType(ThemeModeSwitch)).right,
+        lessThan(logout.left),
+      );
+
+      for (final mode in <ThemeMode>[
+        ThemeMode.light,
+        ThemeMode.dark,
+        ThemeMode.system,
+      ]) {
+        await tester.tap(find.byType(ThemeModeSwitch));
+        await tester.pumpAndSettle();
+        expect(store.value, mode);
+        expect(tester.takeException(), isNull);
+      }
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+  }
+
+  testWidgets('compact header keeps the panel and version only in its footer', (
+    WidgetTester tester,
+  ) async {
+    useViewport(tester, const Size(400, 800));
     await tester.pumpWidget(_Shell().seller());
     await tester.pumpAndSettle();
-
+    expect(find.byType(AppMenuButton), findsOneWidget);
+    expect(find.text('Versión 1.0.0 (1)'), findsNothing);
+    await _openMore(tester);
+    expect(find.text('Versión 1.0.0 (1)'), findsOneWidget);
+    expect(find.text('Correcciones'), findsOneWidget);
+    expect(find.text('Cerrar sesión'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    expect(_key('shell-more'), findsOneWidget);
-    expect(_inAppBar(find.text('Correcciones')), findsOneWidget);
-    expect(_inAppBar(_key('notices-open')), findsOneWidget);
-    expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);
-    // Desktop/web keeps this wide-window layout (S2); the mobile app bar is
-    // covered in mobile_app_bar_test.dart.
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('the wide seller shell meets tap target guidelines', (

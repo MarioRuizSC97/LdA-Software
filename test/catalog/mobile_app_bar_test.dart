@@ -218,9 +218,8 @@ void main() {
       await tester.pumpWidget(_adminPage(withMovements: true));
       await tester.pumpAndSettle();
 
-      // The side panel exists at every width (T10 S6); the wide bar still
-      // keeps its inline actions.
-      expect(_key('shell-more'), findsOneWidget);
+      // T11 S2 restores a menu-free wide bar; compact keeps the panel.
+      expect(_key('shell-more'), findsNothing);
       expect(_inAppBar(find.text('Movimientos')), findsOneWidget);
       expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
       expect(_inAppBar(find.text('Cerrar sesión')), findsOneWidget);

@@ -313,13 +313,13 @@ void main() {
   });
 
   group('wide web/desktop keeps the notices icon in the bar (unchanged)', () {
-    testWidgets('the wide shell keeps the bar notices icon and leaves the '
-        'menu icon without a duplicate badge', (WidgetTester tester) async {
+    testWidgets('the wide shell keeps the bar notices icon without a menu '
+        'or duplicate badge (T11 S2)', (WidgetTester tester) async {
       useViewport(tester, const Size(1000, 800));
       await tester.pumpWidget(_sellerPage(transferNotices: _pendingNotices));
       await tester.pumpAndSettle();
 
-      expect(_key('shell-more'), findsOneWidget);
+      expect(_key('shell-more'), findsNothing);
       expect(_inAppBar(_key('notices-open')), findsOneWidget);
       expect(
         find.descendant(of: _key('shell-more'), matching: find.text('!')),

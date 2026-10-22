@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../app/app_bar_surface.dart';
+import '../app/app_info.dart';
 import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_transition.dart';
@@ -998,9 +999,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool mobilePlatform =
         !kIsWeb &&
         (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
-    // The side panel exists everywhere (T10 S6); on mobile and in a compact
-    // web/desktop bar the notices entry lives only there, while a wide
-    // web/desktop bar also keeps its own notices icon.
+    // Only reduced screens use the side panel (T11 S2). Wide web/desktop
+    // keeps the actions inline, including its own notices icon.
     final bool menuActions = mobilePlatform || compactBar;
     final VoidCallback? openCorrections = showCorrections || showTransfer
         ? null
@@ -1067,122 +1067,148 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             session: widget.session,
             environment: widget.environment,
             centered: mobilePlatform,
+            showVersion: !menuActions,
           ),
           actions: <Widget>[
-            if (corrections != null && !compactBar)
-              TextButton.icon(
-                key: const ValueKey<String>('corrections-open'),
-                onPressed: openCorrections,
-                icon: const Icon(Icons.assignment_return_outlined),
-                label: const Text('Correcciones'),
+            // Reserve a readable title/version slot even at the first wide
+            // width or when Back/Home appears. Only the wide row scales down;
+            // compact/mobile controls retain their existing sizes.
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: menuActions
+                    ? double.infinity
+                    : MediaQuery.sizeOf(context).width -
+                          (_openPanelClosers().isEmpty ? 56 : 104) -
+                          32 -
+                          MediaQuery.sizeOf(context).width * .32,
               ),
-            // Transfer notices (S10) live in the overflow menu wherever that
-            // menu exists — always on Android/iOS, on web/desktop when the bar
-            // is compact — as its first entry. The wide web/desktop bar keeps
-            // its own icon.
-            if (noticeController != null && !menuActions)
-              IconButton(
-                key: const ValueKey<String>('notices-open'),
-                tooltip: 'Avisos de traslados',
-                onPressed: showNotices ? null : _showNotices,
-                icon: _noticeBadge(context, unreadNotices),
-              ),
-            if (movements != null && !compactBar)
-              TextButton.icon(
-                key: const ValueKey<String>('movements-open'),
-                onPressed: openMovements,
-                icon: const Icon(Icons.swap_vert),
-                label: const Text('Movimientos'),
-              ),
-            // On mobile the refresh button leaves the bar (S2): Reload lives
-            // in the overflow menu below, so the bar spends no space on it.
-            // Desktop and web keep the bar button at every window width.
-            if (!mobilePlatform)
-              IconButton(
-                tooltip: 'Actualizar catálogo',
-                onPressed: _loading ? null : _requestCatalog,
-                icon: const Icon(Icons.refresh),
-              ),
-            // The three bars open the side panel on every platform and width
-            // (T10 S6): it lists every shell action plus the app information,
-            // so nothing depends on how much of the bar fits inline. The
-            // unread-notice badge rides on the icon, and screen readers hear
-            // the unread notices named on the button. Only a session with
-            // transfer notices can have an unread badge; administrators have
-            // none.
-            AppMenuButton(
-              key: const ValueKey<String>('shell-more'),
-              settings: (BuildContext context) => const ThemeModeSwitch(),
-              // A wide web/desktop bar keeps its own notices icon and badge,
-              // so the menu icon carries the badge only where the notices
-              // entry lives in the panel alone.
-              decorate: (Widget icon) => Semantics(
-                label: noticeController == null || !menuActions
-                    ? null
-                    : unreadNotices == null
-                    ? 'sin confirmar'
-                    : unreadNotices > 0
-                    ? 'Avisos de traslados: $unreadNotices sin leer'
-                    : null,
-                child: ExcludeSemantics(
-                  child: Badge(
-                    isLabelVisible:
-                        noticeController != null &&
-                        menuActions &&
-                        (unreadNotices == null || unreadNotices > 0),
-                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                    backgroundColor: unreadNotices == null
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    child: icon,
-                  ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (corrections != null && !compactBar)
+                      TextButton.icon(
+                        key: const ValueKey<String>('corrections-open'),
+                        onPressed: openCorrections,
+                        icon: const Icon(Icons.assignment_return_outlined),
+                        label: const Text('Correcciones'),
+                      ),
+                    // Transfer notices (S10) live in the overflow menu wherever that
+                    // menu exists — always on Android/iOS, on web/desktop when the bar
+                    // is compact — as its first entry. The wide web/desktop bar keeps
+                    // its own icon.
+                    if (noticeController != null && !menuActions)
+                      IconButton(
+                        key: const ValueKey<String>('notices-open'),
+                        tooltip: 'Avisos de traslados',
+                        onPressed: showNotices ? null : _showNotices,
+                        icon: _noticeBadge(context, unreadNotices),
+                      ),
+                    if (movements != null && !compactBar)
+                      TextButton.icon(
+                        key: const ValueKey<String>('movements-open'),
+                        onPressed: openMovements,
+                        icon: const Icon(Icons.swap_vert),
+                        label: const Text('Movimientos'),
+                      ),
+                    // On mobile the refresh button leaves the bar (S2): Reload lives
+                    // in the overflow menu below, so the bar spends no space on it.
+                    // Desktop and web keep the bar button at every window width.
+                    if (!mobilePlatform)
+                      IconButton(
+                        tooltip: 'Actualizar catálogo',
+                        onPressed: _loading ? null : _requestCatalog,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    // Reduced screens retain the full panel and its badge/semantics.
+                    // Wide screens put the theme cycle in the menu's former slot.
+                    if (!menuActions) const ThemeModeSwitch(),
+                    if (menuActions)
+                      AppMenuButton(
+                        key: const ValueKey<String>('shell-more'),
+                        settings: (BuildContext context) =>
+                            const ThemeModeSwitch(),
+                        // A wide web/desktop bar keeps its own notices icon and badge,
+                        // so the menu icon carries the badge only where the notices
+                        // entry lives in the panel alone.
+                        decorate: (Widget icon) => Semantics(
+                          label: noticeController == null || !menuActions
+                              ? null
+                              : unreadNotices == null
+                              ? 'sin confirmar'
+                              : unreadNotices > 0
+                              ? 'Avisos de traslados: $unreadNotices sin leer'
+                              : null,
+                          child: ExcludeSemantics(
+                            child: Badge(
+                              isLabelVisible:
+                                  noticeController != null &&
+                                  menuActions &&
+                                  (unreadNotices == null || unreadNotices > 0),
+                              label: Text(
+                                unreadNotices == null ? '!' : '$unreadNotices',
+                              ),
+                              backgroundColor: unreadNotices == null
+                                  ? Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest
+                                  : null,
+                              child: icon,
+                            ),
+                          ),
+                        ),
+                        entries: () => <AppSidePanelEntry>[
+                          // First entry for the fastest access (S10); the count on the
+                          // entry is read when the panel opens.
+                          if (noticeController != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('notices-open'),
+                              icon: _noticeBadge(context, unreadNotices),
+                              label: 'Avisos de traslados',
+                              onSelected: showNotices ? null : _showNotices,
+                            ),
+                          AppSidePanelEntry(
+                            icon: const Icon(Icons.refresh),
+                            label: 'Actualizar catálogo',
+                            onSelected: _loading ? null : _requestCatalog,
+                          ),
+                          if (corrections != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('corrections-open'),
+                              icon: const Icon(
+                                Icons.assignment_return_outlined,
+                              ),
+                              label: 'Correcciones',
+                              onSelected: openCorrections,
+                            ),
+                          if (movements != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('movements-open'),
+                              icon: const Icon(Icons.swap_vert),
+                              label: 'Movimientos',
+                              onSelected: openMovements,
+                            ),
+                          AppSidePanelEntry(
+                            icon: const Icon(Icons.logout),
+                            label: 'Cerrar sesión',
+                            onSelected: widget.onLogout,
+                          ),
+                        ],
+                      ),
+                    // The inline logout keeps its place whenever the bar is wide enough
+                    // for it — mobile only moved Reload out of the bar (S2c).
+                    if (!compactBar) ...<Widget>[
+                      OutlinedButton(
+                        onPressed: widget.onLogout,
+                        child: const Text('Cerrar sesión'),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                  ],
                 ),
               ),
-              entries: () => <AppSidePanelEntry>[
-                // First entry for the fastest access (S10); the count on the
-                // entry is read when the panel opens.
-                if (noticeController != null)
-                  AppSidePanelEntry(
-                    key: const ValueKey<String>('notices-open'),
-                    icon: _noticeBadge(context, unreadNotices),
-                    label: 'Avisos de traslados',
-                    onSelected: showNotices ? null : _showNotices,
-                  ),
-                AppSidePanelEntry(
-                  icon: const Icon(Icons.refresh),
-                  label: 'Actualizar catálogo',
-                  onSelected: _loading ? null : _requestCatalog,
-                ),
-                if (corrections != null)
-                  AppSidePanelEntry(
-                    key: const ValueKey<String>('corrections-open'),
-                    icon: const Icon(Icons.assignment_return_outlined),
-                    label: 'Correcciones',
-                    onSelected: openCorrections,
-                  ),
-                if (movements != null)
-                  AppSidePanelEntry(
-                    key: const ValueKey<String>('movements-open'),
-                    icon: const Icon(Icons.swap_vert),
-                    label: 'Movimientos',
-                    onSelected: openMovements,
-                  ),
-                AppSidePanelEntry(
-                  icon: const Icon(Icons.logout),
-                  label: 'Cerrar sesión',
-                  onSelected: widget.onLogout,
-                ),
-              ],
             ),
-            // The inline logout keeps its place whenever the bar is wide enough
-            // for it — mobile only moved Reload out of the bar (S2c).
-            if (!compactBar) ...<Widget>[
-              OutlinedButton(
-                onPressed: widget.onLogout,
-                child: const Text('Cerrar sesión'),
-              ),
-              const SizedBox(width: 12),
-            ],
           ],
         ),
       ),
@@ -2938,10 +2964,12 @@ class _ShellTitle extends StatelessWidget {
     required this.session,
     required this.environment,
     this.centered = false,
+    this.showVersion = false,
   });
 
   final EmulatorSession session;
   final BackendEnvironment environment;
+  final bool showVersion;
 
   /// Whether the title and its session line center under the app bar's
   /// centerTitle layout (Android and iOS only).
@@ -2955,14 +2983,18 @@ class _ShellTitle extends StatelessWidget {
       if (session.branchId case final String branchId)
         _branchDisplayName(branchId),
     ].join(' · ');
-    return Column(
+    final Widget identity = Column(
       mainAxisSize: MainAxisSize.min,
       // Centered with the title on mobile (S2); left-aligned on desktop/web.
       crossAxisAlignment: centered
           ? CrossAxisAlignment.center
           : CrossAxisAlignment.start,
       children: <Widget>[
-        const Text('LDA Inventory'),
+        Text(
+          'LDA Inventory',
+          maxLines: showVersion ? 1 : null,
+          overflow: showVersion ? TextOverflow.ellipsis : null,
+        ),
         Text(
           status,
           key: const ValueKey<String>('session-status'),
@@ -2970,6 +3002,32 @@ class _ShellTitle extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         ),
       ],
+    );
+    if (!showVersion) return identity;
+    return SizedBox(
+      width: MediaQuery.sizeOf(context).width,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: <Widget>[
+            Flexible(child: identity),
+            const SizedBox(width: 8),
+            // Back/Home further reduce the title slot while a panel is open.
+            // Keep the full version visible without taking all session space.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: constraints.maxWidth * .55),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'Versión $appVersion ($appBuild)',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
