@@ -309,7 +309,7 @@ void main() {
       // The draft stayed stored for the original seller: same-key retry.
       gateway.sessions.add(_seller);
       await tester.pumpAndSettle();
-      expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);
+      expect(find.textContaining('2.00 meter · 20.00 MXN'), findsOneWidget);
       await _tap(tester, _key('sale-cart-button'));
       expect(_key('sale-retry-submit'), findsOneWidget);
       await _tap(tester, _key('sale-retry-submit'));
@@ -341,7 +341,7 @@ void main() {
     await _tap(tester, find.widgetWithText(FilledButton, 'Iniciar sesión'));
 
     expect(_key('sale-cart-button'), findsOneWidget);
-    expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2.00 meter · 20.00 MXN'), findsOneWidget);
     await _tap(tester, _key('sale-cart-button'));
     await _tap(tester, _key('sale-retry-submit'));
 

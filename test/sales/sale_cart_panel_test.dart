@@ -187,7 +187,7 @@ void main() {
         <String, Object?>{'productId': 'DEMO-RIBBON', 'quantity': '2.5'},
       ],
     });
-    expect(find.textContaining('1 producto · 25.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2.50 meter · 25.00 MXN'), findsOneWidget);
 
     await _openCart(tester);
     expect(_key('sale-line-DEMO-RIBBON'), findsOneWidget);
@@ -261,7 +261,7 @@ void main() {
     expect(sales.quotedCarts, hasLength(3));
     expect(sales.quotedCarts.last.lineCount, 1);
     expect(sales.quotedCarts.last.lines.single.quantity, '4');
-    expect(find.textContaining('1 producto · 10.00 MXN'), findsOneWidget);
+    expect(find.textContaining('4 piece · 10.00 MXN'), findsOneWidget);
   });
 
   testWidgets('the panel edits and removes lines, re-quoting each time', (
@@ -635,7 +635,7 @@ void main() {
 
     await tester.pumpWidget(_page(sales));
     await tester.pumpAndSettle();
-    expect(find.textContaining('1 producto · 5.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2 piece · 5.00 MXN'), findsOneWidget);
     // T11/S11: the in-cart product shows the (locked) stepper, not 'Agregar'.
     expect(_key('sale-add-DEMO-PIN'), findsNothing);
     expect(_enabled(tester, _key('sale-line-increment-DEMO-PIN')), isFalse);

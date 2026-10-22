@@ -443,11 +443,36 @@ class SaleCartButton extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
     builder: (BuildContext context, _) {
-      final int count = controller.cart.lineCount;
-      final String label = count == 0
-          ? 'Carrito vacío'
-          : 'Carrito · $count ${count == 1 ? 'producto' : 'productos'} · '
-                '${_totalLabel(controller)}';
+      final SaleCart cart = controller.cart;
+      final int count = cart.lineCount;
+      String label = 'Carrito vacío';
+      if (count > 0) {
+        // When every line shares a unit and precision, the bar can count
+        // pieces too: one product added twice reads 2, not 1 line. Mixed
+        // units never add up, so those carts keep counting product lines.
+        final SaleCartLine first = cart.lines.first;
+        final bool uniform = cart.lines.every(
+          (SaleCartLine line) =>
+              line.quantitySpec.unit == first.quantitySpec.unit &&
+              line.quantitySpec.precision == first.quantitySpec.precision,
+        );
+        final int unitScaled = BigInt.from(10)
+            .pow(first.quantitySpec.precision)
+            .toInt();
+        int totalScaled = 0;
+        if (uniform) {
+          for (final SaleCartLine line in cart.lines) {
+            totalScaled += line.quantityScaled;
+          }
+        }
+        final bool countsPieces = uniform && totalScaled != count * unitScaled;
+        label = countsPieces
+            ? 'Carrito · '
+                  '${formatScaledQuantity(totalScaled, first.quantitySpec.precision)} '
+                  '${first.quantitySpec.unit} · ${_totalLabel(controller)}'
+            : 'Carrito · $count ${count == 1 ? 'producto' : 'productos'} · '
+                  '${_totalLabel(controller)}';
+      }
       return SafeArea(
         top: false,
         child: Padding(
