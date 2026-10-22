@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../sales/sale_format.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_labels.dart';
 import 'correction_receipt.dart';
@@ -74,7 +76,7 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
     final CorrectionReturnController form = _controller;
     final String? folio = widget.sale.folio;
     final String? message = form.message;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('return-form'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -166,6 +168,13 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
             ],
           ),
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: widget.sale,
+        productNames: widget.productNames,
       ),
     );
   }

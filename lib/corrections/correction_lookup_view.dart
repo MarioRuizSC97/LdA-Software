@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../catalog/catalog_product.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_exchange_form.dart';
 import 'correction_exchange_receipt_view.dart';
@@ -265,7 +267,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
       );
     }
     final ThemeData theme = Theme.of(context);
-    return Center(
+    final Widget primary = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: ListView(
@@ -327,6 +329,13 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
           ],
         ),
       ),
+    );
+    return PanelLayout(
+      primary: primary,
+      // A short help card needs a narrow rail; keeping it narrow also keeps
+      // the recent-sale rows wide enough to show their total as a trailing.
+      maxContextWidth: 240,
+      context: const CorrectionHelpContext(),
     );
   }
 

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import 'correction_context.dart';
+import 'correction_draft.dart';
 import 'correction_labels.dart';
 import 'correction_receipt.dart';
-import 'correction_draft.dart';
 import 'correction_replacement_controller.dart';
 import 'correction_sale.dart';
 import 'sale_corrections.dart';
@@ -68,7 +70,7 @@ class _CorrectionReplacementFormState extends State<CorrectionReplacementForm> {
     final CorrectionReplacementController form = _controller;
     final String? folio = widget.sale.folio;
     final String? message = form.message;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('replacement-form'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -152,6 +154,13 @@ class _CorrectionReplacementFormState extends State<CorrectionReplacementForm> {
             ],
           ),
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: widget.sale,
+        productNames: widget.productNames,
       ),
     );
   }
