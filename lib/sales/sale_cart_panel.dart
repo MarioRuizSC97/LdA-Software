@@ -602,6 +602,9 @@ class SaleCartButton extends StatelessWidget {
         onPressed: onPressed,
         style: FilledButton.styleFrom(
           padding: EdgeInsets.zero,
+          // Desktop compact density must not shrink the painted circle below
+          // its 56px height. Keep these surface constraints density-independent.
+          visualDensity: VisualDensity.standard,
           minimumSize: const Size(56, 56),
           maximumSize: Size(MediaQuery.sizeOf(context).width * .9, 56),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,

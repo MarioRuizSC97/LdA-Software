@@ -8,12 +8,18 @@ import 'sale_ui_fixtures.dart';
 const _buttonKey = ValueKey<String>('sale-cart-button');
 const _summary = 'Carrito · 2 piece · 5.00 MXN';
 
+Finder get _surface => find.descendant(
+  of: find.byKey(_buttonKey),
+  matching: find.byType(Material),
+);
+
 void main() {
   Future<SaleCartController> mount(
     WidgetTester tester, {
     bool disableAnimations = false,
     double width = 800,
     double textScale = 1,
+    VisualDensity visualDensity = VisualDensity.standard,
     VoidCallback? onPressed,
   }) async {
     tester.view.physicalSize = Size(width, 600);
@@ -26,6 +32,7 @@ void main() {
     addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(visualDensity: visualDensity),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(
             disableAnimations: disableAnimations,
@@ -96,6 +103,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getRect(find.byKey(_buttonKey)), empty);
   });
+
+  for (final density in <VisualDensity>[
+    VisualDensity.standard,
+    VisualDensity.compact,
+  ]) {
+    testWidgets('painted cart surface stays square at density $density', (
+      tester,
+    ) async {
+      final controller = await mount(tester, visualDensity: density);
+      final outer = tester.getSize(find.byKey(_buttonKey));
+      final empty = tester.getSize(_surface);
+      debugPrint('Empty cart: outer=$outer, painted surface=$empty');
+      expect(empty.width, empty.height);
+      expect(empty, const Size(56, 56));
+      expect(outer, const Size(56, 56));
+      addItems(controller);
+      await tester.pumpAndSettle();
+      final pill = tester.getSize(_surface);
+      expect(pill.height, empty.height);
+      expect(pill.width, greaterThan(pill.height));
+      controller.remove(pinProduct.internalCode);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(_surface), empty);
+    });
+  }
 
   testWidgets('width and label transitions respect reduced motion', (
     tester,
