@@ -210,6 +210,16 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
       choice.branchId: choice.branchName,
   };
 
+  CatalogHolding? _sourceHolding(String productId, String sourceBranchId) =>
+      (widget.holdingsByProduct?[productId] ?? const <CatalogHolding>[])
+          .where((CatalogHolding value) => value.branchId == sourceBranchId)
+          .firstOrNull;
+
+  String _formatStock(CatalogHolding? holding, QuantitySpec spec) =>
+      holding == null
+      ? 'Sin entrada registrada'
+      : '${formatScaledQuantity(holding.quantityScaled, spec.precision)} ${spec.unit}';
+
   Map<String, CatalogProduct> get _productIndex => <String, CatalogProduct>{
     for (final CatalogProduct product in widget.products)
       product.internalCode: product,
@@ -704,15 +714,11 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     if (holdings != null && _sourceBranchId != null) {
       for (final String productId in selectedProducts) {
         final CatalogProduct product = products[productId]!;
-        final CatalogHolding? holding =
-            (holdings[productId] ?? const <CatalogHolding>[])
-                .where(
-                  (CatalogHolding value) => value.branchId == _sourceBranchId,
-                )
-                .firstOrNull;
-        final String stock = holding == null
-            ? 'Sin entrada registrada'
-            : '${formatScaledQuantity(holding.quantityScaled, product.quantitySpec.precision)} ${product.quantitySpec.unit}';
+        final CatalogHolding? holding = _sourceHolding(
+          productId,
+          _sourceBranchId!,
+        );
+        final String stock = _formatStock(holding, product.quantitySpec);
         stockLines.add('${product.name}: $stock');
       }
     }
@@ -880,6 +886,25 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
   ) {
     final Map<String, String> names = _branchNames;
     final Map<String, CatalogProduct> products = _productIndex;
+    final bool hasHoldings = widget.holdingsByProduct != null;
+    final List<String> stockSuffixes = <String>[];
+    final List<String> stockWarnings = <String>[];
+    for (final TransferLine line in draft.lines) {
+      if (!hasHoldings) {
+        stockSuffixes.add('');
+        continue;
+      }
+      final CatalogHolding? holding = _sourceHolding(
+        line.productId,
+        draft.sourceBranchId,
+      );
+      final QuantitySpec spec =
+          products[line.productId]?.quantitySpec ?? line.quantitySpec;
+      stockSuffixes.add(' · Origen: ${_formatStock(holding, spec)}');
+      if (holding == null || line.quantityScaled > holding.quantityScaled) {
+        stockWarnings.add(products[line.productId]?.name ?? line.productId);
+      }
+    }
     return AlertDialog(
       key: const ValueKey<String>('transfer-confirm-dialog'),
       title: const Text('Confirmar traslado'),
@@ -900,9 +925,17 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
             for (int index = 0; index < draft.lines.length; index += 1)
               Text(
                 '${products[draft.lines[index].productId]?.name ?? draft.lines[index].productId}: ${draft.lines[index].quantity} '
-                '${draft.lines[index].quantitySpec.unit}',
+                '${draft.lines[index].quantitySpec.unit}${stockSuffixes[index]}',
                 key: ValueKey<String>('transfer-confirm-line-$index'),
               ),
+            if (stockWarnings.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                'Revisa las existencias en origen de: ${stockWarnings.join(', ')}. '
+                'La cantidad supera lo registrado o no hay entrada registrada. '
+                'Puedes continuar con el envío.',
+              ),
+            ],
           ],
         ),
       ),
