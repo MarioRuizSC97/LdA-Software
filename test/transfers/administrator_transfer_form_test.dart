@@ -566,7 +566,10 @@ void main() {
       await _fillSingleLine(tester, quantity: '2.50');
 
       await _openConfirmation(tester);
-      expect(find.text('PRD-COFFEE-001: 2.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 2.50 kg',
+      );
       await _confirm(tester);
 
       final Map<String, Object?> line =
@@ -695,6 +698,21 @@ void main() {
   });
 
   group('confirmation freezes the payload', () {
+    testWidgets('falls back to the id only when the product name is unknown', (
+      WidgetTester tester,
+    ) async {
+      final _Harness harness = await _pump(tester);
+      await _fillSingleLine(tester, quantity: '2.50');
+      harness.products = <CatalogProduct>[_ribbon];
+      await _repump(tester, harness);
+      await _openConfirmation(tester);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'PRD-COFFEE-001: 2.50 kg',
+      );
+      expect(harness.backend.invocations, 0);
+    });
+
     testWidgets('shows one branch pair plus the frozen lines', (
       WidgetTester tester,
     ) async {
@@ -706,7 +724,10 @@ void main() {
       expect(_key('transfer-confirm-dialog'), findsOneWidget);
       expect(find.text('De: Norte'), findsOneWidget);
       expect(find.text('Para: Sur'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001: 2.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 2.50 kg',
+      );
       expect(harness.backend.invocations, 0);
     });
 
@@ -745,7 +766,10 @@ void main() {
 
       await _enter(tester, 0, '3.50');
       await _openConfirmation(tester);
-      expect(find.text('PRD-COFFEE-001: 3.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 3.50 kg',
+      );
       await _confirm(tester);
 
       expect(harness.backend.invocations, 1);
