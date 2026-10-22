@@ -72,10 +72,14 @@ void main() {
       tester,
     ) async {
       await _mount(tester, width: width);
-      final scroll = find.descendant(
-        of: find.byType(SaleCartPanel),
-        matching: find.byType(SingleChildScrollView),
-      );
+      // The primary still owns its original scroll/padding; the wide rail
+      // has a second independent scroll view.
+      final scroll = find
+          .descendant(
+            of: find.byType(SaleCartPanel),
+            matching: find.byType(SingleChildScrollView),
+          )
+          .first;
       expect(tester.getTopLeft(scroll).dy, 0);
       expect(
         tester.widget<SingleChildScrollView>(scroll).padding,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../catalog/catalog_product.dart';
 import 'sale_cart.dart';
 import 'sale_cart_controller.dart';
@@ -689,98 +690,105 @@ class SaleCartPanel extends StatelessWidget {
         final ThemeData theme = Theme.of(context);
         final SaleCart cart = controller.cart;
         final bool canEdit = controller.canEdit;
-        return Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    children: <Widget>[
+        return PanelLayout(
+          maxPrimaryWidth: 720,
+          context: _SaleCartSummary(controller: controller),
+          primary: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      children: <Widget>[
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            'Carrito',
+                            style: theme.textTheme.headlineSmall,
+                          ),
+                        ),
+                        FilledButton.tonalIcon(
+                          key: const ValueKey<String>('sale-close-cart'),
+                          onPressed: controller.isSubmitting ? null : onClose,
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('Seguir vendiendo'),
+                        ),
+                      ],
+                    ),
+                    if (controller.message
+                        case final String message) ...<Widget>[
+                      const SizedBox(height: 12),
                       Semantics(
-                        header: true,
+                        liveRegion: true,
                         child: Text(
-                          'Carrito',
-                          style: theme.textTheme.headlineSmall,
+                          message,
+                          style: TextStyle(
+                            color: controller.isLocked
+                                ? theme.colorScheme.error
+                                : null,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                      FilledButton.tonalIcon(
-                        key: const ValueKey<String>('sale-close-cart'),
-                        onPressed: controller.isSubmitting ? null : onClose,
-                        icon: const Icon(Icons.arrow_back),
-                        label: const Text('Seguir vendiendo'),
-                      ),
                     ],
-                  ),
-                  if (controller.message case final String message) ...<Widget>[
                     const SizedBox(height: 12),
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        message,
-                        style: TextStyle(
-                          color: controller.isLocked
-                              ? theme.colorScheme.error
-                              : null,
-                          fontWeight: FontWeight.w600,
-                        ),
+                    if (cart.isEmpty)
+                      const Text(
+                        'El carrito está vacío. Agrega productos desde el catálogo.',
+                      )
+                    else
+                      for (final SaleCartLine line in cart.lines)
+                        _SaleLineTile(controller: controller, line: line),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      key: const ValueKey<String>('sale-invoice-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Factura'),
+                      subtitle: const Text(
+                        'Calcula el IVA para una venta facturada.',
                       ),
+                      value: cart.invoiceRequested,
+                      onChanged: canEdit
+                          ? controller.setInvoiceRequested
+                          : null,
                     ),
+                    const SizedBox(height: 8),
+                    Text('Método de pago', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final SalePaymentMethod method
+                            in SalePaymentMethod.values)
+                          ChoiceChip(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            key: ValueKey<String>(
+                              'sale-payment-${method.wireValue}',
+                            ),
+                            label: Text(salePaymentLabel(method)),
+                            selected: controller.paymentMethod == method,
+                            onSelected: canEdit
+                                ? (_) => controller.setPaymentMethod(method)
+                                : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _SaleTotals(controller: controller),
+                    const SizedBox(height: 16),
+                    _SaleActions(controller: controller),
                   ],
-                  const SizedBox(height: 12),
-                  if (cart.isEmpty)
-                    const Text(
-                      'El carrito está vacío. Agrega productos desde el catálogo.',
-                    )
-                  else
-                    for (final SaleCartLine line in cart.lines)
-                      _SaleLineTile(controller: controller, line: line),
-                  const SizedBox(height: 8),
-                  SwitchListTile(
-                    key: const ValueKey<String>('sale-invoice-switch'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Factura'),
-                    subtitle: const Text(
-                      'Calcula el IVA para una venta facturada.',
-                    ),
-                    value: cart.invoiceRequested,
-                    onChanged: canEdit ? controller.setInvoiceRequested : null,
-                  ),
-                  const SizedBox(height: 8),
-                  Text('Método de pago', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      for (final SalePaymentMethod method
-                          in SalePaymentMethod.values)
-                        ChoiceChip(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          key: ValueKey<String>(
-                            'sale-payment-${method.wireValue}',
-                          ),
-                          label: Text(salePaymentLabel(method)),
-                          selected: controller.paymentMethod == method,
-                          onSelected: canEdit
-                              ? (_) => controller.setPaymentMethod(method)
-                              : null,
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _SaleTotals(controller: controller),
-                  const SizedBox(height: 16),
-                  _SaleActions(controller: controller),
-                ],
+                ),
               ),
             ),
           ),
@@ -788,6 +796,65 @@ class SaleCartPanel extends StatelessWidget {
       },
     ),
   );
+}
+
+/// Read-only projection of the same live cart and authoritative quote.
+/// Never reuse action widgets here: their keys and commands belong to primary.
+class _SaleCartSummary extends StatelessWidget {
+  const _SaleCartSummary({required this.controller});
+
+  final SaleCartController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final SaleCart cart = controller.cart;
+    final SaleQuote? quote = controller.quote;
+    Widget row(String label, String value, {TextStyle? style}) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        spacing: 12,
+        children: <Widget>[
+          Text(label, style: style),
+          Text(value, style: style),
+        ],
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(
+              '${cart.lineCount} ${cart.lineCount == 1 ? 'producto' : 'productos'}',
+            ),
+            for (final SaleCartLine line in cart.lines)
+              if (controller.pricedLine(line.productId)
+                  case final SalePricedLine priced)
+                row(line.name, formatMoney(priced.baseCentavos)),
+            if (quote != null) ...<Widget>[
+              const Divider(),
+              row('Subtotal', formatMoney(quote.baseCentavos)),
+              if (quote.additionalIvaCentavos > 0)
+                row('IVA adicional', formatMoney(quote.additionalIvaCentavos)),
+            ],
+            if (!cart.isEmpty)
+              row(
+                'Total',
+                _totalLabel(controller),
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _SaleLineTile extends StatefulWidget {

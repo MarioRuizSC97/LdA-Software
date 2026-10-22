@@ -18,7 +18,11 @@ SaleReceipt _receipt() {
 }
 
 TextStyle _effectiveStyle(WidgetTester tester, String text) {
-  final Finder finder = find.text(text);
+  // The rail repeats the total; preserve primary receipt styling checks.
+  final Finder finder = find.descendant(
+    of: find.byType(SingleChildScrollView).first,
+    matching: find.text(text),
+  );
   final Text widget = tester.widget<Text>(finder);
   return DefaultTextStyle.of(tester.element(finder)).style.merge(widget.style);
 }
