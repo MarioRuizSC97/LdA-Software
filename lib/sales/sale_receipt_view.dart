@@ -10,7 +10,8 @@ import 'sale_quote.dart';
 // Ticket printing is deferred.
 
 /// The confirmed sale: folio, QR of the full sale ID, lines, totals, payment,
-/// invoice option, server time and branch, plus "Nueva venta".
+/// invoice option, server time and branch, plus the secondary "Nueva venta"
+/// action that acknowledges the receipt.
 class SaleReceiptView extends StatelessWidget {
   const SaleReceiptView({
     required this.receipt,
@@ -110,7 +111,9 @@ class SaleReceiptView extends StatelessWidget {
               _amountRow(
                 'Total',
                 formatMoney(receipt.totalCentavos),
-                style: theme.textTheme.titleLarge,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 12),
               _detail(
@@ -124,7 +127,7 @@ class SaleReceiptView extends StatelessWidget {
               _detail('Fecha y hora', dateTime),
               _detail('Sucursal', receipt.branchCode),
               const SizedBox(height: 24),
-              FilledButton.icon(
+              FilledButton.tonalIcon(
                 key: const ValueKey<String>('sale-receipt-new'),
                 onPressed: onNewSale,
                 icon: const Icon(Icons.add_shopping_cart_outlined),
