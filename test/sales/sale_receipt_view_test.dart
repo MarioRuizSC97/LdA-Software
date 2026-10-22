@@ -79,6 +79,12 @@ Future<void> _pump(
 
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
 
+// Keep original-body assertions independent of the wide metadata rail.
+Finder _primaryText(String text) => find.descendant(
+  of: find.byType(SingleChildScrollView).first,
+  matching: find.text(text),
+);
+
 void main() {
   group('formatSaleDateTime', () {
     test('formats the local date and time in Spanish', () {
@@ -148,15 +154,15 @@ void main() {
     expect(find.text('32.50 MXN'), findsOneWidget);
     expect(find.text('IVA adicional'), findsOneWidget);
     expect(find.text('4.00 MXN'), findsOneWidget);
-    expect(find.text('Total'), findsOneWidget);
-    expect(find.text('36.50 MXN'), findsOneWidget);
-    expect(find.text('Tarjeta'), findsOneWidget);
+    expect(_primaryText('Total'), findsOneWidget);
+    expect(_primaryText('36.50 MXN'), findsOneWidget);
+    expect(_primaryText('Tarjeta'), findsOneWidget);
     expect(find.text('Con factura'), findsOneWidget);
     expect(
-      find.text(formatSaleDateTime(receipt.createdAt.toLocal())),
+      _primaryText(formatSaleDateTime(receipt.createdAt.toLocal())),
       findsOneWidget,
     );
-    expect(find.text('NTE'), findsOneWidget);
+    expect(_primaryText('NTE'), findsOneWidget);
     expect(find.text('Venta repetida (ya registrada)'), findsNothing);
     expect(_key('sale-receipt-new'), findsOneWidget);
   });
@@ -170,7 +176,7 @@ void main() {
     );
 
     expect(find.text('Sin factura'), findsOneWidget);
-    expect(find.text('Efectivo'), findsOneWidget);
+    expect(_primaryText('Efectivo'), findsOneWidget);
     expect(find.text('IVA adicional'), findsNothing);
     expect(find.text('Ribbon'), findsNothing);
   });
@@ -184,7 +190,7 @@ void main() {
     );
 
     expect(find.text('Venta repetida (ya registrada)'), findsOneWidget);
-    expect(find.text('Transferencia'), findsOneWidget);
+    expect(_primaryText('Transferencia'), findsOneWidget);
   });
 
   testWidgets('Nueva venta calls back once', (WidgetTester tester) async {
