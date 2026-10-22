@@ -44,7 +44,72 @@ class MovementsView extends StatefulWidget {
   State<MovementsView> createState() => _MovementsViewState();
 }
 
+typedef _BranchFilterChoice = ({String? id, String label});
+
 class _MovementsViewState extends State<MovementsView> {
+  final GlobalKey _branchFilterFieldKey = GlobalKey();
+
+  List<_BranchFilterChoice> get _branchFilterChoices => [
+    (id: null, label: 'Todas'),
+    for (final choice in widget.branchChoices)
+      (id: choice.branchId, label: choice.branchName),
+  ];
+
+  Future<void> _openBranchMenu() async {
+    final field =
+        _branchFilterFieldKey.currentContext!.findRenderObject()! as RenderBox;
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final rect =
+        field.localToGlobal(Offset.zero, ancestor: overlay) & field.size;
+    final theme = Theme.of(context);
+    final selected = await showMenu<_BranchFilterChoice>(
+      context: context,
+      // Do not pass initialValue: that centers the selected row over the field
+      // instead of opening a predictable list below it.
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(rect.left, rect.bottom + 4, rect.width, 0),
+        Offset.zero & overlay.size,
+      ),
+      constraints: BoxConstraints.tightFor(width: rect.width),
+      color: theme.colorScheme.surfaceContainer,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        for (final choice in _branchFilterChoices)
+          PopupMenuItem<_BranchFilterChoice>(
+            value: choice,
+            height: 48,
+            labelTextStyle: WidgetStatePropertyAll(
+              theme.textTheme.bodyLarge!.copyWith(
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            child: Semantics(
+              selected: choice.id == _branchId,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: choice.id == _branchId
+                        ? Icon(
+                            Icons.check,
+                            size: 20,
+                            color: theme.colorScheme.onSurface,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(choice.label)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+    if (mounted && selected != null) _selectBranch(selected.id);
+  }
+
   final Map<String, SellerProfileLookup> _names =
       <String, SellerProfileLookup>{};
   final Set<String> _resolving = <String>{};
@@ -197,6 +262,7 @@ class _MovementsViewState extends State<MovementsView> {
                 label: 'Filtrar por sucursal',
                 child: IntrinsicWidth(
                   child: InputDecorator(
+                    key: _branchFilterFieldKey,
                     // A filter belongs to the ledger surface, not the form's
                     // accent-focused state. Keep the theme's pill geometry.
                     decoration: InputDecoration(
@@ -210,28 +276,34 @@ class _MovementsViewState extends State<MovementsView> {
                       enabledBorder: filterBorder,
                       focusedBorder: filterBorder,
                     ).applyDefaults(theme.inputDecorationTheme),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String?>(
-                        key: const ValueKey<String>('movements-branch-filter'),
-                        value: _branchId,
-                        // DropdownButton otherwise paints a rectangular focus
-                        // tint inside the pill while its menu is open.
-                        focusColor: Colors.transparent,
-                        borderRadius: switch (filterBorder) {
-                          final OutlineInputBorder border =>
-                            border.borderRadius,
-                          _ => null,
-                        },
-                        onChanged: _selectBranch,
-                        items: <DropdownMenuItem<String?>>[
-                          const DropdownMenuItem<String?>(child: Text('Todas')),
-                          for (final CatalogBranchChoice choice
-                              in widget.branchChoices)
-                            DropdownMenuItem<String?>(
-                              value: choice.branchId,
-                              child: Text(choice.branchName),
+                    child: InkWell(
+                      key: const ValueKey<String>('movements-branch-filter'),
+                      onTap: _openBranchMenu,
+                      focusColor: Colors.transparent,
+                      borderRadius: switch (filterBorder) {
+                        final OutlineInputBorder border => border.borderRadius,
+                        _ => null,
+                      },
+                      child: SizedBox(
+                        height: 48,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: IndexedStack(
+                                alignment: AlignmentDirectional.centerStart,
+                                index: _branchFilterChoices.indexWhere(
+                                  (choice) => choice.id == _branchId,
+                                ),
+                                children: [
+                                  for (final choice in _branchFilterChoices)
+                                    Text(choice.label),
+                                ],
+                              ),
                             ),
-                        ],
+                            const Icon(Icons.arrow_drop_down),
+                          ],
+                        ),
                       ),
                     ),
                   ),

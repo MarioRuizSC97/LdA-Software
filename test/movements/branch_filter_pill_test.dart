@@ -76,9 +76,7 @@ void main() {
       );
       expect(paintedDecoration().blendedColor, restingFill);
 
-      final ink = tester.widget<InkWell>(
-        find.descendant(of: filter, matching: find.byType(InkWell)),
-      );
+      final ink = tester.widget<InkWell>(filter);
       expect(
         ink.focusColor?.a,
         0,
@@ -163,9 +161,14 @@ void main() {
         expect(radius.topLeft.x, greaterThanOrEqualTo(24));
         expect(radius, BorderRadius.circular(radius.topLeft.x));
         expect(
-          find.ancestor(
-            of: filter,
-            matching: find.byType(DropdownButtonHideUnderline),
+          find.descendant(
+            of: decorator,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is InkWell &&
+                  widget.key ==
+                      const ValueKey<String>('movements-branch-filter'),
+            ),
           ),
           findsOneWidget,
         );
