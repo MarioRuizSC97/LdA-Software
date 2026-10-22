@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'inventory_theme_host.dart';
 import 'theme_mode_store.dart';
 
-/// In-session theme preference; omitted when no app theme host is available.
+/// Cycles the persisted theme preference; hidden without an app theme host.
 class ThemeModeSwitch extends StatelessWidget {
   const ThemeModeSwitch({super.key});
 
@@ -14,30 +14,22 @@ class ThemeModeSwitch extends StatelessWidget {
     final ThemeModeStore? store = ThemeModeScope.maybeOf(context);
     if (store == null) return const SizedBox.shrink();
 
-    // Radio tiles expose their checked state and support keyboard navigation.
-    // A vertical layout also leaves room for large accessibility text sizes.
-    return RadioGroup<ThemeMode>(
-      groupValue: store.value,
-      onChanged: (ThemeMode? mode) {
-        if (mode != null) unawaited(store.setThemeMode(mode));
-      },
-      child: const Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.system,
-            title: Text('Sistema'),
-          ),
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.light,
-            title: Text('Claro'),
-          ),
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.dark,
-            title: Text('Oscuro'),
-          ),
-        ],
+    final (String label, IconData icon, ThemeMode next) = switch (store.value) {
+      ThemeMode.system => ('Sistema', Icons.brightness_auto, ThemeMode.light),
+      ThemeMode.light => ('Claro', Icons.light_mode, ThemeMode.dark),
+      ThemeMode.dark => ('Oscuro', Icons.dark_mode, ThemeMode.system),
+    };
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return IconButton.filled(
+      tooltip: 'Tema: $label',
+      style: IconButton.styleFrom(
+        backgroundColor: colors.inverseSurface,
+        foregroundColor: colors.onInverseSurface,
+        shape: const CircleBorder(),
+        minimumSize: const Size.square(48),
       ),
+      onPressed: () => unawaited(store.setThemeMode(next)),
+      icon: Icon(icon),
     );
   }
 }

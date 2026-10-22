@@ -53,95 +53,95 @@ void main() {
     return store;
   }
 
-  testWidgets('host shows all three exact theme labels above app info', (
-    WidgetTester tester,
+  testWidgets('host shows one circular theme button above app info', (
+    tester,
   ) async {
-    final ThemeModeStore store = await storeForTest();
+    final store = await storeForTest();
     await _open(tester, store: store);
-
-    for (final String label in <String>['Sistema', 'Claro', 'Oscuro']) {
-      expect(find.text(label), findsOneWidget);
-      expect(
-        tester.getRect(find.text(label)).bottom,
-        lessThan(tester.getRect(find.text(appName)).top),
-      );
+    final control = find.descendant(
+      of: find.byType(ThemeModeSwitch),
+      matching: find.byType(IconButton),
+    );
+    expect(control, findsOneWidget);
+    expect(find.byTooltip('Tema: Sistema'), findsOneWidget);
+    expect(find.byType(RadioListTile<ThemeMode>), findsNothing);
+    expect(find.byType(SegmentedButton<ThemeMode>), findsNothing);
+    for (final label in ['Sistema', 'Claro', 'Oscuro']) {
+      expect(find.text(label), findsNothing);
     }
-  });
-
-  testWidgets('dark and system selections update the store and live theme', (
-    WidgetTester tester,
-  ) async {
-    final ThemeModeStore store = await storeForTest();
-    await _open(tester, store: store);
-
-    await tester.tap(find.text('Oscuro'));
-    expect(store.value, ThemeMode.dark);
-    await tester.pumpAndSettle();
     expect(
-      Theme.of(tester.element(find.text('Oscuro'))).brightness,
-      Brightness.dark,
+      tester.getRect(control).bottom,
+      lessThan(tester.getRect(find.text(appName)).top),
     );
-    expect(find.byType(AppMenuButton), findsOneWidget);
-
-    await tester.tap(find.text('Sistema'));
-    expect(store.value, ThemeMode.system);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
-      ThemeMode.system,
-    );
+    final button = tester.widget<IconButton>(control);
+    final colors = Theme.of(tester.element(control)).colorScheme;
+    expect(button.style!.shape!.resolve({}), isA<CircleBorder>());
+    expect(button.style!.backgroundColor!.resolve({}), colors.inverseSurface);
+    expect(button.style!.foregroundColor!.resolve({}), colors.onInverseSurface);
   });
 
   testWidgets(
-    'reflects external changes and exposes the checked light option',
-    (WidgetTester tester) async {
-      final ThemeModeStore store = await storeForTest();
+    'cycles system light dark system with live theme and persistence',
+    (tester) async {
+      final store = await storeForTest();
       await _open(tester, store: store);
-
-      await store.setThemeMode(ThemeMode.dark);
-      await tester.pumpAndSettle();
-      expect(
-        find.descendant(
-          of: find.widgetWithText(RadioListTile<ThemeMode>, 'Oscuro'),
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is Semantics &&
-                widget.properties.checked == true &&
-                widget.properties.inMutuallyExclusiveGroup == true,
-          ),
-        ),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.text('Claro'));
-      expect(store.value, ThemeMode.light);
-      await tester.pumpAndSettle();
-      expect(
-        find.descendant(
-          of: find.widgetWithText(RadioListTile<ThemeMode>, 'Claro'),
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is Semantics &&
-                widget.properties.checked == true &&
-                widget.properties.inMutuallyExclusiveGroup == true,
-          ),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        Theme.of(tester.element(find.text('Claro'))).brightness,
-        Brightness.light,
-      );
+      for (final (mode, label, icon, brightness) in [
+        (ThemeMode.light, 'Claro', Icons.light_mode, Brightness.light),
+        (ThemeMode.dark, 'Oscuro', Icons.dark_mode, Brightness.dark),
+        (ThemeMode.system, 'Sistema', Icons.brightness_auto, Brightness.light),
+      ]) {
+        await tester.tap(find.byType(ThemeModeSwitch));
+        expect(store.value, mode);
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('Tema: $label'), findsOneWidget);
+        expect(find.byIcon(icon), findsOneWidget);
+        expect(
+          Theme.of(tester.element(find.byType(ThemeModeSwitch))).brightness,
+          brightness,
+        );
+        expect(
+          (await SharedPreferences.getInstance()).getString('lda.themeMode'),
+          mode.name,
+        );
+        expect(find.byType(AppMenuButton), findsOneWidget);
+      }
     },
   );
 
+  testWidgets('reflects external changes and cycles from restored light mode', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'lda.themeMode': 'light'});
+    final store = await storeForTest();
+    await _open(tester, store: store);
+    expect(find.byTooltip('Tema: Claro'), findsOneWidget);
+    await tester.tap(find.byType(ThemeModeSwitch));
+    await tester.pumpAndSettle();
+    expect(store.value, ThemeMode.dark);
+    expect(find.byTooltip('Tema: Oscuro'), findsOneWidget);
+    await store.setThemeMode(ThemeMode.system);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Tema: Sistema'), findsOneWidget);
+    await tester.tap(find.byType(ThemeModeSwitch));
+    await tester.pumpAndSettle();
+    expect(store.value, ThemeMode.light);
+    expect(find.byTooltip('Tema: Claro'), findsOneWidget);
+  });
+
   testWidgets('without a host hides selector but preserves entries and info', (
-    WidgetTester tester,
+    tester,
   ) async {
     await _open(tester);
-
-    for (final String label in <String>['Sistema', 'Claro', 'Oscuro']) {
+    expect(
+      find.descendant(
+        of: find.byType(ThemeModeSwitch),
+        matching: find.byType(IconButton),
+      ),
+      findsNothing,
+    );
+    for (final label in ['Sistema', 'Claro', 'Oscuro']) {
       expect(find.text(label), findsNothing);
+      expect(find.byTooltip('Tema: $label'), findsNothing);
     }
     expect(find.text('Actualizar catálogo'), findsOneWidget);
     expect(find.text(appName), findsOneWidget);
