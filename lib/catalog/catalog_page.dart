@@ -9,6 +9,7 @@ import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_transition.dart';
 import '../app/smooth_scroll.dart';
+import '../app/theme_mode_switch.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -1111,6 +1112,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             // none.
             AppMenuButton(
               key: const ValueKey<String>('shell-more'),
+              settings: (BuildContext context) => const ThemeModeSwitch(),
               // A wide web/desktop bar keeps its own notices icon and badge,
               // so the menu icon carries the badge only where the notices
               // entry lives in the panel alone.
