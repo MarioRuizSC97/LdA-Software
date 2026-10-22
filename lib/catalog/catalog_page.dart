@@ -1611,7 +1611,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                                 : 'Crear',
                           ),
                   ),
-                  OutlinedButton(
+                  FilledButton.tonal(
                     onPressed: _creationPending ? null : _closeCreation,
                     child: const Text('Cerrar'),
                   ),

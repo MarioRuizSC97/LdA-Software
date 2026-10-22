@@ -273,7 +273,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
           children: <Widget>[
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: FilledButton.tonalIcon(
                 key: const ValueKey<String>('corrections-close'),
                 onPressed: widget.onClose,
                 icon: const Icon(Icons.arrow_back),
@@ -499,14 +499,32 @@ class _RecentSaleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-    child: ListTile(
-      onTap: onTap,
-      title: Text(sale.folio ?? 'Venta sin folio'),
-      subtitle: Text(
-        '${formatSaleDateTime(sale.createdAt.toLocal())} · '
-        '${salePaymentLabel(sale.paymentMethod)}',
-      ),
-      trailing: Text(formatMoney(sale.totalCentavos)),
+    child: LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool stacked =
+            constraints.maxWidth <
+            480 * MediaQuery.textScalerOf(context).scale(1);
+        final Widget total = Text(
+          formatMoney(sale.totalCentavos),
+          style: Theme.of(context).textTheme.titleLarge
+              ?.copyWith(fontWeight: FontWeight.w700),
+        );
+        return ListTile(
+          onTap: onTap,
+          title: Text(sale.folio ?? 'Venta sin folio'),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '${formatSaleDateTime(sale.createdAt.toLocal())} · '
+                '${salePaymentLabel(sale.paymentMethod)}',
+              ),
+              if (stacked) total,
+            ],
+          ),
+          trailing: stacked ? null : total,
+        );
+      },
     ),
   );
 }

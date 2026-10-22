@@ -527,7 +527,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
               if (_rows.length >= transferLineLimit)
                 _notice(_tooManyLinesText, 'transfer-max-lines'),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
+              FilledButton.tonalIcon(
                 key: const ValueKey<String>('transfer-add-line'),
                 onPressed:
                     _canStartNew &&
@@ -603,7 +603,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
                                 : 'Registrar traslado',
                           ),
                   ),
-                  OutlinedButton(
+                  FilledButton.tonal(
                     key: const ValueKey<String>('transfer-close'),
                     onPressed: _pending || _dialogOpen ? null : widget.onClose,
                     child: const Text('Cerrar'),
@@ -677,8 +677,13 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     }
     final QuantitySpec? spec = row.spec;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
