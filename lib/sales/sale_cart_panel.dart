@@ -365,7 +365,10 @@ class SaleLineStepper extends StatelessWidget {
     // FittedBox is a final guard (it supports dry layout, unlike a
     // LayoutBuilder inside the IntrinsicHeight grid) and scales down only
     // when nothing else fits, e.g. extreme text scales.
-    final bool compact = MediaQuery.sizeOf(context).width < 600;
+    // Only product cards need the compact fallback. Cart lines have the full
+    // panel width and must retain full-sized quantity targets on mobile too.
+    final bool compact =
+        actionSize != null && MediaQuery.sizeOf(context).width < 600;
     final BoxConstraints? iconConstraints = compact
         ? const BoxConstraints(minWidth: 36, minHeight: 36)
         : null;
@@ -590,7 +593,8 @@ class SaleCartButton extends StatelessWidget {
         // summed quantity (S24): one product added twice reads 2, and it does
         // so even when the quantity equals the line count. Mixed units never
         // add up, so those carts keep counting product lines.
-        final String amount = _summedUniformQuantity(cart) ??
+        final String amount =
+            _summedUniformQuantity(cart) ??
             '$count ${count == 1 ? 'producto' : 'productos'}';
         label = 'Carrito · $amount · ${_totalLabel(controller)}';
       }
@@ -685,7 +689,8 @@ class SaleCartPanel extends StatelessWidget {
         final ThemeData theme = Theme.of(context);
         final SaleCart cart = controller.cart;
         final bool canEdit = controller.canEdit;
-        return Center(
+        return Align(
+          alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
             child: SingleChildScrollView(
@@ -705,7 +710,7 @@ class SaleCartPanel extends StatelessWidget {
                           style: theme.textTheme.headlineSmall,
                         ),
                       ),
-                      TextButton.icon(
+                      FilledButton.tonalIcon(
                         key: const ValueKey<String>('sale-close-cart'),
                         onPressed: controller.isSubmitting ? null : onClose,
                         icon: const Icon(Icons.arrow_back),
@@ -757,6 +762,9 @@ class SaleCartPanel extends StatelessWidget {
                       for (final SalePaymentMethod method
                           in SalePaymentMethod.values)
                         ChoiceChip(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
                           key: ValueKey<String>(
                             'sale-payment-${method.wireValue}',
                           ),
