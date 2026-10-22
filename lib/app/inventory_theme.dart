@@ -19,3 +19,28 @@ ThemeData buildInventoryTheme() {
     ),
   );
 }
+
+/// Dark sibling: all default Material controls derive their contrast and tonal
+/// colors from the same blue-seeded scheme, without changing the light theme.
+ThemeData buildDarkInventoryTheme() {
+  final ColorScheme scheme = ColorScheme.fromSeed(
+    seedColor: Colors.blue,
+    brightness: Brightness.dark,
+  );
+  return ThemeData(
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scheme.surface,
+    cardTheme: CardThemeData(
+      color: scheme.surfaceContainerLow,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.all(Radius.circular(12)),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: scheme.surfaceContainerHighest,
+    ),
+  );
+}

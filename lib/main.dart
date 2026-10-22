@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app/backend_environment.dart';
 import 'app/inventory_theme.dart';
+import 'app/inventory_theme_host.dart';
 import 'auth/emulator_login.dart';
 import 'auth/emulator_session.dart';
 import 'catalog/catalog_load_diagnostics.dart';
@@ -213,23 +214,27 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'LDA Inventory',
-    theme: _theme(),
-    home: EmulatorLoginShell(
-      environment: widget.environment,
-      sessionGateway: _gateway,
-      retryLoader: _retry,
-      catalogLoader: widget.catalogLoader,
-      productCreationGatewayLoader: widget.productCreationGatewayLoader,
-      productPricingGatewayLoader: widget.productPricingGatewayLoader,
-      productRenameGatewayLoader: widget.productRenameGatewayLoader,
-      stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
-      saleGatewayLoader: widget.saleGatewayLoader,
-      correctionGatewayLoader: widget.correctionGatewayLoader,
-      administratorMovementsLoader: widget.administratorMovementsLoader,
-      transferGatewayLoader: widget.transferGatewayLoader,
-      transferNoticeBackendLoader: widget.transferNoticeBackendLoader,
+  Widget build(BuildContext context) => InventoryThemeHost(
+    builder: (context, mode) => MaterialApp(
+      title: 'LDA Inventory',
+      theme: _theme(),
+      darkTheme: buildDarkInventoryTheme(),
+      themeMode: mode,
+      home: EmulatorLoginShell(
+        environment: widget.environment,
+        sessionGateway: _gateway,
+        retryLoader: _retry,
+        catalogLoader: widget.catalogLoader,
+        productCreationGatewayLoader: widget.productCreationGatewayLoader,
+        productPricingGatewayLoader: widget.productPricingGatewayLoader,
+        productRenameGatewayLoader: widget.productRenameGatewayLoader,
+        stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
+        saleGatewayLoader: widget.saleGatewayLoader,
+        correctionGatewayLoader: widget.correctionGatewayLoader,
+        administratorMovementsLoader: widget.administratorMovementsLoader,
+        transferGatewayLoader: widget.transferGatewayLoader,
+        transferNoticeBackendLoader: widget.transferNoticeBackendLoader,
+      ),
     ),
   );
 }
@@ -262,13 +267,17 @@ class LdaInventoryApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'LDA Inventory',
-      theme: _theme(),
-      home: CatalogPage(
-        repository: catalogRepository,
-        statusLabel: statusLabel,
-        qrScan: productQrScanSupported ? showProductQrScanner : null,
+    return InventoryThemeHost(
+      builder: (context, mode) => MaterialApp(
+        title: 'LDA Inventory',
+        theme: _theme(),
+        darkTheme: buildDarkInventoryTheme(),
+        themeMode: mode,
+        home: CatalogPage(
+          repository: catalogRepository,
+          statusLabel: statusLabel,
+          qrScan: productQrScanSupported ? showProductQrScanner : null,
+        ),
       ),
     );
   }
@@ -279,36 +288,40 @@ class CatalogSetupApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'LDA Inventory',
-      theme: _theme(),
-      home: Scaffold(
-        appBar: AppBar(title: const Text('LDA Inventory')),
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const Icon(Icons.cloud_off_outlined, size: 56),
-                  const SizedBox(height: 16),
-                  Semantics(
-                    header: true,
-                    child: Text(
-                      'Catálogo sin conexión',
-                      style: Theme.of(context).textTheme.headlineSmall,
+    return InventoryThemeHost(
+      builder: (context, mode) => MaterialApp(
+        title: 'LDA Inventory',
+        theme: _theme(),
+        darkTheme: buildDarkInventoryTheme(),
+        themeMode: mode,
+        home: Scaffold(
+          appBar: AppBar(title: const Text('LDA Inventory')),
+          body: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.cloud_off_outlined, size: 56),
+                    const SizedBox(height: 16),
+                    Semantics(
+                      header: true,
+                      child: Text(
+                        'Catálogo sin conexión',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No hay datos de productos cargados. No se ha configurado '
+                      'el acceso autenticado al emulador.',
                       textAlign: TextAlign.center,
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'No hay datos de productos cargados. No se ha configurado '
-                    'el acceso autenticado al emulador.',
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
