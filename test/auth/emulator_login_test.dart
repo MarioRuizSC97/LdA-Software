@@ -1777,6 +1777,11 @@ void main() {
       findsOneWidget,
     );
     gateway.loginCompleter = Completer<EmulatorSession>();
+    // Failure feedback can push the retry button below a short viewport.
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Iniciar sesión'),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
     expect(
