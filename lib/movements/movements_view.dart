@@ -165,6 +165,15 @@ class _MovementsViewState extends State<MovementsView> {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final InputBorder themedBorder =
+        theme.inputDecorationTheme.border ?? const UnderlineInputBorder();
+    final InputBorder filterBorder = themedBorder.copyWith(
+      borderSide: switch (theme.cardTheme.shape) {
+        final OutlinedBorder shape => shape.side,
+        _ => BorderSide.none,
+      },
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -188,12 +197,31 @@ class _MovementsViewState extends State<MovementsView> {
                 label: 'Filtrar por sucursal',
                 child: IntrinsicWidth(
                   child: InputDecorator(
-                    decoration: const InputDecoration(isDense: true)
-                        .applyDefaults(Theme.of(context).inputDecorationTheme),
+                    // A filter belongs to the ledger surface, not the form's
+                    // accent-focused state. Keep the theme's pill geometry.
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: theme.cardTheme.color != null,
+                      fillColor:
+                          theme.cardTheme.color ??
+                          theme.colorScheme.surfaceContainerLow,
+                      hoverColor: Colors.transparent,
+                      border: filterBorder,
+                      enabledBorder: filterBorder,
+                      focusedBorder: filterBorder,
+                    ).applyDefaults(theme.inputDecorationTheme),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String?>(
                         key: const ValueKey<String>('movements-branch-filter'),
                         value: _branchId,
+                        // DropdownButton otherwise paints a rectangular focus
+                        // tint inside the pill while its menu is open.
+                        focusColor: Colors.transparent,
+                        borderRadius: switch (filterBorder) {
+                          final OutlineInputBorder border =>
+                            border.borderRadius,
+                          _ => null,
+                        },
                         onChanged: _selectBranch,
                         items: <DropdownMenuItem<String?>>[
                           const DropdownMenuItem<String?>(child: Text('Todas')),
