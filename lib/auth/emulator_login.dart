@@ -3,8 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app/backend_environment.dart';
-import '../app/inventory_theme_host.dart';
-import '../app/theme_mode_store.dart';
+import '../app/theme_mode_switch.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
@@ -1454,76 +1453,72 @@ class _LoginViewState extends State<_LoginView> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('LDA Inventory')),
-    body: Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Text(
-                widget.environment.loginTitle,
-                style: Theme.of(context).textTheme.headlineSmall,
-                textAlign: TextAlign.center,
-              ),
-              if (widget.environment.loginNote case final String note) ...[
-                const SizedBox(height: 12),
-                Text(note, textAlign: TextAlign.center),
-              ],
-              if (ThemeModeScope.maybeOf(context) case final ThemeModeStore store) ...[
-                const SizedBox(height: 20),
-                SegmentedButton<ThemeMode>(
-                  segments: const <ButtonSegment<ThemeMode>>[
-                    ButtonSegment(value: ThemeMode.system, label: Text('Sistema')),
-                    ButtonSegment(value: ThemeMode.light, label: Text('Claro')),
-                    ButtonSegment(value: ThemeMode.dark, label: Text('Oscuro')),
+    body: Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    widget.environment.loginTitle,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  if (widget.environment.loginNote case final String note) ...[
+                    const SizedBox(height: 12),
+                    Text(note, textAlign: TextAlign.center),
                   ],
-                  selected: <ThemeMode>{store.value},
-                  onSelectionChanged: (selection) {
-                    unawaited(store.setThemeMode(selection.single));
-                  },
-                ),
-              ],
-              const SizedBox(height: 24),
-              TextFormField(
-                key: const ValueKey<String>('login-email'),
-                controller: _email,
-                enabled: !_submitting,
-                keyboardType: TextInputType.emailAddress,
-                autofillHints: const <String>[AutofillHints.username],
-                decoration: const InputDecoration(
-                  labelText: 'Correo electrónico',
-                ),
+                  const SizedBox(height: 24),
+                  TextFormField(
+                    key: const ValueKey<String>('login-email'),
+                    controller: _email,
+                    enabled: !_submitting,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const <String>[AutofillHints.username],
+                    decoration: const InputDecoration(
+                      labelText: 'Correo electrónico',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey<String>('login-password'),
+                    controller: _password,
+                    enabled: !_submitting,
+                    obscureText: true,
+                    autofillHints: const <String>[AutofillHints.password],
+                    decoration: const InputDecoration(labelText: 'Contraseña'),
+                    onFieldSubmitted: (_) => _submitting ? null : _submit(),
+                  ),
+                  if (_error case final String error) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Semantics(liveRegion: true, child: Text(error)),
+                  ],
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: _submitting ? null : _submit,
+                    child: _submitting
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Iniciar sesión'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                key: const ValueKey<String>('login-password'),
-                controller: _password,
-                enabled: !_submitting,
-                obscureText: true,
-                autofillHints: const <String>[AutofillHints.password],
-                decoration: const InputDecoration(labelText: 'Contraseña'),
-                onFieldSubmitted: (_) => _submitting ? null : _submit(),
-              ),
-              if (_error case final String error) ...<Widget>[
-                const SizedBox(height: 12),
-                Semantics(liveRegion: true, child: Text(error)),
-              ],
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: _submitting ? null : _submit,
-                child: _submitting
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Iniciar sesión'),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+        const Positioned(
+          right: 16,
+          bottom: 16,
+          child: SafeArea(child: ThemeModeSwitch()),
+        ),
+      ],
     ),
   );
 }
