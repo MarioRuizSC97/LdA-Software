@@ -587,6 +587,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         for (final CatalogItem item in source?.items ?? const <CatalogItem>[])
           item.product,
       ],
+      holdingsByProduct: source == null
+          ? null
+          : <String, List<CatalogHolding>>{
+              for (final CatalogItem item in source.items)
+                item.product.internalCode: item.holdings,
+            },
       submitTransfer: (TransferDraft draft) async {
         setState(() => _transferPending = true);
         try {

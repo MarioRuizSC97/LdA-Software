@@ -31,13 +31,17 @@ Future<void> _pump(
   Size size, {
   TransferDraft? unresolved,
   bool disableAnimations = false,
+  Map<String, List<CatalogHolding>>? holdingsByProduct,
+  double textScale = 1,
 }) async {
   useViewport(tester, size);
   await tester.pumpWidget(
     MaterialApp(
       builder: (BuildContext context, Widget? child) => MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(disableAnimations: disableAnimations),
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: disableAnimations,
+          textScaler: TextScaler.linear(textScale),
+        ),
         child: child!,
       ),
       home: Scaffold(
@@ -45,6 +49,7 @@ Future<void> _pump(
           ownerUserId: 'admin-1',
           branches: _branches,
           products: _products,
+          holdingsByProduct: holdingsByProduct,
           submitTransfer: (_) => throw UnimplementedError(),
           unresolvedDraft: () => unresolved,
           onClose: () {},
@@ -92,7 +97,109 @@ Future<void> _fillLine(
   await tester.pump();
 }
 
+const Map<String, List<CatalogHolding>> _holdings =
+    <String, List<CatalogHolding>>{
+      'PRD-COFFEE-001': <CatalogHolding>[
+        CatalogHolding(branchId: 'branch-north', quantityScaled: 1234),
+        CatalogHolding(branchId: 'branch-south', quantityScaled: 567),
+      ],
+      'DEMO-RIBBON-01': <CatalogHolding>[
+        CatalogHolding(branchId: 'branch-north', quantityScaled: 8),
+        CatalogHolding(branchId: 'branch-south', quantityScaled: 0),
+      ],
+    };
+
 void main() {
+  testWidgets('source stock follows branches and selected rows', (
+    tester,
+  ) async {
+    await _pump(tester, const Size(1200, 800), holdingsByProduct: _holdings);
+    await _fillLine(tester, 0, 'Café', '');
+    expect(find.text('Existencias en origen'), findsNothing);
+    await _pick(tester, _key('transfer-source'), 'Norte');
+    expect(find.text('Existencias en origen'), findsOneWidget);
+    expect(find.text('Café: 12.34 kg'), findsOneWidget);
+    await _pick(tester, _key('transfer-source'), 'Sur');
+    expect(find.text('Café: 5.67 kg'), findsOneWidget);
+    expect(find.text('Café: 12.34 kg'), findsNothing);
+    await tester.ensureVisible(_key('transfer-add-line'));
+    await tester.tap(_key('transfer-add-line'));
+    await tester.pumpAndSettle();
+    await _fillLine(tester, 1, 'Cinta', '');
+    expect(find.text('Cinta: 0 piece'), findsOneWidget);
+    await _pick(tester, _key('transfer-source'), 'Norte');
+    expect(find.text('Cinta: 8 piece'), findsOneWidget);
+    await tester.ensureVisible(_key('transfer-remove-1'));
+    await tester.tap(_key('transfer-remove-1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Café: 12.34 kg'), findsNothing);
+    expect(find.text('Cinta: 8 piece'), findsOneWidget);
+    await _fillLine(tester, 0, 'Café', '');
+    expect(find.text('Cinta: 8 piece'), findsNothing);
+    expect(find.text('Café: 12.34 kg'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('missing holding is not represented as zero', (tester) async {
+    await _pump(
+      tester,
+      const Size(1200, 800),
+      holdingsByProduct: const <String, List<CatalogHolding>>{},
+    );
+    await _pick(tester, _key('transfer-source'), 'Norte');
+    expect(find.text('Existencias en origen'), findsNothing);
+    await _fillLine(tester, 0, 'Café', '');
+    expect(find.text('Café: Sin entrada registrada'), findsOneWidget);
+    expect(find.text('Café: 0.00 kg'), findsNothing);
+  });
+
+  testWidgets('without holdings the stock note stays absent', (tester) async {
+    await _pump(tester, const Size(1200, 800));
+    await _pick(tester, _key('transfer-source'), 'Norte');
+    await _fillLine(tester, 0, 'Café', '');
+    expect(find.text('Existencias en origen'), findsNothing);
+    expect(find.textContaining('Sin entrada registrada'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final double width in <double>[400, 601, 1200]) {
+    testWidgets('stock note has no overflow at $width and text scale 2', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        Size(width, 800),
+        holdingsByProduct: _holdings,
+        textScale: 2,
+        unresolved: TransferDraft(
+          idempotencyKey: 'stock-layout',
+          sourceBranchId: 'branch-north',
+          destinationBranchId: 'branch-south',
+          lines: const <TransferLine>[
+            TransferLine(
+              productId: 'PRD-COFFEE-001',
+              quantity: '1',
+              quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+            ),
+            TransferLine(
+              productId: 'DEMO-RIBBON-01',
+              quantity: '2',
+              quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+            ),
+          ],
+        ),
+      );
+      expect(
+        find.text('Existencias en origen'),
+        width < 600 ? findsNothing : findsOneWidget,
+      );
+      if (width >= 600) {
+        expect(find.text('Café: 12.34 kg'), findsOneWidget);
+        expect(find.text('Cinta: 8 piece'), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
   testWidgets(
     'wide: duplicate product rows sum without merging other products of the same unit',
     (WidgetTester tester) async {
