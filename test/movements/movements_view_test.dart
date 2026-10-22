@@ -339,6 +339,9 @@ void main() {
     await tester.pumpWidget(_view(backend));
     await tester.pump();
     await tester.tap(_key('movements-branch-filter'));
+    // Lay out the popup route before advancing its entrance animation. The
+    // pending load animates indefinitely, so pumpAndSettle cannot be used yet.
+    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     await tester.tap(find.text('Norte').last);
     await tester.pumpAndSettle();
