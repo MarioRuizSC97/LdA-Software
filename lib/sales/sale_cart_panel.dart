@@ -82,6 +82,13 @@ class _SaleAddControlState extends State<SaleAddControl> {
       // The state decides which control shows; the swap below animates the
       // change without ever animating a quantity entry (S6).
       final Widget control;
+      // Reserve the same painted footprint for both card actions. Grow with
+      // text scaling so the tonal label can wrap without clipping; narrow
+      // cards still constrain the width and the stepper scales down to fit.
+      final Size actionSize = Size(
+        176,
+        MediaQuery.textScalerOf(context).scale(48).clamp(48, double.infinity),
+      );
       if (editing) {
         control = SaleQuantityEntry(
           controller: controller,
@@ -94,6 +101,7 @@ class _SaleAddControlState extends State<SaleAddControl> {
           controller: controller,
           line: line,
           previousQuantityScaled: previousQuantity,
+          actionSize: actionSize,
         );
       } else {
         // 'Agregar' adds one product unit and shows the stepper at once
@@ -106,6 +114,7 @@ class _SaleAddControlState extends State<SaleAddControl> {
         );
         control = FilledButton.tonalIcon(
           key: ValueKey<String>('sale-add-$productId'),
+          style: FilledButton.styleFrom(fixedSize: actionSize),
           onPressed: controller.canEdit && inStock
               ? () => controller.saveEntry(
                   productId: productId,
@@ -312,11 +321,15 @@ class SaleLineStepper extends StatelessWidget {
     required this.controller,
     required this.line,
     this.previousQuantityScaled,
+    this.actionSize,
     super.key,
   });
 
   final SaleCartController controller;
   final SaleCartLine line;
+
+  /// Shared card-action footprint; cart lines retain their natural sizing.
+  final Size? actionSize;
 
   /// Last displayed quantity, retained by the host while an entry is open.
   final int? previousQuantityScaled;
@@ -442,7 +455,10 @@ class SaleLineStepper extends StatelessWidget {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
-        pill,
+        if (actionSize != null)
+          SizedBox.fromSize(size: actionSize, child: pill)
+        else
+          pill,
         // Keep direct removal available for multi-unit lines too.
         if (!removeOnDecrease)
           IconButton(
