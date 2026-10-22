@@ -41,7 +41,7 @@ String? _summedUniformQuantity(SaleCart cart) {
 /// being added or edited. Once the product is in the cart the card shows the
 /// same stepper as the cart line (S11), bound to the same controller so card
 /// and cart stay in sync.
-class SaleAddControl extends StatelessWidget {
+class SaleAddControl extends StatefulWidget {
   const SaleAddControl({
     required this.controller,
     required this.product,
@@ -52,12 +52,33 @@ class SaleAddControl extends StatelessWidget {
   final CatalogProduct product;
 
   @override
+  State<SaleAddControl> createState() => _SaleAddControlState();
+}
+
+class _SaleAddControlState extends State<SaleAddControl> {
+  int? _previousQuantity;
+
+  SaleCartController get controller => widget.controller;
+  CatalogProduct get product => widget.product;
+
+  @override
+  void didUpdateWidget(SaleAddControl oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != controller ||
+        oldWidget.product.internalCode != product.internalCode) {
+      _previousQuantity = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
     builder: (BuildContext context, _) {
       final String productId = product.internalCode;
       final bool editing = controller.editingProductId == productId;
       final SaleCartLine? line = controller.lineFor(productId);
+      final int? previousQuantity = _previousQuantity;
+      if (!editing) _previousQuantity = line?.quantityScaled;
       // The state decides which control shows; the swap below animates the
       // change without ever animating a quantity entry (S6).
       final Widget control;
@@ -69,7 +90,11 @@ class SaleAddControl extends StatelessWidget {
           quantitySpec: product.quantitySpec,
         );
       } else if (line != null) {
-        control = SaleLineStepper(controller: controller, line: line);
+        control = SaleLineStepper(
+          controller: controller,
+          line: line,
+          previousQuantityScaled: previousQuantity,
+        );
       } else {
         // 'Agregar' adds one product unit and shows the stepper at once
         // (S13); a larger quantity is typed by tapping the stepper's
@@ -115,10 +140,11 @@ class SaleAddControl extends StatelessWidget {
   );
 }
 
-/// Presentation-only cross-fade between sale control states (T9/S6):
-/// 'Agregar' ↔ stepper ↔ quantity entry. It never animates a widget's first
-/// appearance (no motion on initial load), and it is skipped entirely when
-/// the system reports reduced motion. Outgoing controls stop receiving
+/// Presentation-only slide/fade entrance between sale control states:
+/// 'Agregar' ↔ stepper ↔ quantity entry, and directional quantity changes.
+/// No motion on initial load; only a changed entry commit animates a newly
+/// mounted number. System reduced motion skips every animation.
+/// Outgoing controls stop receiving
 /// pointers during the fade, so a fast second tap can never act on a stale
 /// button or duplicate an action.
 class _ControlSwap extends StatefulWidget {
@@ -126,10 +152,14 @@ class _ControlSwap extends StatefulWidget {
     required this.stateKey,
     required this.child,
     this.enabled = true,
+    this.value,
+    this.previousValue,
   });
 
   final Key stateKey;
   final Widget child;
+  final int? value;
+  final int? previousValue;
 
   /// Set to false to force an instant swap (quantity entry involvement).
   final bool enabled;
@@ -138,8 +168,56 @@ class _ControlSwap extends StatefulWidget {
   State<_ControlSwap> createState() => _ControlSwapState();
 }
 
-class _ControlSwapState extends State<_ControlSwap> {
+class _ControlSwapState extends State<_ControlSwap>
+    with SingleTickerProviderStateMixin {
   static const Duration _fadeDuration = Duration(milliseconds: 150);
+  late final AnimationController _initialEntrance = AnimationController(
+    vsync: this,
+    value: 1,
+  );
+  Animation<double>? _firstAnimation;
+  late double _direction =
+      widget.value != null &&
+          widget.previousValue != null &&
+          widget.value! < widget.previousValue!
+      ? -1
+      : 1;
+  bool _initialized = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool reducedMotion = MediaQuery.disableAnimationsOf(context);
+    _initialEntrance.duration = reducedMotion ? Duration.zero : _fadeDuration;
+    if (!_initialized) {
+      _initialized = true;
+      // An entry replaces the stepper, so its newly mounted number needs
+      // its own entrance only when the committed quantity actually changed.
+      if (widget.value != null &&
+          widget.previousValue != null &&
+          widget.value != widget.previousValue &&
+          !reducedMotion) {
+        _initialEntrance.forward(from: 0);
+      }
+    }
+    if (reducedMotion) _initialEntrance.value = 1;
+  }
+
+  @override
+  void didUpdateWidget(_ControlSwap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != null &&
+        oldWidget.value != null &&
+        widget.value != oldWidget.value) {
+      _direction = widget.value! > oldWidget.value! ? 1 : -1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _initialEntrance.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -151,19 +229,39 @@ class _ControlSwapState extends State<_ControlSwap> {
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       transitionBuilder: (Widget child, Animation<double> animation) {
+        final double direction = _direction;
+        _firstAnimation ??= animation;
+        final Animation<double> entrance = identical(animation, _firstAnimation)
+            ? _initialEntrance.drive(CurveTween(curve: Curves.easeOut))
+            : animation;
         // Reverse means the child is the outgoing control: silence it for
         // pointers, focus and assistive technology while it fades.
         return AnimatedBuilder(
-          animation: animation,
+          animation: Listenable.merge(<Listenable>[animation, entrance]),
           builder: (BuildContext context, Widget? built) {
             final bool outgoing = animation.status == AnimationStatus.reverse;
+            final Animation<double> opacity = outgoing ? animation : entrance;
+            // Controls settle upwards; numbers settle upwards on increase
+            // and downwards on decrease. Outgoing children only fade away.
+            final Animation<Offset> position = outgoing || reducedMotion
+                ? const AlwaysStoppedAnimation<Offset>(Offset.zero)
+                : Tween<Offset>(
+                    begin: Offset(
+                      0,
+                      direction * (widget.value == null ? .2 : .5),
+                    ),
+                    end: Offset.zero,
+                  ).animate(entrance);
             return IgnorePointer(
               ignoring: outgoing,
               child: ExcludeFocus(
                 excluding: outgoing,
                 child: ExcludeSemantics(
                   excluding: outgoing,
-                  child: FadeTransition(opacity: animation, child: built),
+                  child: FadeTransition(
+                    opacity: opacity,
+                    child: SlideTransition(position: position, child: built),
+                  ),
                 ),
               ),
             );
@@ -213,11 +311,15 @@ class SaleLineStepper extends StatelessWidget {
   const SaleLineStepper({
     required this.controller,
     required this.line,
+    this.previousQuantityScaled,
     super.key,
   });
 
   final SaleCartController controller;
   final SaleCartLine line;
+
+  /// Last displayed quantity, retained by the host while an entry is open.
+  final int? previousQuantityScaled;
 
   void _step(int scaled) {
     controller.saveEntry(
@@ -304,6 +406,8 @@ class SaleLineStepper extends StatelessWidget {
                     ? () => controller.startEntry(line.productId)
                     : null,
                 child: _ControlSwap(
+                  value: line.quantityScaled,
+                  previousValue: previousQuantityScaled,
                   stateKey: ValueKey<String>(
                     'sale-quantity-value-${line.productId}-${line.quantity}',
                   ),
@@ -610,14 +714,30 @@ class SaleCartPanel extends StatelessWidget {
   );
 }
 
-class _SaleLineTile extends StatelessWidget {
+class _SaleLineTile extends StatefulWidget {
   const _SaleLineTile({required this.controller, required this.line});
 
   final SaleCartController controller;
   final SaleCartLine line;
 
   @override
+  State<_SaleLineTile> createState() => _SaleLineTileState();
+}
+
+class _SaleLineTileState extends State<_SaleLineTile> {
+  int? _previousQuantity;
+  String? _previousProductId;
+  SaleCartController get controller => widget.controller;
+  SaleCartLine get line => widget.line;
+
+  @override
   Widget build(BuildContext context) {
+    if (_previousProductId != line.productId) _previousQuantity = null;
+    _previousProductId = line.productId;
+    final int? previousQuantity = _previousQuantity;
+    if (controller.editingProductId != line.productId) {
+      _previousQuantity = line.quantityScaled;
+    }
     final ThemeData theme = Theme.of(context);
     final SalePricedLine? priced = controller.pricedLine(line.productId);
     final String quantity =
@@ -666,7 +786,11 @@ class _SaleLineTile extends StatelessWidget {
                 quantitySpec: line.quantitySpec,
               )
             else
-              SaleLineStepper(controller: controller, line: line),
+              SaleLineStepper(
+                controller: controller,
+                line: line,
+                previousQuantityScaled: previousQuantity,
+              ),
           ],
         ),
       ),
