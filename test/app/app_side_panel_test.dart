@@ -197,10 +197,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(
-        of: info,
-        matching: find.text('Versión $appVersion ($appBuild)'),
-      ),
+      find.descendant(of: info, matching: find.text('v1.0.0')),
       findsOneWidget,
     );
     final Rect panel = tester.getRect(_key('app-side-panel'));
@@ -223,7 +220,9 @@ void main() {
     expect(_iconProgress(tester), 1);
   });
 
-  test('the displayed version matches pubspec.yaml', () {
+  testWidgets('the short displayed version matches pubspec.yaml', (
+    tester,
+  ) async {
     final String pubspec = File('pubspec.yaml').readAsStringSync();
     final RegExpMatch? match = RegExp(
       r'^version:\s*([^+\s]+)\+(\S+)',
@@ -232,5 +231,11 @@ void main() {
     expect(match, isNotNull);
     expect(appVersion, match!.group(1));
     expect(appBuild, match.group(2));
+    await tester.pumpWidget(_host(entries: () => const <AppSidePanelEntry>[]));
+    await tester.tap(_key('shell-more'));
+    await tester.pumpAndSettle();
+    expect(find.text('v${match.group(1)}'), findsOneWidget);
+    expect(find.textContaining('Versión'), findsNothing);
+    expect(find.textContaining('(${match.group(2)})'), findsNothing);
   });
 }

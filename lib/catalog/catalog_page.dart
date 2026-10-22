@@ -1123,12 +1123,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       ),
                     // Reduced screens retain the full panel and its badge/semantics.
                     // Wide screens put the theme cycle in the menu's former slot.
-                    if (!menuActions) const ThemeModeSwitch(),
+                    if (!menuActions) const ThemeModeSwitch(compact: true),
                     if (menuActions)
                       AppMenuButton(
                         key: const ValueKey<String>('shell-more'),
                         settings: (BuildContext context) =>
-                            const ThemeModeSwitch(),
+                            const ThemeModeSwitch(showLabel: true),
                         // A wide web/desktop bar keeps its own notices icon and badge,
                         // so the menu icon carries the badge only where the notices
                         // entry lives in the panel alone.
@@ -3018,7 +3018,7 @@ class _ShellTitle extends StatelessWidget {
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
-                  'Versión $appVersion ($appBuild)',
+                  appVersionLabel,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),

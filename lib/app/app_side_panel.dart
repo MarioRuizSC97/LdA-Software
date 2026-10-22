@@ -249,11 +249,7 @@ class _SidePanelBody extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.end,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    if (settings != null) ...<Widget>[
-                      const Divider(height: 1),
-                      settings!(context),
-                    ],
-                    const Divider(height: 1),
+                    if (settings != null) settings!(context),
                     Padding(
                       key: const ValueKey<String>('app-side-panel-info'),
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
@@ -264,7 +260,7 @@ class _SidePanelBody extends StatelessWidget {
                           Text(appName, style: text.titleSmall),
                           const SizedBox(height: 2),
                           Text(
-                            'Versión $appVersion ($appBuild)',
+                            appVersionLabel,
                             style: text.bodySmall?.copyWith(
                               color: colors.onSurfaceVariant,
                             ),

@@ -7,6 +7,11 @@ import 'package:lda_inventory/app/theme_mode_store.dart';
 import 'package:lda_inventory/app/theme_mode_switch.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+Finder _themeButton() => find.descendant(
+  of: find.byType(ThemeModeSwitch),
+  matching: find.byType(IconButton),
+);
+
 Widget _host({ThemeModeStore? store}) {
   Widget app(ThemeMode mode) => MaterialApp(
     theme: ThemeData.light(),
@@ -23,7 +28,8 @@ Widget _host({ThemeModeStore? store}) {
                 onSelected: () {},
               ),
             ],
-            settings: (BuildContext context) => const ThemeModeSwitch(),
+            settings: (BuildContext context) =>
+                const ThemeModeSwitch(showLabel: true),
           ),
         ],
       ),
@@ -52,6 +58,31 @@ void main() {
     await store.loaded;
     return store;
   }
+
+  testWidgets('theme settings have live mode text left of circle and no bars', (
+    tester,
+  ) async {
+    final store = await storeForTest();
+    await _open(tester, store: store);
+    final label = find.text('Tema: Sistema');
+    expect(label, findsOneWidget);
+    expect(
+      tester.getRect(label).right,
+      lessThan(tester.getRect(find.byTooltip('Tema: Sistema')).left),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('app-side-panel')),
+        matching: find.byType(Divider),
+      ),
+      findsOneWidget,
+    );
+    for (final mode in ['Claro', 'Oscuro', 'Sistema']) {
+      await tester.tap(_themeButton());
+      await tester.pumpAndSettle();
+      expect(find.text('Tema: $mode'), findsOneWidget);
+    }
+  });
 
   testWidgets('host shows one circular theme button above app info', (
     tester,
@@ -90,7 +121,7 @@ void main() {
         (ThemeMode.dark, 'Oscuro', Icons.dark_mode, Brightness.dark),
         (ThemeMode.system, 'Sistema', Icons.brightness_auto, Brightness.light),
       ]) {
-        await tester.tap(find.byType(ThemeModeSwitch));
+        await tester.tap(_themeButton());
         expect(store.value, mode);
         await tester.pumpAndSettle();
         expect(find.byTooltip('Tema: $label'), findsOneWidget);
@@ -115,14 +146,14 @@ void main() {
     final store = await storeForTest();
     await _open(tester, store: store);
     expect(find.byTooltip('Tema: Claro'), findsOneWidget);
-    await tester.tap(find.byType(ThemeModeSwitch));
+    await tester.tap(find.byTooltip('Tema: Claro'));
     await tester.pumpAndSettle();
     expect(store.value, ThemeMode.dark);
     expect(find.byTooltip('Tema: Oscuro'), findsOneWidget);
     await store.setThemeMode(ThemeMode.system);
     await tester.pumpAndSettle();
     expect(find.byTooltip('Tema: Sistema'), findsOneWidget);
-    await tester.tap(find.byType(ThemeModeSwitch));
+    await tester.tap(find.byTooltip('Tema: Sistema'));
     await tester.pumpAndSettle();
     expect(store.value, ThemeMode.light);
     expect(find.byTooltip('Tema: Claro'), findsOneWidget);
@@ -145,7 +176,7 @@ void main() {
     }
     expect(find.text('Actualizar catálogo'), findsOneWidget);
     expect(find.text(appName), findsOneWidget);
-    expect(find.text('Versión $appVersion ($appBuild)'), findsOneWidget);
+    expect(find.text('v1.0.0'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

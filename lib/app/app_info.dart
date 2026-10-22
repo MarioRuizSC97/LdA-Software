@@ -5,3 +5,6 @@
 const String appName = 'LDA Inventory';
 const String appVersion = '1.0.0';
 const String appBuild = '1';
+
+/// Compact display form shared by the header and side-panel footer.
+const String appVersionLabel = 'v$appVersion';

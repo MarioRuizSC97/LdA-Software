@@ -8,6 +8,7 @@ import 'package:lda_inventory/app/theme_mode_store.dart';
 import 'package:lda_inventory/app/theme_mode_switch.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
+import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_repository.dart';
 import 'package:lda_inventory/corrections/correction_sale.dart';
@@ -67,6 +68,20 @@ TransferNoticeController _pendingNotices(EmulatorSession session) {
   );
   controller.start();
   return controller;
+}
+
+class _SignedOutGateway implements EmulatorSessionGateway {
+  @override
+  Future<EmulatorSession?> restoreSession() async => null;
+  @override
+  Stream<EmulatorSession?> sessionChanges() => const Stream.empty();
+  @override
+  Future<EmulatorSession> login({
+    required String email,
+    required String password,
+  }) => throw UnimplementedError();
+  @override
+  Future<void> logout() async {}
 }
 
 class _Shell {
@@ -235,7 +250,9 @@ void main() {
       expect(_inAppBar(find.byType(ThemeModeSwitch)), findsOneWidget);
       final title = tester.getRect(find.text('LDA Inventory'));
       final session = tester.getRect(_key('session-status'));
-      final version = tester.getRect(find.text('Versión 1.0.0 (1)'));
+      final version = tester.getRect(find.text('v1.0.0'));
+      expect(find.textContaining('Versión'), findsNothing);
+      expect(find.textContaining('(1)'), findsNothing);
       expect(title.top, lessThan(session.top));
       expect(session.right, lessThanOrEqualTo(version.left));
       expect(version.width, greaterThan(0));
@@ -290,11 +307,78 @@ void main() {
     await tester.pumpWidget(_Shell().seller());
     await tester.pumpAndSettle();
     expect(find.byType(AppMenuButton), findsOneWidget);
-    expect(find.text('Versión 1.0.0 (1)'), findsNothing);
+    expect(find.text('v1.0.0'), findsNothing);
     await _openMore(tester);
-    expect(find.text('Versión 1.0.0 (1)'), findsOneWidget);
+    expect(find.text('v1.0.0'), findsOneWidget);
+    expect(find.textContaining('Versión'), findsNothing);
+    expect(find.textContaining('(1)'), findsNothing);
     expect(find.text('Correcciones'), findsOneWidget);
     expect(find.text('Cerrar sesión'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('header circle is smaller than the login and panel circles', (
+    WidgetTester tester,
+  ) async {
+    useViewport(tester, const Size(1000, 800));
+    SharedPreferences.setMockInitialValues({});
+    final store = ThemeModeStore();
+    await store.loaded;
+    addTearDown(store.dispose);
+    Widget host(Widget child) =>
+        InventoryThemeHost(store: store, builder: (_, mode) => child);
+    Size circleSize() => tester.getSize(
+      find.descendant(
+        of: find.byType(ThemeModeSwitch),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Material && widget.shape is CircleBorder,
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      host(
+        MaterialApp(
+          home: EmulatorLoginShell(
+            sessionGateway: Future.value(_SignedOutGateway()),
+            catalogLoader: (_) async => throw UnimplementedError(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final defaultSize = circleSize();
+    expect(defaultSize, const Size(48, 48));
+    await tester.pumpWidget(host(_Shell().seller()));
+    await tester.pumpAndSettle();
+    final headerSize = circleSize();
+    expect(headerSize.width, lessThan(defaultSize.width));
+    expect(headerSize.height, headerSize.width);
+    final semantics = tester.ensureSemantics();
+    final target = tester.getSemantics(find.byTooltip('Tema: Sistema')).rect;
+    expect(target.width, greaterThanOrEqualTo(40));
+    expect(target.height, greaterThanOrEqualTo(40));
+    semantics.dispose();
+    tester.view.physicalSize = const Size(400, 800);
+    await tester.pumpAndSettle();
+    await _openMore(tester);
+    expect(circleSize(), defaultSize);
+    // Only the menu-heading divider remains; settings have no delimiting bars.
+    expect(
+      find.descendant(
+        of: _key('app-side-panel'),
+        matching: find.byType(Divider),
+      ),
+      findsOneWidget,
+    );
+    final label = find.text('Tema: Sistema');
+    expect(label, findsOneWidget);
+    expect(
+      tester.getRect(label).right,
+      lessThan(tester.getRect(find.byTooltip('Tema: Sistema')).left),
+    );
+    await tester.tap(find.byTooltip('Tema: Sistema'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tema: Claro'), findsOneWidget);
     expect(tester.takeException(), isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
