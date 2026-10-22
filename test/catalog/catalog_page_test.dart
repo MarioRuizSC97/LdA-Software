@@ -5313,12 +5313,12 @@ void main() {
       }
 
       await openMenu();
+      // A list entry merges its badge label into its own node.
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('notices-open')),
-          matching: find.bySemanticsLabel(RegExp('sin confirmar')),
-        ),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const ValueKey<String>('notices-open')))
+            .label,
+        contains('sin confirmar'),
       );
       expect(
         find.descendant(
@@ -5340,12 +5340,12 @@ void main() {
         find.bySemanticsLabel(RegExp('Avisos de traslados: 1 sin leer')),
         findsOneWidget,
       );
+      // A list entry merges its badge label into its own node.
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('notices-open')),
-          matching: find.bySemanticsLabel(RegExp('1 sin leer')),
-        ),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const ValueKey<String>('notices-open')))
+            .label,
+        contains('1 sin leer'),
       );
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();

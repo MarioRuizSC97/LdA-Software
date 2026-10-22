@@ -189,7 +189,12 @@ void main() {
       );
       // First entry of the menu: above every other entry, including logout.
       final Rect notices = tester.getRect(_key('notices-open'));
-      final Rect logout = tester.getRect(find.text('Cerrar sesión'));
+      final Rect logout = tester.getRect(
+        find.descendant(
+          of: _key('app-side-panel'),
+          matching: find.text('Cerrar sesión'),
+        ),
+      );
       expect(notices.top, lessThan(logout.top));
     }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
@@ -244,12 +249,10 @@ void main() {
         find.descendant(of: _key('notices-open'), matching: find.text('1')),
         findsOneWidget,
       );
+      // A list entry merges its badge label into its own node.
       expect(
-        find.descendant(
-          of: _key('notices-open'),
-          matching: find.bySemanticsLabel(RegExp('1 sin leer')),
-        ),
-        findsOneWidget,
+        tester.getSemantics(_key('notices-open')).label,
+        contains('1 sin leer'),
       );
 
       // Confirmed zero announces no unread state at all (reopen the menu:
@@ -305,24 +308,18 @@ void main() {
       await tester.tap(_key('shell-more'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(
-        tester
-            .widget<PopupMenuItem<VoidCallback>>(_key('notices-open'))
-            .enabled,
-        isFalse,
-      );
+      expect(tester.widget<ListTile>(_key('notices-open')).enabled, isFalse);
     }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   });
 
   group('wide web/desktop keeps the notices icon in the bar (unchanged)', () {
-    testWidgets('the wide shell has no menu and keeps the bar notices icon', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('the wide shell keeps the bar notices icon and leaves the '
+        'menu icon without a duplicate badge', (WidgetTester tester) async {
       useViewport(tester, const Size(1000, 800));
       await tester.pumpWidget(_sellerPage(transferNotices: _pendingNotices));
       await tester.pumpAndSettle();
 
-      expect(_key('shell-more'), findsNothing);
+      expect(_key('shell-more'), findsOneWidget);
       expect(_inAppBar(_key('notices-open')), findsOneWidget);
       expect(
         find.descendant(of: _key('shell-more'), matching: find.text('!')),
