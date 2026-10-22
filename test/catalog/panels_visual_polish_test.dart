@@ -148,7 +148,18 @@ void main() {
       final rect = tester.getRect(divider);
       expect(rect.width, lessThanOrEqualTo(600));
       expect(rect.width, width < 600 ? width : greaterThanOrEqualTo(560));
-      expect(rect.center.dx, closeTo(width / 2, 1));
+      if (width < 600) {
+        expect(rect.center.dx, closeTo(width / 2, 1));
+      } else {
+        // T15/D1: from the breakpoint up the primary column shares the screen
+        // with the context rail, so the GROUP is centred and the primary
+        // intentionally sits left of the viewport centre.
+        final rail = tester.getRect(
+          find.byKey(const Key('notices-context')),
+        );
+        expect(rail.left, greaterThan(rect.right));
+        expect(rect.left, closeTo(width - rail.right, 2));
+      }
       final headline = styleOf(tester, find.text('Sin avisos de traslados'));
       final explanation = styleOf(
         tester,
