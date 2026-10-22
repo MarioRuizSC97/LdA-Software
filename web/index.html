@@ -31,6 +31,16 @@
 
   <title>LDA Inventory</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* The Firebase Auth SDK injects this fixed warning paragraph whenever the
+       app runs against the local emulator. The app already announces
+       "Emulador local" in its own top bar, and production builds never get
+       this element, so keep it out of the UI (user decision, T10/S4). */
+    .firebase-emulator-warning {
+      display: none !important;
+    }
+  </style>
 </head>
 <body>
   <!--
