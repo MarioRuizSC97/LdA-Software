@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app/backend_environment.dart';
+import '../app/inventory_theme_host.dart';
+import '../app/theme_mode_store.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
 import '../catalog/product_pricing.dart';
@@ -1468,6 +1470,20 @@ class _LoginViewState extends State<_LoginView> {
               if (widget.environment.loginNote case final String note) ...[
                 const SizedBox(height: 12),
                 Text(note, textAlign: TextAlign.center),
+              ],
+              if (ThemeModeScope.maybeOf(context) case final ThemeModeStore store) ...[
+                const SizedBox(height: 20),
+                SegmentedButton<ThemeMode>(
+                  segments: const <ButtonSegment<ThemeMode>>[
+                    ButtonSegment(value: ThemeMode.system, label: Text('Sistema')),
+                    ButtonSegment(value: ThemeMode.light, label: Text('Claro')),
+                    ButtonSegment(value: ThemeMode.dark, label: Text('Oscuro')),
+                  ],
+                  selected: <ThemeMode>{store.value},
+                  onSelectionChanged: (selection) {
+                    unawaited(store.setThemeMode(selection.single));
+                  },
+                ),
               ],
               const SizedBox(height: 24),
               TextFormField(
