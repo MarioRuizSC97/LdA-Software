@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../catalog/catalog_product.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
 import '../sales/sale_quote.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_exchange_controller.dart';
 import 'correction_labels.dart';
@@ -91,7 +93,7 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
         preview != null &&
         form.previewStatus == ExchangePreviewStatus.ready &&
         preview.customerPaysCentavos > 0;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('exchange-form'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -231,6 +233,13 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
             ],
           ),
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: widget.sale,
+        productNames: widget.productNames,
       ),
     );
   }

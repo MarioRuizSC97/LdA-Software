@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
 import '../sales/sale_format.dart';
+import 'correction_context.dart';
 import 'correction_sale.dart';
 
 // User-visible text is neutral, professional Spanish; identifiers stay in
@@ -42,7 +44,7 @@ class CorrectionSaleDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String? folio = sale.folio;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('correction-detail'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -89,6 +91,14 @@ class CorrectionSaleDetail extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: sale,
+        productNames: productNames,
+        showLines: false,
       ),
     );
   }
