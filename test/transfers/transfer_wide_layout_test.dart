@@ -33,6 +33,7 @@ Future<void> _pump(
   bool disableAnimations = false,
   Map<String, List<CatalogHolding>>? holdingsByProduct,
   double textScale = 1,
+  TransferSubmit? submitTransfer,
 }) async {
   useViewport(tester, size);
   await tester.pumpWidget(
@@ -50,7 +51,7 @@ Future<void> _pump(
           branches: _branches,
           products: _products,
           holdingsByProduct: holdingsByProduct,
-          submitTransfer: (_) => throw UnimplementedError(),
+          submitTransfer: submitTransfer ?? (_) => throw UnimplementedError(),
           unresolvedDraft: () => unresolved,
           onClose: () {},
           onCompleted: (_) {},
@@ -109,7 +110,130 @@ const Map<String, List<CatalogHolding>> _holdings =
       ],
     };
 
+Future<void> _openConfirmation(WidgetTester tester, String quantity) async {
+  await _pick(tester, _key('transfer-source'), 'Norte');
+  await _pick(tester, _key('transfer-destination'), 'Sur');
+  await _fillLine(tester, 0, 'Café', quantity);
+  await tester.ensureVisible(_key('transfer-submit'));
+  await tester.tap(_key('transfer-submit'));
+  await tester.pumpAndSettle();
+}
+
+const String _stockWarning =
+    'Revisa las existencias en origen de: Café. '
+    'La cantidad supera lo registrado o no hay entrada registrada. '
+    'Puedes continuar con el envío.';
+
 void main() {
+  for (final String quantity in <String>['1.25', '12.34']) {
+    testWidgets(
+      'confirmation shows source stock without warning for $quantity',
+      (tester) async {
+        await _pump(tester, const Size(400, 800), holdingsByProduct: _holdings);
+        await _openConfirmation(tester, quantity);
+        expect(
+          tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+          'Café: $quantity kg · Origen: 12.34 kg',
+        );
+        expect(
+          find.textContaining('Revisa las existencias en origen de:'),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final double width in <double>[400, 601, 1200]) {
+    testWidgets('confirmation warns without blocking submit at $width', (
+      tester,
+    ) async {
+      TransferDraft? submitted;
+      await _pump(
+        tester,
+        Size(width, 800),
+        holdingsByProduct: _holdings,
+        textScale: 2,
+        submitTransfer: (draft) async {
+          submitted = draft;
+          throw StateError('test submission');
+        },
+      );
+      await _openConfirmation(tester, '12.35');
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 12.35 kg · Origen: 12.34 kg',
+      );
+      expect(find.text(_stockWarning), findsOneWidget);
+      expect(submitted, isNull);
+      expect(
+        tester.widget<FilledButton>(_key('transfer-confirm-ok')).onPressed,
+        isNotNull,
+      );
+      expect(find.text('Confirmar y enviar'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(_key('transfer-confirm-ok'));
+      await tester.tap(_key('transfer-confirm-ok'));
+      await tester.pumpAndSettle();
+      expect(submitted, isNotNull);
+      expect(submitted!.sourceBranchId, 'branch-north');
+      expect(submitted!.destinationBranchId, 'branch-south');
+      expect(submitted!.lines.single.productId, 'PRD-COFFEE-001');
+      expect(submitted!.lines.single.quantity, '12.35');
+      expect(_key('transfer-confirm-dialog'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('confirmation warns for missing source holding, not zero', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      const Size(400, 800),
+      holdingsByProduct: const <String, List<CatalogHolding>>{
+        'PRD-COFFEE-001': <CatalogHolding>[
+          CatalogHolding(branchId: 'branch-south', quantityScaled: 9999),
+        ],
+      },
+    );
+    await _openConfirmation(tester, '1');
+    expect(
+      tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+      'Café: 1 kg · Origen: Sin entrada registrada',
+    );
+    expect(find.text(_stockWarning), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(_key('transfer-confirm-ok')).onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('confirmation without holdings retains its original content', (
+    tester,
+  ) async {
+    await _pump(tester, const Size(400, 800));
+    await _openConfirmation(tester, '1');
+    expect(
+      tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+      'Café: 1 kg',
+    );
+    expect(find.textContaining('Origen:'), findsNothing);
+    expect(find.textContaining('Sin entrada registrada'), findsNothing);
+    expect(
+      find.textContaining('Revisa las existencias en origen de:'),
+      findsNothing,
+    );
+    expect(find.text('Confirmar traslado'), findsOneWidget);
+    expect(find.text('Cancelar'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(_key('transfer-confirm-ok')).onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('source stock follows branches and selected rows', (
     tester,
   ) async {
