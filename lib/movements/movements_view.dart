@@ -169,7 +169,7 @@ class _MovementsViewState extends State<MovementsView> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
-              TextButton.icon(
+              FilledButton.tonalIcon(
                 onPressed: widget.onClose,
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Volver'),
@@ -195,7 +195,7 @@ class _MovementsViewState extends State<MovementsView> {
                   ],
                 ),
               ),
-              OutlinedButton.icon(
+              FilledButton.tonalIcon(
                 onPressed: _loading ? null : _refresh,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Actualizar'),
@@ -268,7 +268,7 @@ class _MovementsViewState extends State<MovementsView> {
     final (String actor, String? action) = _actor(movement);
     final Widget? actionButton = action == null
         ? null
-        : TextButton(
+        : FilledButton.tonal(
             onPressed: () => _editName(movement.actorId),
             child: Text(action),
           );
@@ -286,7 +286,18 @@ class _MovementsViewState extends State<MovementsView> {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('$product · $quantity'),
+                Text.rich(
+                  TextSpan(
+                    children: <TextSpan>[
+                      TextSpan(text: '$product · '),
+                      TextSpan(
+                        text: quantity,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
                 Text(
                   '${_branchLabel(movement.branchId)} · '
                   '${formatSaleDateTime(movement.occurredAt)}',

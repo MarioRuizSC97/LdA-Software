@@ -28,36 +28,41 @@ class TransferNoticesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return Column(
-      children: <Widget>[
-        Semantics(
-          header: true,
-          child: Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      'Avisos de traslados',
-                      style: theme.textTheme.titleLarge,
-                    ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600),
+        child: Column(
+          children: <Widget>[
+            Semantics(
+              header: true,
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          'Avisos de traslados',
+                          style: theme.textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey<String>('notices-close'),
+                        tooltip: 'Cerrar bandeja de avisos',
+                        onPressed: onClose,
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    key: const ValueKey<String>('notices-close'),
-                    tooltip: 'Cerrar bandeja de avisos',
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            const Divider(height: 1),
+            Expanded(child: _body(context)),
+          ],
         ),
-        const Divider(height: 1),
-        Expanded(child: _body(context)),
-      ],
+      ),
     );
   }
 
@@ -127,16 +132,30 @@ class _EmptyBody extends StatelessWidget {
   const _EmptyBody();
 
   @override
-  Widget build(BuildContext context) => const Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Icon(Icons.inbox_outlined, size: 40),
-        SizedBox(height: 16),
-        Text('Sin avisos de traslados'),
-        SizedBox(height: 8),
-        Text('Cuando te envíen un traslado, aparecerá aquí.'),
-      ],
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(Icons.inbox_outlined, size: 40),
+          const SizedBox(height: 16),
+          Text(
+            'Sin avisos de traslados',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Cuando te envíen un traslado, aparecerá aquí.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }

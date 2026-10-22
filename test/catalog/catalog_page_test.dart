@@ -4727,7 +4727,7 @@ void main() {
           await tester.tap(find.text('Crear producto'));
           await tester.pump();
           if (close) {
-            final Finder button = find.widgetWithText(OutlinedButton, 'Cerrar');
+            final Finder button = find.widgetWithText(FilledButton, 'Cerrar');
             await tester.ensureVisible(button);
             await tester.tap(button);
             await tester.pump();

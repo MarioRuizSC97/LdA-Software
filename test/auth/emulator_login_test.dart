@@ -625,7 +625,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -705,7 +705,7 @@ void main() {
       expect(find.textContaining('failed-precondition'), findsNothing);
       final Map<String, Object?> originalRequest = requests.single;
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -776,7 +776,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();

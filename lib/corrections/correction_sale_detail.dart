@@ -51,7 +51,7 @@ class CorrectionSaleDetail extends StatelessWidget {
           children: <Widget>[
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: FilledButton.tonalIcon(
                 key: const ValueKey<String>('correction-detail-back'),
                 onPressed: onBack,
                 icon: const Icon(Icons.arrow_back),
@@ -111,9 +111,24 @@ class _CorrectionLine extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(name, style: theme.textTheme.titleSmall),
-            Text('Vendido: ${line.soldDecimal} $unit'),
-            Text('Devuelto: ${line.returnedDecimal} $unit'),
-            Text('Restante: ${line.remainingDecimal} $unit'),
+            Text(
+              'Vendido: ${line.soldDecimal} $unit',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              'Devuelto: ${line.returnedDecimal} $unit',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              'Restante: ${line.remainingDecimal} $unit',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             if (line.remainingScaled == 0)
               Text(
                 'Devuelto por completo',
