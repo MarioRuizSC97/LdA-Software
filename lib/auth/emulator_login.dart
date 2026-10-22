@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app/app_info.dart';
 import '../app/backend_environment.dart';
 import '../app/theme_mode_switch.dart';
 import '../catalog/catalog_page.dart';
@@ -1464,10 +1465,13 @@ class _LoginViewState extends State<_LoginView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  Text(
-                    widget.environment.loginTitle,
-                    style: Theme.of(context).textTheme.headlineSmall,
-                    textAlign: TextAlign.center,
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      widget.environment.loginTitle,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
                   if (widget.environment.loginNote case final String note) ...[
                     const SizedBox(height: 12),
@@ -1509,6 +1513,20 @@ class _LoginViewState extends State<_LoginView> {
                         : const Text('Iniciar sesión'),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 80,
+          right: 80,
+          bottom: 32,
+          child: SafeArea(
+            child: Text(
+              appVersionLabel,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
           ),
