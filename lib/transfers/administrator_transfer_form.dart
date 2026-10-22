@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
@@ -349,14 +351,35 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     });
     final int generation = _generation;
     bool answered = false;
-    final TransferDraft? confirmed = await showDialog<TransferDraft>(
+    final TransferDraft? confirmed = await showGeneralDialog<TransferDraft>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) => _confirmationDialog(
-        draft,
-        dialogContext,
-        () => answered,
-        () => answered = true,
+      barrierColor: Colors.transparent,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
+      pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                child: ColoredBox(
+                  color: Theme.of(dialogContext).colorScheme.scrim
+                      .withValues(alpha: 0.32),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: _confirmationDialog(
+              draft,
+              dialogContext,
+              () => answered,
+              () => answered = true,
+            ),
+          ),
+        ],
       ),
     );
     final bool stale = !mounted || generation != _generation;
@@ -650,25 +673,21 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     final Map<String, String> names = _branchNames;
     String branch(String? id) =>
         id == null ? 'Sin seleccionar' : (names[id] ?? id);
-    // Totals per unit, in scaled integers so decimals never drift.
-    final Map<String, (BigInt, int)> totals = <String, (BigInt, int)>{};
+    final Map<String, CatalogProduct> products = _productIndex;
+    // Totals per product, in scaled integers so decimals never drift.
+    final Map<String, (BigInt, QuantitySpec)> totals =
+        <String, (BigInt, QuantitySpec)>{};
     for (final _LineRow row in _rows) {
       final QuantitySpec? spec = row.spec;
       final BigInt? scaled = spec == null
           ? null
           : _scaleQuantity(row.quantity.text, spec.precision);
-      if (spec == null || scaled == null) continue;
-      final (BigInt, int) current = totals[spec.unit] ?? (BigInt.zero, 0);
-      totals[spec.unit] = (current.$1 + scaled, spec.precision);
+      final String? productId = row.productId;
+      if (productId == null || spec == null || scaled == null) continue;
+      final (BigInt, QuantitySpec) current =
+          totals[productId] ?? (BigInt.zero, spec);
+      totals[productId] = (current.$1 + scaled, spec);
     }
-    final String total = totals.isEmpty
-        ? '0'
-        : totals.entries
-              .map(
-                (MapEntry<String, (BigInt, int)> entry) =>
-                    _formatTotal(entry.value.$1, entry.value.$2, entry.key),
-              )
-              .join(' · ');
     return Card(
       key: const ValueKey<String>('transfer-context'),
       child: Padding(
@@ -680,8 +699,13 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
             const SizedBox(height: 8),
             Text('Origen: ${branch(_sourceBranchId)}'),
             Text('Destino: ${branch(_destinationBranchId)}'),
-            Text('Líneas: ${_rows.length}'),
-            Text('Cantidad total: $total'),
+            Text('Productos: ${_rows.length}'),
+            for (final MapEntry<String, (BigInt, QuantitySpec)> entry
+                in totals.entries)
+              Text(
+                '${products[entry.key]?.name ?? entry.key}: '
+                '${_formatTotal(entry.value.$1, entry.value.$2.precision, entry.value.$2.unit)}',
+              ),
           ],
         ),
       ),
@@ -821,6 +845,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     void Function() markAnswered,
   ) {
     final Map<String, String> names = _branchNames;
+    final Map<String, CatalogProduct> products = _productIndex;
     return AlertDialog(
       key: const ValueKey<String>('transfer-confirm-dialog'),
       title: const Text('Confirmar traslado'),
@@ -840,7 +865,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
             const SizedBox(height: 12),
             for (int index = 0; index < draft.lines.length; index += 1)
               Text(
-                '${draft.lines[index].productId}: ${draft.lines[index].quantity} '
+                '${products[draft.lines[index].productId]?.name ?? draft.lines[index].productId}: ${draft.lines[index].quantity} '
                 '${draft.lines[index].quantitySpec.unit}',
                 key: ValueKey<String>('transfer-confirm-line-$index'),
               ),
