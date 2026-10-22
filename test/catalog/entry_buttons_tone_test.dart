@@ -80,9 +80,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     final ColorScheme colors = buildInventoryTheme().colorScheme;
-    final Finder button = find.ancestor(
-      of: find.text('Carrito vacío'),
-      matching: find.byType(FilledButton),
+    final Finder button = find.byKey(
+      const ValueKey<String>('sale-cart-button'),
     );
     expect(button, findsOneWidget);
     final Color? fill = tester

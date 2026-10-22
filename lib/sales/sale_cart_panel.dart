@@ -567,7 +567,7 @@ class _SaleQuantityEntryState extends State<SaleQuantityEntry> {
   }
 }
 
-/// Fixed cart button with the line count and the authoritative total.
+/// Floating cart control with a fixed height and the authoritative summary.
 class SaleCartButton extends StatelessWidget {
   const SaleCartButton({
     required this.controller,
@@ -594,18 +594,67 @@ class SaleCartButton extends StatelessWidget {
             '$count ${count == 1 ? 'producto' : 'productos'}';
         label = 'Carrito · $amount · ${_totalLabel(controller)}';
       }
-      return SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: FilledButton.tonalIcon(
-            key: const ValueKey<String>('sale-cart-button'),
-            onPressed: onPressed,
-            icon: const Icon(Icons.shopping_cart_outlined),
-            label: Text(
-              label,
-              semanticsLabel: 'Abrir carrito. $label',
-              overflow: TextOverflow.ellipsis,
+      final Duration duration = MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 250);
+      return FilledButton.tonal(
+        key: const ValueKey<String>('sale-cart-button'),
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(56, 56),
+          maximumSize: Size(MediaQuery.sizeOf(context).width * .9, 56),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: const StadiumBorder(),
+        ),
+        child: Semantics(
+          label: 'Abrir carrito. $label',
+          excludeSemantics: true,
+          child: AnimatedSize(
+            // Recreate the zero-duration render object to avoid restarting
+            // its animation during layout when reduced motion is enabled.
+            key: duration == Duration.zero ? ValueKey<String>(label) : null,
+            duration: duration,
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.centerRight,
+            child: SizedBox(
+              height: 56,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.shopping_cart_outlined),
+                    Flexible(
+                      child: AnimatedSwitcher(
+                        duration: duration,
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeOut,
+                        // Outgoing text must not hold the pill open.
+                        layoutBuilder: (child, previous) => Stack(
+                          alignment: Alignment.centerLeft,
+                          children: <Widget>[
+                            for (final outgoing in previous)
+                              Positioned.fill(child: outgoing),
+                            ?child,
+                          ],
+                        ),
+                        child: count == 0
+                            ? const SizedBox.shrink(key: ValueKey('empty'))
+                            : Padding(
+                                key: ValueKey<String>(label),
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

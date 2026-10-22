@@ -101,7 +101,10 @@ void main() {
     expect(_key('sale-add-DEMO-PIN'), findsOneWidget);
     expect(find.text('Agregar'), findsNWidgets(2));
     expect(_key('sale-cart-button'), findsOneWidget);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(
       find.bySemanticsLabel(RegExp('^Agregar Ribbon al carrito')),
       findsOneWidget,
@@ -455,7 +458,10 @@ void main() {
 
     await _tap(tester, _key('sale-receipt-new'));
     expect(_key('sale-receipt-folio'), findsNothing);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(_key('sale-add-DEMO-RIBBON'), findsOneWidget);
     expect(completed, hasLength(1));
   });
@@ -818,7 +824,10 @@ void main() {
       await _tap(tester, _key('sale-receipt-new'));
       expect(_key('sale-receipt-folio'), findsNothing);
       expect(sales.store.completedFor('seller-north', 'branch-north'), isNull);
-      expect(find.textContaining('Carrito vacío'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('opening the cart or charging shows a receipt that landed '

@@ -1009,7 +1009,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ? null
         : _showMovements;
     final scaffold = Scaffold(
-      bottomNavigationBar:
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton:
           sale != null &&
               receipt == null &&
               !_cartVisible &&
