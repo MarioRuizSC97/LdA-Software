@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -307,6 +308,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   String? _intakeCostError;
   String? _intakeBranch;
   bool _intakePending = false;
+  bool _intakeConfirming = false;
   bool _intakeUncertain = false;
   bool _loading = true;
   bool _failed = false;
@@ -1801,8 +1803,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _ivaRateError = null;
       if (value == 'zero-rated') {
         _ivaRate.text = '0';
-      } else if (value == 'exempt') {
-        _ivaRate.clear();
+      } else if (value == 'taxable') {
+        _ivaRate.text = '16';
       } else {
         _ivaRate.clear();
       }
@@ -2056,7 +2058,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool locked = _pricingPending || _pricingUncertain;
     final ThemeData theme = Theme.of(context);
     final ColorScheme colors = theme.colorScheme;
-    return SingleChildScrollView(
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -2085,13 +2087,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 ),
                 const SizedBox(height: 12),
                 Text(product.name, style: theme.textTheme.titleMedium),
-                const SizedBox(height: 4),
-                SelectableText(
-                  product.internalCode,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
                 const SizedBox(height: 16),
                 Semantics(
                   container: true,
@@ -2107,7 +2102,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       decimal: true,
                     ),
                     onChanged: (_) {
-                      if (_listedPriceError == null) return;
                       setState(() => _listedPriceError = null);
                     },
                     decoration: _requiredErrorDecoration(
@@ -2206,7 +2200,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                         decimal: true,
                       ),
                       onChanged: (_) {
-                        if (_ivaRateError == null) return;
                         setState(() => _ivaRateError = null);
                       },
                       decoration: _requiredErrorDecoration(
@@ -2362,6 +2355,106 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _pricingContext(product));
+  }
+
+  Widget _contextCard(String key, List<Widget> children) => Container(
+    key: ValueKey<String>(key),
+    margin: const EdgeInsets.symmetric(vertical: 20),
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    ),
+  );
+
+  Widget _contextHeading(String text) =>
+      Text(text, style: Theme.of(context).textTheme.titleSmall);
+
+  // Pricing helpers validate/format entered values only; tax extraction is
+  // server-owned. This preview deliberately does not invent IVA arithmetic.
+  Widget _pricingContext(CatalogProduct product) {
+    final CatalogPricing? pricing = product.pricing;
+    return _contextCard('pricing-context', <Widget>[
+      _contextHeading('Precio actual'),
+      const SizedBox(height: 12),
+      if (pricing == null)
+        const Text('Sin precio')
+      else ...<Widget>[
+        Text(
+          'Precio de lista: ${formatCentavos(pricing.listedPriceCentavos)} ${pricing.currency}',
+        ),
+        Text('Modo de precio: ${_priceModeLabel(pricing.priceMode)}'),
+        Text('Tratamiento de IVA: ${_ivaTreatmentLabel(pricing.ivaTreatment)}'),
+        Text(
+          'Tasa de IVA: ${pricing.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
+        ),
+      ],
+      const SizedBox(height: 24),
+      _contextHeading('Vista previa'),
+      const SizedBox(height: 12),
+      Text(
+        _listedPrice.text.isEmpty
+            ? 'Sin precio ingresado'
+            : 'Precio de lista: ${_listedPrice.text} MXN',
+      ),
+      Text(
+        _priceMode == null
+            ? 'Sin modo de precio seleccionado'
+            : 'Modo de precio: ${_priceModeLabel(_priceMode!)}',
+      ),
+      Text(
+        _ivaTreatment == null
+            ? 'Sin tratamiento de IVA seleccionado'
+            : 'Tratamiento de IVA: ${_ivaTreatmentLabel(_ivaTreatment!)}',
+      ),
+      Text(
+        _ivaTreatment == 'exempt'
+            ? 'Tasa de IVA: No requerida'
+            : _ivaRate.text.isEmpty
+            ? 'Sin tasa de IVA ingresada'
+            : 'Tasa de IVA ingresada: ${_ivaRate.text}%',
+      ),
+    ]);
+  }
+
+  Widget _intakeContext(CatalogProduct product) {
+    CatalogItem? item;
+    for (final CatalogItem candidate in _snapshot?.items ?? <CatalogItem>[]) {
+      if (candidate.product.internalCode == product.internalCode) {
+        item = candidate;
+        break;
+      }
+    }
+    final String? total = _intakeTotalPreview();
+    return _contextCard('intake-context', <Widget>[
+      _contextHeading('Existencias por sucursal'),
+      const SizedBox(height: 12),
+      if (item != null)
+        ..._holdingLines(
+          item: item,
+          role: InventoryRole.administrator,
+          branchChoices: _snapshot?.branchChoices ?? <CatalogBranchChoice>[],
+        )
+      else
+        const Text('Sin entrada registrada'),
+      const SizedBox(height: 24),
+      _contextHeading('Último costo unitario'),
+      const SizedBox(height: 12),
+      Text(_latestCostLabel(_snapshot, product.internalCode)),
+      const SizedBox(height: 24),
+      _contextHeading('Vista previa'),
+      const SizedBox(height: 12),
+      Text(
+        total == null
+            ? 'Ingresa sucursal, cantidad y costo unitario para ver el total.'
+            : 'Total de la línea (truncado): $total',
+      ),
+    ]);
   }
 
   void _showIntake(CatalogProduct product) {
@@ -2407,7 +2500,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _closeIntake() {
-    if (_intakePending) return;
+    if (_intakePending || _intakeConfirming) return;
     _presentationRevision += 1;
     setState(() {
       _intakeProduct = null;
@@ -2467,7 +2560,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   Future<void> _submitIntake() async {
     final CatalogProduct? product = _intakeProduct;
     final StockIntakeSubmit? submit = widget.submitStockIntake;
-    if (product == null || submit == null || _intakePending) return;
+    if (product == null ||
+        submit == null ||
+        _intakePending ||
+        _intakeConfirming) {
+      return;
+    }
     if (!_intakeUncertain) {
       // One pass reports every applicable missing required field before any
       // UUID allocation or gateway call.
@@ -2501,8 +2599,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           (_intakeUncertain
               ? _lockedIntakeDraft!
               : StockIntakeDraft(
-                  idempotencyKey:
-                      (widget.createIntakeId ?? createStockIntakeUuidV4)(),
+                  // Validate before asking for confirmation or allocating a UUID.
+                  idempotencyKey: 'intake-confirm-preview',
                   branchId: _intakeBranch!,
                   productId: product.internalCode,
                   quantity: _intakeQuantity.text,
@@ -2516,6 +2614,39 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     } on StockIntakeValidationException catch (error) {
       setState(() => _intakeError = error.message);
       return;
+    }
+
+    final int revision = _presentationRevision;
+    final int intakeGeneration = _intakeGeneration;
+    final String owner = _sessionIdentity(widget.session);
+    setState(() {
+      _intakeConfirming = true;
+      _intakeError = null;
+    });
+    final bool confirmed = await _confirmIntake(product, draft);
+    if (!mounted) return;
+    setState(() => _intakeConfirming = false);
+    if (!confirmed ||
+        revision != _presentationRevision ||
+        intakeGeneration != _intakeGeneration ||
+        owner != _sessionIdentity(widget.session)) {
+      return;
+    }
+    if (!_intakeUncertain) {
+      draft = StockIntakeDraft(
+        idempotencyKey: (widget.createIntakeId ?? createStockIntakeUuidV4)(),
+        branchId: draft.branchId,
+        productId: draft.productId,
+        quantity: draft.quantity,
+        unitCostMxn: draft.unitCostMxn,
+        quantitySpec: draft.quantitySpec,
+      );
+      try {
+        draft.validate();
+      } on StockIntakeValidationException catch (error) {
+        setState(() => _intakeError = error.message);
+        return;
+      }
     }
 
     final int generation = ++_intakeGeneration;
@@ -2589,6 +2720,83 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
   }
 
+  Future<bool> _confirmIntake(
+    CatalogProduct product,
+    StockIntakeDraft draft,
+  ) async {
+    String branchName = draft.branchId;
+    for (final CatalogBranchChoice choice
+        in _snapshot?.branchChoices ?? <CatalogBranchChoice>[]) {
+      if (choice.branchId == draft.branchId) branchName = choice.branchName;
+    }
+    bool answered = false;
+    return await showGeneralDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          barrierColor: Colors.transparent,
+          transitionDuration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                    child: ColoredBox(
+                      color: Theme.of(dialogContext).colorScheme.scrim
+                          .withValues(alpha: 0.32),
+                    ),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: AlertDialog(
+                  key: const ValueKey<String>('intake-confirm-dialog'),
+                  title: const Text('Confirmar entrada de inventario'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Text('Producto: ${product.name}'),
+                        Text('Sucursal: $branchName'),
+                        Text(
+                          'Cantidad: ${draft.quantity} ${draft.quantitySpec.unit}',
+                        ),
+                        Text('Costo unitario: ${draft.unitCostMxn} MXN'),
+                        Text(
+                          'Total de la línea (truncado): ${formatCentavos(draft.lineTotalCentavos)} MXN',
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: <Widget>[
+                    OutlinedButton(
+                      onPressed: () {
+                        if (answered) return;
+                        answered = true;
+                        Navigator.of(dialogContext).pop(false);
+                      },
+                      child: const Text('Corregir'),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        if (answered) return;
+                        answered = true;
+                        Navigator.of(dialogContext).pop(true);
+                      },
+                      child: const Text('Confirmar'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Widget _intakeForm() {
     final CatalogProduct product = _intakeProduct!;
     final bool locked = _intakePending || _intakeUncertain;
@@ -2597,7 +2805,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final String? totalPreview = _intakeTotalPreview();
     final ThemeData theme = Theme.of(context);
     final ColorScheme colors = theme.colorScheme;
-    return SingleChildScrollView(
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -2626,13 +2834,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 ),
                 const SizedBox(height: 12),
                 Text(product.name, style: theme.textTheme.titleMedium),
-                const SizedBox(height: 4),
-                SelectableText(
-                  product.internalCode,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
                 const SizedBox(height: 8),
                 Text(
                   'Unidad: ${product.quantitySpec.unit} '
@@ -2795,6 +2996,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _intakeContext(product));
   }
 
   /// A body panel with the identity its transition is keyed by (T9/S9). The

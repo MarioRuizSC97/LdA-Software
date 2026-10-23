@@ -111,8 +111,11 @@ Future<void> _submit(WidgetTester tester) async {
   final save = find.widgetWithText(FilledButton, 'Registrar entrada');
   await tester.ensureVisible(save);
   await tester.tap(save);
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('intake-confirm-dialog')), findsOneWidget);
+  await tester.tap(find.text('Confirmar'));
   await tester.pump();
-  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 151));
 }
 
 void _pill(InputBorder? border) {
