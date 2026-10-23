@@ -54,7 +54,7 @@ void main() {
     await _pump(tester, const Size(400, 800));
 
     expect(_key('notices-context'), findsNothing);
-    expect(tester.getSize(_key('notices-close')).width, greaterThan(0));
+    expect(_key('notices-close'), findsNothing);
     expect(tester.getTopLeft(find.text('Avisos de traslados')).dx, 16);
   });
 
@@ -66,7 +66,9 @@ void main() {
     expect(_key('notices-context'), findsOneWidget);
     expect(
       tester.getRect(_key('notices-context')).left,
-      greaterThanOrEqualTo(tester.getRect(_key('notices-close')).right),
+      greaterThanOrEqualTo(
+        tester.getRect(find.text('Avisos de traslados')).right,
+      ),
     );
     expect(
       tester.getRect(find.text('Avisos de traslados')).width,

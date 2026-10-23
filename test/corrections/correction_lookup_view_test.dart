@@ -415,11 +415,14 @@ void main() {
     );
   });
 
-  testWidgets('closing returns to the catalog', (WidgetTester tester) async {
+  testWidgets('lookup has no duplicate catalog return', (
+    WidgetTester tester,
+  ) async {
     int closes = 0;
     await _pump(tester, _Backend(), onClose: () => closes += 1);
-    await _tap(tester, _key('corrections-close'));
-    expect(closes, 1);
+    expect(_key('corrections-close'), findsNothing);
+    expect(find.text('Volver al catálogo'), findsNothing);
+    expect(closes, 0);
   });
 
   testWidgets(

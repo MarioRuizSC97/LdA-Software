@@ -289,7 +289,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Avisos de traslados'), findsWidgets);
-      expect(_key('notices-close'), findsOneWidget);
+      expect(_key('notices-close'), findsNothing);
+      expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
+      await tester.tap(_key('panel-back'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Avisos de traslados'), findsNothing);
+      expect(_key('panel-back'), findsNothing);
     }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
     testWidgets('the open inbox disables the menu entry', (

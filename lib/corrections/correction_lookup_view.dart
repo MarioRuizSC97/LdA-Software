@@ -39,7 +39,8 @@ class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
     required this.productNames,
-    required this.onClose,
+    // Retained for callers; panel navigation now belongs to the shell header.
+    required VoidCallback onClose,
     this.products = const <CatalogProduct>[],
     super.key,
   });
@@ -52,7 +53,6 @@ class CorrectionLookupView extends StatefulWidget {
   /// The branch catalog snapshot; its priced products are the new items an
   /// exchange may offer.
   final List<CatalogProduct> products;
-  final VoidCallback onClose;
 
   @override
   State<CorrectionLookupView> createState() => _CorrectionLookupViewState();
@@ -273,15 +273,6 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: <Widget>[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                key: const ValueKey<String>('corrections-close'),
-                onPressed: widget.onClose,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Volver al catálogo'),
-              ),
-            ),
             Text('Correcciones', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 12),
             Row(

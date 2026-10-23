@@ -230,7 +230,9 @@ void main() {
     expect(retries, 1);
   });
 
-  testWidgets('close notifies the host', (WidgetTester tester) async {
+  testWidgets('inbox has no duplicate close control', (
+    WidgetTester tester,
+  ) async {
     var closed = false;
     await tester.pumpWidget(
       MaterialApp(
@@ -245,8 +247,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('notices-close')));
-    expect(closed, isTrue);
+    expect(find.byKey(const ValueKey<String>('notices-close')), findsNothing);
+    expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
+    expect(closed, isFalse);
   });
 
   testWidgets('exposes accessible labels without overflowing at 320 px', (
@@ -283,7 +286,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Avisos de traslados'), findsOneWidget);
-    expect(find.byTooltip('Cerrar bandeja de avisos'), findsOneWidget);
+    expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
     semantics.dispose();
