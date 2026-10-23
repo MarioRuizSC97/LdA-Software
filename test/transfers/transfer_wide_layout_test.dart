@@ -125,6 +125,58 @@ const String _stockWarning =
     'Puedes continuar con el envío.';
 
 void main() {
+  testWidgets('wide: source stock heading preserves stock lines and fallback', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      const Size(1200, 800),
+      holdingsByProduct: <String, List<CatalogHolding>>{
+        'PRD-COFFEE-001': _holdings['PRD-COFFEE-001']!,
+      },
+      unresolved: TransferDraft(
+        idempotencyKey: 'stock-heading',
+        sourceBranchId: 'branch-north',
+        destinationBranchId: 'branch-south',
+        lines: const <TransferLine>[
+          TransferLine(
+            productId: 'PRD-COFFEE-001',
+            quantity: '1',
+            quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+          ),
+          TransferLine(
+            productId: 'DEMO-RIBBON-01',
+            quantity: '2',
+            quantitySpec: QuantitySpec(unit: 'piece', precision: 0),
+          ),
+        ],
+      ),
+    );
+    expect(find.text('Existencias en sucursal origen'), findsOneWidget);
+    expect(find.text('Existencias en origen'), findsNothing);
+    final List<String?> railLines = tester
+        .widgetList<Text>(
+          find.descendant(
+            of: _key('transfer-context'),
+            matching: find.byType(Text),
+          ),
+        )
+        .map((Text text) => text.data)
+        .toList();
+    expect(railLines, <String>[
+      'Resumen del traslado',
+      'Origen: Norte',
+      'Destino: Sur',
+      'Productos: 2',
+      'Café: 1.00 kg',
+      'Cinta: 2 piece',
+      'Existencias en sucursal origen',
+      'Café: 12.34 kg',
+      'Cinta: Sin entrada registrada',
+    ]);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final String quantity in <String>['1.25', '12.34']) {
     testWidgets(
       'confirmation shows source stock without warning for $quantity',
@@ -239,9 +291,9 @@ void main() {
   ) async {
     await _pump(tester, const Size(1200, 800), holdingsByProduct: _holdings);
     await _fillLine(tester, 0, 'Café', '');
-    expect(find.text('Existencias en origen'), findsNothing);
+    expect(find.text('Existencias en sucursal origen'), findsNothing);
     await _pick(tester, _key('transfer-source'), 'Norte');
-    expect(find.text('Existencias en origen'), findsOneWidget);
+    expect(find.text('Existencias en sucursal origen'), findsOneWidget);
     expect(find.text('Café: 12.34 kg'), findsOneWidget);
     await _pick(tester, _key('transfer-source'), 'Sur');
     expect(find.text('Café: 5.67 kg'), findsOneWidget);
@@ -271,7 +323,7 @@ void main() {
       holdingsByProduct: const <String, List<CatalogHolding>>{},
     );
     await _pick(tester, _key('transfer-source'), 'Norte');
-    expect(find.text('Existencias en origen'), findsNothing);
+    expect(find.text('Existencias en sucursal origen'), findsNothing);
     await _fillLine(tester, 0, 'Café', '');
     expect(find.text('Café: Sin entrada registrada'), findsOneWidget);
     expect(find.text('Café: 0.00 kg'), findsNothing);
@@ -281,7 +333,7 @@ void main() {
     await _pump(tester, const Size(1200, 800));
     await _pick(tester, _key('transfer-source'), 'Norte');
     await _fillLine(tester, 0, 'Café', '');
-    expect(find.text('Existencias en origen'), findsNothing);
+    expect(find.text('Existencias en sucursal origen'), findsNothing);
     expect(find.textContaining('Sin entrada registrada'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -314,7 +366,7 @@ void main() {
         ),
       );
       expect(
-        find.text('Existencias en origen'),
+        find.text('Existencias en sucursal origen'),
         width < 600 ? findsNothing : findsOneWidget,
       );
       if (width >= 600) {

@@ -742,7 +742,10 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
               ),
             if (stockLines.isNotEmpty) ...<Widget>[
               const SizedBox(height: 16),
-              Text('Existencias en origen', style: theme.textTheme.titleMedium),
+              Text(
+                'Existencias en sucursal origen',
+                style: theme.textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               for (final String line in stockLines) Text(line),
             ],
