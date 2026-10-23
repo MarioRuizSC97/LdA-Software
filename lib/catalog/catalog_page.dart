@@ -280,6 +280,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   CatalogProduct? _pricingProduct;
   ProductPricingDraft? _lockedPricingDraft;
   ProductPricingResult? _pricingSuccess;
+  bool _pricingNoticeExpired = false;
   String? _pricingError;
   String? _listedPriceError;
   String? _priceModeError;
@@ -1256,7 +1257,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 child: const _CreationSuccess(),
               ),
             if (_pricingSuccess case final ProductPricingResult result)
-              _PricingSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _pricingNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_pricingNoticeExpired &&
+                      identical(_pricingSuccess, result)) {
+                    setState(() => _pricingSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _PricingSuccess(),
+              ),
             if (_renameSuccess case final ProductRenameResult result)
               _RenameSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
@@ -1824,7 +1855,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _lockedPricingDraft = null;
         _pricingProduct = null;
         _pricingSuccess = result;
-        _expireSuccessNotice('pricing', () => _pricingSuccess = null);
+        _pricingNoticeExpired = false;
+        _expireSuccessNotice('pricing', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _pricingSuccess = null;
+          } else {
+            _pricingNoticeExpired = true;
+          }
+        });
       });
       await _requestCatalog();
     } on ProductPricingValidationException catch (error) {
@@ -1989,6 +2027,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   Widget _pricingForm() {
     final CatalogProduct product = _pricingProduct!;
     final bool locked = _pricingPending || _pricingUncertain;
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -1999,232 +2039,180 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                header: true,
-                child: Text(
-                  'Editar precio / IVA',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(product.name),
-              SelectableText(product.internalCode),
-              const SizedBox(height: 16),
-              Semantics(
-                container: true,
-                liveRegion: _listedPriceError != null,
-                label: _listedPriceError == null
-                    ? null
-                    : 'Error en el precio de lista: $_listedPriceError',
-                child: TextFormField(
-                  key: const ValueKey<String>('pricing-listed-price'),
-                  controller: _listedPrice,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    if (_listedPriceError == null) return;
-                    setState(() => _listedPriceError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Precio de lista (MXN)',
-                      helperText:
-                          'Monto exacto en MXN con máximo dos decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _listedPriceError,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              border: Border.all(color: colors.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Editar precio / IVA',
+                    style: theme.textTheme.headlineSmall,
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _priceModeError != null,
-                label: _priceModeError == null
-                    ? null
-                    : 'Error en el modo de precio: $_priceModeError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('pricing-mode'),
-                  isExpanded: true,
-                  initialValue: _priceMode,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Modo de precio',
-                      border: _pricingFieldBorder,
-                    ),
-                    _priceModeError,
+                const SizedBox(height: 12),
+                Text(product.name, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                SelectableText(
+                  product.internalCode,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
                   ),
-                  hint: const Text('Selecciona el modo de precio'),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(
-                      value: 'iva-included',
-                      child: Text('IVA incluido'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'iva-additional-on-invoice',
-                      child: Text('IVA adicional en factura'),
-                    ),
-                  ],
-                  onChanged: locked
-                      ? null
-                      : (String? value) => setState(() {
-                          _priceMode = value;
-                          _priceModeError = null;
-                        }),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _ivaTreatmentError != null,
-                label: _ivaTreatmentError == null
-                    ? null
-                    : 'Error en el tratamiento de IVA: $_ivaTreatmentError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('pricing-treatment'),
-                  isExpanded: true,
-                  initialValue: _ivaTreatment,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Tratamiento de IVA',
-                      border: _pricingFieldBorder,
-                    ),
-                    _ivaTreatmentError,
-                  ),
-                  hint: const Text('Selecciona el tratamiento de IVA'),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(value: 'taxable', child: Text('Gravado')),
-                    DropdownMenuItem(
-                      value: 'zero-rated',
-                      child: Text('Tasa 0%'),
-                    ),
-                    DropdownMenuItem(value: 'exempt', child: Text('Exento')),
-                  ],
-                  onChanged: locked ? null : _changeIvaTreatment,
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_ivaTreatment == 'exempt')
-                const Text('Tasa de IVA: No requerida')
-              else
+                const SizedBox(height: 16),
                 Semantics(
                   container: true,
-                  liveRegion: _ivaRateError != null,
-                  label: _ivaRateError == null
+                  liveRegion: _listedPriceError != null,
+                  label: _listedPriceError == null
                       ? null
-                      : 'Error en la tasa de IVA: $_ivaRateError',
+                      : 'Error en el precio de lista: $_listedPriceError',
                   child: TextFormField(
-                    key: const ValueKey<String>('pricing-iva-rate'),
-                    controller: _ivaRate,
-                    enabled: !locked && _ivaTreatment != 'zero-rated',
+                    key: const ValueKey<String>('pricing-listed-price'),
+                    controller: _listedPrice,
+                    enabled: !locked,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     onChanged: (_) {
-                      if (_ivaRateError == null) return;
-                      setState(() => _ivaRateError = null);
+                      if (_listedPriceError == null) return;
+                      setState(() => _listedPriceError = null);
                     },
                     decoration: _requiredErrorDecoration(
                       context,
                       const InputDecoration(
-                        labelText: 'Tasa de IVA (%)',
+                        labelText: 'Precio de lista (MXN)',
                         helperText:
-                            'La tasa gravada debe ser mayor que 0 y hasta 100.',
-                        border: _pricingFieldBorder,
+                            'Monto exacto en MXN con máximo dos decimales.',
+                        helperMaxLines: 3,
                       ),
-                      _ivaRateError,
+                      _listedPriceError,
                     ),
-                  ),
-                ),
-              if (_pricingError case final String error) ...<Widget>[
-                const SizedBox(height: 12),
-                Semantics(
-                  label: 'Error en el precio del producto',
-                  liveRegion: true,
-                  child: ExcludeSemantics(child: Text(error)),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: <Widget>[
-                  FilledButton(
-                    onPressed: _pricingPending ? null : _submitPricing,
-                    child: _pricingPending
-                        ? Semantics(
-                            label: 'Guardando precio del producto',
-                            liveRegion: true,
-                            child: const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Text(
-                            _pricingUncertain
-                                ? 'Reintentar misma solicitud'
-                                : 'Guardar precio / IVA',
-                          ),
-                  ),
-                  OutlinedButton(
-                    onPressed: _pricingPending ? null : _closePricing,
-                    child: const Text('Cerrar'),
-                  ),
-                ],
-              ),
-              if (widget.renameProduct != null) ...<Widget>[
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 8),
-                Semantics(
-                  header: true,
-                  child: Text(
-                    'Nombre del producto',
-                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
                 const SizedBox(height: 12),
                 Semantics(
                   container: true,
-                  liveRegion: _renameNameError != null,
-                  label: _renameNameError == null
+                  liveRegion: _priceModeError != null,
+                  label: _priceModeError == null
                       ? null
-                      : 'Error en el nombre del producto: $_renameNameError',
-                  child: TextFormField(
-                    key: ValueKey<String>(
-                      'rename-name-${product.internalCode}',
-                    ),
-                    controller: _renameName,
-                    enabled: !_renameLocked,
-                    maxLength: maxProductRenameNameLength,
-                    onChanged: (_) {
-                      if (_renameNameError == null) return;
-                      setState(() => _renameNameError = null);
-                    },
+                      : 'Error en el modo de precio: $_priceModeError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('pricing-mode'),
+                    isExpanded: true,
+                    initialValue: _priceMode,
                     decoration: _requiredErrorDecoration(
                       context,
-                      const InputDecoration(
-                        labelText: 'Nombre del producto',
-                        border: _pricingFieldBorder,
-                      ),
-                      _renameNameError,
+                      const InputDecoration(labelText: 'Modo de precio'),
+                      _priceModeError,
                     ),
+                    hint: const Text('Selecciona el modo de precio'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(
+                        value: 'iva-included',
+                        child: Text('IVA incluido'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'iva-additional-on-invoice',
+                        child: Text('IVA adicional en factura'),
+                      ),
+                    ],
+                    onChanged: locked
+                        ? null
+                        : (String? value) => setState(() {
+                            _priceMode = value;
+                            _priceModeError = null;
+                          }),
                   ),
                 ),
-                if (_renameError case final String error) ...<Widget>[
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _ivaTreatmentError != null,
+                  label: _ivaTreatmentError == null
+                      ? null
+                      : 'Error en el tratamiento de IVA: $_ivaTreatmentError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('pricing-treatment'),
+                    isExpanded: true,
+                    initialValue: _ivaTreatment,
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(labelText: 'Tratamiento de IVA'),
+                      _ivaTreatmentError,
+                    ),
+                    hint: const Text('Selecciona el tratamiento de IVA'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(
+                        value: 'taxable',
+                        child: Text('Gravado'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'zero-rated',
+                        child: Text('Tasa 0%'),
+                      ),
+                      DropdownMenuItem(value: 'exempt', child: Text('Exento')),
+                    ],
+                    onChanged: locked ? null : _changeIvaTreatment,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_ivaTreatment == 'exempt')
+                  const Text('Tasa de IVA: No requerida')
+                else
+                  Semantics(
+                    container: true,
+                    liveRegion: _ivaRateError != null,
+                    label: _ivaRateError == null
+                        ? null
+                        : 'Error en la tasa de IVA: $_ivaRateError',
+                    child: TextFormField(
+                      key: const ValueKey<String>('pricing-iva-rate'),
+                      controller: _ivaRate,
+                      enabled: !locked && _ivaTreatment != 'zero-rated',
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      onChanged: (_) {
+                        if (_ivaRateError == null) return;
+                        setState(() => _ivaRateError = null);
+                      },
+                      decoration: _requiredErrorDecoration(
+                        context,
+                        const InputDecoration(
+                          labelText: 'Tasa de IVA (%)',
+                          helperText: 'La tasa gravada debe ser mayor que 0 y hasta 100.',
+                          helperMaxLines: 3,
+                        ),
+                        _ivaRateError,
+                      ),
+                    ),
+                  ),
+                if (_pricingError case final String error) ...<Widget>[
                   const SizedBox(height: 12),
                   Semantics(
-                    label: 'Error en el nombre del producto',
+                    label: 'Error en el precio del producto',
                     liveRegion: true,
-                    child: ExcludeSemantics(child: Text(error)),
+                    child: ExcludeSemantics(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 20),
@@ -2233,13 +2221,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   runSpacing: 8,
                   children: <Widget>[
                     FilledButton(
-                      key: ValueKey<String>(
-                        'rename-submit-${product.internalCode}',
-                      ),
-                      onPressed: _renamePending ? null : _submitRename,
-                      child: _renamePending
+                      onPressed: _pricingPending ? null : _submitPricing,
+                      child: _pricingPending
                           ? Semantics(
-                              label: 'Guardando nombre del producto',
+                              label: 'Guardando precio del producto',
                               liveRegion: true,
                               child: const SizedBox.square(
                                 dimension: 20,
@@ -2249,15 +2234,107 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                               ),
                             )
                           : Text(
-                              _renameUncertain
+                              _pricingUncertain
                                   ? 'Reintentar misma solicitud'
-                                  : 'Guardar nombre',
+                                  : 'Guardar precio / IVA',
                             ),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: _pricingPending ? null : _closePricing,
+                      child: const Text('Cerrar'),
                     ),
                   ],
                 ),
+                if (widget.renameProduct != null) ...<Widget>[
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Nombre del producto',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Semantics(
+                    container: true,
+                    liveRegion: _renameNameError != null,
+                    label: _renameNameError == null
+                        ? null
+                        : 'Error en el nombre del producto: $_renameNameError',
+                    child: TextFormField(
+                      key: ValueKey<String>(
+                        'rename-name-${product.internalCode}',
+                      ),
+                      controller: _renameName,
+                      enabled: !_renameLocked,
+                      maxLength: maxProductRenameNameLength,
+                      onChanged: (_) {
+                        if (_renameNameError == null) return;
+                        setState(() => _renameNameError = null);
+                      },
+                      decoration: _requiredErrorDecoration(
+                        context,
+                        const InputDecoration(labelText: 'Nombre del producto'),
+                        _renameNameError,
+                      ),
+                    ),
+                  ),
+                  if (_renameError case final String error) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Semantics(
+                      label: 'Error en el nombre del producto',
+                      liveRegion: true,
+                      child: ExcludeSemantics(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colors.errorContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            error,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colors.onErrorContainer,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      FilledButton(
+                        key: ValueKey<String>(
+                          'rename-submit-${product.internalCode}',
+                        ),
+                        onPressed: _renamePending ? null : _submitRename,
+                        child: _renamePending
+                            ? Semantics(
+                                label: 'Guardando nombre del producto',
+                                liveRegion: true,
+                                child: const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            : Text(
+                                _renameUncertain
+                                    ? 'Reintentar misma solicitud'
+                                    : 'Guardar nombre',
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -3128,28 +3205,36 @@ class _TransferToolbar extends StatelessWidget {
 }
 
 class _PricingSuccess extends StatelessWidget {
-  const _PricingSuccess({required this.result});
-
-  final ProductPricingResult result;
+  const _PricingSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
-    label: 'Precio del producto guardado',
-    child: ColoredBox(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Icon(Icons.check_circle_outline),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text('Precio guardado. Auditoría ${result.auditId}'),
-            ),
-          ],
+    label: 'Precio guardado',
+    child: ExcludeSemantics(
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                Icons.check_circle_outline,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Precio guardado',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),

@@ -454,6 +454,6 @@ void main() {
     expect(pricing.drafts, hasLength(1));
     expect(pricing.drafts.single.productId, 'PRD-COFFEE-001');
     expect(pricing.drafts.single.listedPriceMxn, '150');
-    expect(find.textContaining('Precio guardado. Auditoría'), findsOneWidget);
+    expect(find.text('Precio guardado'), findsOneWidget);
   });
 }

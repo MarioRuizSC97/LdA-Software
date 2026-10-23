@@ -2225,7 +2225,7 @@ void main() {
 
     expect(find.textContaining('resultado es incierto'), findsNothing);
     expect(
-      find.textContaining('Auditoría ${oldDraft.idempotencyKey}'),
+      find.text('Precio guardado'),
       findsOneWidget,
     );
     expect(gatewayLoads, 2);
@@ -2283,7 +2283,7 @@ void main() {
 
     expect(loads, 2);
     expect(retried?.listedPriceMxn, frozenPrice);
-    expect(find.textContaining('Precio guardado. Auditoría'), findsOneWidget);
+    expect(find.text('Precio guardado'), findsOneWidget);
   });
 
   testWidgets('seller never receives or initializes product pricing', (
@@ -2375,7 +2375,7 @@ void main() {
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
       final ProductPricingDraft original = attempts.single;
 
-      Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      Finder close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2397,7 +2397,7 @@ void main() {
       );
       expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
 
-      close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2432,7 +2432,7 @@ void main() {
       expect(attempts[1].idempotencyKey, original.idempotencyKey);
       expect(attempts[1].productId, 'PRD-COFFEE-001');
       expect(
-        find.textContaining('Auditoría ${original.idempotencyKey}'),
+        find.text('Precio guardado'),
         findsOneWidget,
       );
     },
@@ -2478,7 +2478,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.widgetWithText(FilledButton, 'Cerrar');
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -2499,7 +2499,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
       expect(
-        find.textContaining('Auditoría ${attempts[0].idempotencyKey}'),
+        find.text('Precio guardado'),
         findsOneWidget,
       );
     },
@@ -2525,7 +2525,7 @@ void main() {
     await tester.pumpAndSettle();
     await _submitExistingPricing(tester);
     await tester.pumpAndSettle();
-    final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+    final Finder close = find.widgetWithText(FilledButton, 'Cerrar');
     await tester.ensureVisible(close);
     await tester.tap(close);
     await tester.pump();
