@@ -154,14 +154,8 @@ void main() {
           addTearDown(tester.view.resetDevicePixelRatio);
           addTearDown(tester.view.resetPhysicalSize);
           await _open(tester, brightness: brightness);
-          final close = find.widgetWithText(FilledButton, 'Cerrar');
+          final close = find.byKey(const ValueKey<String>('panel-back'));
           expect(close, findsOneWidget);
-          final button = tester.widget<FilledButton>(close);
-          final context = tester.element(close);
-          final background = (button.style ?? button.defaultStyleOf(context))
-              .backgroundColor!
-              .resolve(<WidgetState>{});
-          expect(background, Theme.of(context).colorScheme.secondaryContainer);
           final fields = <String, String>{
             'pricing-listed-price': 'Precio de lista (MXN)',
             'pricing-mode': 'Modo de precio',

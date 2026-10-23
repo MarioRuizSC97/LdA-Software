@@ -300,6 +300,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   CatalogProduct? _intakeProduct;
   StockIntakeDraft? _lockedIntakeDraft;
   StockIntakeResult? _intakeSuccess;
+  bool _intakeNoticeExpired = false;
   String? _intakeError;
   String? _intakeBranchError;
   String? _intakeQuantityError;
@@ -1291,7 +1292,37 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             if (_renameSuccess case final ProductRenameResult result)
               _RenameSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
-              _IntakeSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _intakeNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_intakeNoticeExpired &&
+                      identical(_intakeSuccess, result)) {
+                    setState(() => _intakeSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _IntakeSuccess(),
+              ),
             if (transfer != null)
               _TransferToolbar(
                 enabled: !showTransfer,
@@ -1643,10 +1674,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                                 ? 'Reintentar misma solicitud'
                                 : 'Crear',
                           ),
-                  ),
-                  FilledButton.tonal(
-                    onPressed: _creationPending ? null : _closeCreation,
-                    child: const Text('Cerrar'),
                   ),
                 ],
               ),
@@ -2239,10 +2266,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                                   : 'Guardar precio / IVA',
                             ),
                     ),
-                    FilledButton.tonal(
-                      onPressed: _pricingPending ? null : _closePricing,
-                      child: const Text('Cerrar'),
-                    ),
                   ],
                 ),
                 if (widget.renameProduct != null) ...<Widget>[
@@ -2510,16 +2533,23 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _lockedIntakeDraft = null;
         _intakeProduct = null;
         _intakeSuccess = result;
-        _expireSuccessNotice('intake', () => _intakeSuccess = null);
+        _intakeNoticeExpired = false;
+        _expireSuccessNotice('intake', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _intakeSuccess = null;
+          } else {
+            _intakeNoticeExpired = true;
+          }
+        });
       });
       await _requestCatalog();
-    } on StockIntakeRejectedException catch (error) {
+    } on StockIntakeRejectedException {
       if (!mounted || generation != _intakeGeneration) return;
       setState(() {
         _intakePending = false;
         _intakeUncertain = false;
         _lockedIntakeDraft = null;
-        _intakeError = 'Se rechazó la entrada de inventario (${error.code}).';
+        _intakeError = 'Se rechazó la entrada de inventario.';
       });
     } on StockIntakeUnresolvedException {
       if (!mounted || generation != _intakeGeneration) return;
@@ -2565,6 +2595,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final List<CatalogBranchChoice> choices =
         _snapshot?.branchChoices ?? const <CatalogBranchChoice>[];
     final String? totalPreview = _intakeTotalPreview();
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -2575,156 +2607,190 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                header: true,
-                child: Text(
-                  'Registrar entrada de inventario',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(product.name),
-              SelectableText(product.internalCode),
-              const SizedBox(height: 8),
-              Text(
-                'Unidad: ${product.quantitySpec.unit} '
-                '(precisión ${product.quantitySpec.precision})',
-              ),
-              const SizedBox(height: 16),
-              Semantics(
-                container: true,
-                liveRegion: _intakeBranchError != null,
-                label: _intakeBranchError == null
-                    ? null
-                    : 'Error en la sucursal: $_intakeBranchError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('intake-branch'),
-                  isExpanded: true,
-                  initialValue: _intakeBranch,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Sucursal',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeBranchError,
-                  ),
-                  hint: const Text('Selecciona una sucursal'),
-                  items: choices
-                      .map(
-                        (CatalogBranchChoice choice) =>
-                            DropdownMenuItem<String>(
-                              value: choice.branchId,
-                              child: Text(choice.branchName),
-                            ),
-                      )
-                      .toList(growable: false),
-                  onChanged: locked ? null : _changeIntakeBranch,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _intakeQuantityError != null,
-                label: _intakeQuantityError == null
-                    ? null
-                    : 'Error en la cantidad: $_intakeQuantityError',
-                child: TextFormField(
-                  key: const ValueKey<String>('intake-quantity'),
-                  controller: _intakeQuantity,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    setState(() => _intakeQuantityError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    InputDecoration(
-                      labelText: 'Cantidad (${product.quantitySpec.unit})',
-                      helperText: product.quantitySpec.precision == 0
-                          ? 'Solo cantidades enteras.'
-                          : 'Hasta ${product.quantitySpec.precision} decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeQuantityError,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              border: Border.all(color: colors.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Registrar entrada de inventario',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _intakeCostError != null,
-                label: _intakeCostError == null
-                    ? null
-                    : 'Error en el costo unitario: $_intakeCostError',
-                child: TextFormField(
-                  key: const ValueKey<String>('intake-unit-cost'),
-                  controller: _intakeCost,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    setState(() => _intakeCostError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Costo unitario (MXN)',
-                      helperText:
-                          'Monto exacto en MXN con máximo dos decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeCostError,
-                  ),
-                ),
-              ),
-              if (totalPreview case final String total) ...<Widget>[
                 const SizedBox(height: 12),
-                Text('Total de la línea (truncado): $total'),
-              ],
-              if (_intakeError case final String error) ...<Widget>[
+                Text(product.name, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                SelectableText(
+                  product.internalCode,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Unidad: ${product.quantitySpec.unit} '
+                  '(precisión ${product.quantitySpec.precision})',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Semantics(
+                  container: true,
+                  liveRegion: _intakeBranchError != null,
+                  label: _intakeBranchError == null
+                      ? null
+                      : 'Error en la sucursal: $_intakeBranchError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('intake-branch'),
+                    isExpanded: true,
+                    initialValue: _intakeBranch,
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(labelText: 'Sucursal'),
+                      _intakeBranchError,
+                    ),
+                    hint: const Text('Selecciona una sucursal'),
+                    items: choices
+                        .map(
+                          (CatalogBranchChoice choice) =>
+                              DropdownMenuItem<String>(
+                                value: choice.branchId,
+                                child: Text(choice.branchName),
+                              ),
+                        )
+                        .toList(growable: false),
+                    onChanged: locked ? null : _changeIntakeBranch,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Semantics(
-                  label: 'Error en la entrada de inventario',
-                  liveRegion: true,
-                  child: ExcludeSemantics(child: Text(error)),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: <Widget>[
-                  FilledButton(
-                    onPressed: _intakePending ? null : _submitIntake,
-                    child: _intakePending
-                        ? Semantics(
-                            label: 'Registrando entrada de inventario',
-                            liveRegion: true,
-                            child: const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Text(
-                            _intakeUncertain
-                                ? 'Reintentar misma solicitud'
-                                : 'Registrar entrada',
-                          ),
+                  container: true,
+                  liveRegion: _intakeQuantityError != null,
+                  label: _intakeQuantityError == null
+                      ? null
+                      : 'Error en la cantidad: $_intakeQuantityError',
+                  child: TextFormField(
+                    key: const ValueKey<String>('intake-quantity'),
+                    controller: _intakeQuantity,
+                    enabled: !locked,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) {
+                      setState(() => _intakeQuantityError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      InputDecoration(
+                        labelText: 'Cantidad (${product.quantitySpec.unit})',
+                        helperText: product.quantitySpec.precision == 0
+                            ? 'Solo cantidades enteras.'
+                            : 'Hasta ${product.quantitySpec.precision} decimales.',
+                        helperMaxLines: 3,
+                      ),
+                      _intakeQuantityError,
+                    ),
                   ),
-                  OutlinedButton(
-                    onPressed: _intakePending ? null : _closeIntake,
-                    child: const Text('Cerrar'),
+                ),
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _intakeCostError != null,
+                  label: _intakeCostError == null
+                      ? null
+                      : 'Error en el costo unitario: $_intakeCostError',
+                  child: TextFormField(
+                    key: const ValueKey<String>('intake-unit-cost'),
+                    controller: _intakeCost,
+                    enabled: !locked,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) {
+                      setState(() => _intakeCostError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(
+                        labelText: 'Costo unitario (MXN)',
+                        helperText:
+                            'Monto exacto en MXN con máximo dos decimales.',
+                        helperMaxLines: 3,
+                      ),
+                      _intakeCostError,
+                    ),
+                  ),
+                ),
+                if (totalPreview case final String total) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'Total de la línea (truncado): $total',
+                      style: theme.textTheme.titleSmall,
+                    ),
                   ),
                 ],
-              ),
-            ],
+                if (_intakeError case final String error) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    label: 'Error en la entrada de inventario',
+                    liveRegion: true,
+                    child: ExcludeSemantics(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    FilledButton(
+                      onPressed: _intakePending ? null : _submitIntake,
+                      child: _intakePending
+                          ? Semantics(
+                              label: 'Registrando entrada de inventario',
+                              liveRegion: true,
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              _intakeUncertain
+                                  ? 'Reintentar misma solicitud'
+                                  : 'Registrar entrada',
+                            ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2954,7 +3020,6 @@ const double _compactShellWidth = 600;
 
 /// Stable outlined shape shared by the pricing form fields in normal and error
 /// states, so an error never switches the field's border shape.
-const OutlineInputBorder _pricingFieldBorder = OutlineInputBorder();
 
 /// Resolves the stable outlined shape for [decoration]: the field's own border
 /// first, then the theme's input decoration border, then the default outline.
@@ -3267,28 +3332,36 @@ class _CreationSuccess extends StatelessWidget {
 }
 
 class _IntakeSuccess extends StatelessWidget {
-  const _IntakeSuccess({required this.result});
-
-  final StockIntakeResult result;
+  const _IntakeSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
     label: 'Entrada de inventario registrada',
-    child: ColoredBox(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Icon(Icons.check_circle_outline),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text('Entrada registrada. Folio ${result.entryId}'),
-            ),
-          ],
+    child: ExcludeSemantics(
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                Icons.check_circle_outline,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Entrada registrada.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
