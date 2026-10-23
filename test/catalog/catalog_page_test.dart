@@ -277,7 +277,7 @@ void main() {
           );
       Finder banner() => find.textContaining(switch (category) {
         'creation' => 'Producto creado',
-        'pricing' => 'Precio guardado. Auditoría',
+        'pricing' => 'Precio guardado',
         _ => 'Entrada registrada. Folio',
       });
       Future<void> begin(WidgetTester tester) async {
@@ -408,8 +408,8 @@ void main() {
           await tester.pump();
           // An identical SDK identity frame does not own a new deadline.
           await tester.pump(const Duration(seconds: 1));
-          if (category == 'creation') {
-            // Creation starts its short exit at the unchanged ten-second
+          if (category == 'creation' || category == 'pricing') {
+            // Creation and pricing start their short exit at the unchanged ten-second
             // deadline: it is still on screen mid-exit, then it is gone.
             expect(banner(), findsOneWidget);
             await tester.pump(const Duration(milliseconds: 120));
@@ -455,24 +455,16 @@ void main() {
             await tester.pump();
             await accept(tester);
             expect(banner(), findsOneWidget);
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsOneWidget,
-            );
+            expect(find.text('Precio guardado'), findsOneWidget);
             await tester.pump(const Duration(seconds: 5));
             expect(banner(), findsOneWidget);
             await tester.pump(const Duration(milliseconds: 120));
             await tester.pumpAndSettle();
             expect(banner(), findsNothing);
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsOneWidget,
-            );
+            expect(find.text('Precio guardado'), findsOneWidget);
             await tester.pump(const Duration(seconds: 5));
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsNothing,
-            );
+            await tester.pumpAndSettle();
+            expect(find.text('Precio guardado'), findsNothing);
             await _openProductSheet(tester, 'PRD-COFFEE-001');
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
             await _closeProductSheet(tester);
@@ -2548,10 +2540,7 @@ void main() {
       'ivaTreatment': 'taxable',
       'ivaRatePercent': '16',
     });
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     expect(loads, 2);
   });
 
@@ -2623,7 +2612,7 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Cerrar'));
       await tester.pumpAndSettle();
       await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       expect(
@@ -2748,14 +2737,14 @@ void main() {
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tapPricingButton(FilledButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tapPricingButton(FilledButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(tea.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -2778,7 +2767,7 @@ void main() {
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       authoritative = restored;
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tapPricingButton(FilledButton, 'Cerrar');
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -2911,10 +2900,7 @@ void main() {
       expect(requests, hasLength(1));
       expect(requests.single.listedPriceMxn, '129.00');
       expect(requests.single.ivaRatePercent, '16');
-      expect(
-        find.text('Precio guardado. Auditoría pricing-key-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
       semantics.dispose();
     },
   );
@@ -2984,9 +2970,11 @@ void main() {
           greaterThan(normalBorderWidth),
         );
 
-        // The error state keeps the field's own stable outlined shape.
+        // Errors inherit the themed outline (or the default fallback).
         final OutlineInputBorder normalOutline =
-            decoration.border! as OutlineInputBorder;
+            themeBorder is OutlineInputBorder
+            ? themeBorder
+            : const OutlineInputBorder();
         expect(errorBorder.borderRadius, normalOutline.borderRadius);
         expect(focusedErrorBorder.borderRadius, normalOutline.borderRadius);
 
@@ -2996,15 +2984,9 @@ void main() {
         expect(find.bySemanticsLabel(announcedLabel), findsOneWidget);
       }
 
-      // Both pricing fields declare one stable outlined shape in normal state.
-      expect(
-        decorationOf('pricing-listed-price').border,
-        isA<OutlineInputBorder>(),
-      );
-      expect(
-        decorationOf('pricing-iva-rate').border,
-        isA<OutlineInputBorder>(),
-      );
+      // Pricing fields leave the normal shape to the app theme.
+      expect(decorationOf('pricing-listed-price').border, isNull);
+      expect(decorationOf('pricing-iva-rate').border, isNull);
 
       // Blank listed price: strong local error presentation.
       final Finder priceField = find.byKey(
@@ -3120,7 +3102,7 @@ void main() {
       };
       await open();
       for (final String key in messages.keys) {
-        expect(decoration(key).border, isA<OutlineInputBorder>());
+        expect(decoration(key).border, isNull);
         expect(decoration(key).errorText, isNull);
       }
       await save();
@@ -3130,7 +3112,10 @@ void main() {
       for (final MapEntry<String, String> entry in messages.entries) {
         final InputDecoration value = decoration(entry.key);
         expect(value.errorText, entry.value);
-        final OutlineInputBorder normal = value.border! as OutlineInputBorder;
+        final InputBorder? themed = theme.inputDecorationTheme.border;
+        final OutlineInputBorder normal = themed is OutlineInputBorder
+            ? themed
+            : const OutlineInputBorder();
         for (final InputBorder? border in <InputBorder?>[
           value.errorBorder,
           value.focusedErrorBorder,
@@ -3239,7 +3224,7 @@ void main() {
       );
       expect(ids, 0);
       expect(calls, 0);
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Cerrar'));
       await tester.pumpAndSettle();
       await open();
       for (final String key in messages.keys) {
@@ -3450,10 +3435,7 @@ void main() {
       expect(requests, hasLength(2));
       expect(requests[1], same(stored));
       expect(requests[1].idempotencyKey, 'pricing-original-a');
-      expect(
-        find.text('Precio guardado. Auditoría pricing-original-a'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
     },
   );
 
@@ -3664,10 +3646,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(mutations, 1);
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     // The refreshed pricing fields show in the detail sheet (T5).
     await _openProductSheet(tester, _coffee.internalCode);
     expect(find.text('Precio de lista: 200.00 MXN'), findsOneWidget);
@@ -3720,10 +3699,7 @@ void main() {
     await tester.tap(save);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(mutations, 1);
   });
@@ -4827,7 +4803,10 @@ void main() {
           // panel's 'Cerrar' remains; a refresh is still pending, so a
           // bounded pump is used instead of pumpAndSettle.
           await tester.pump(const Duration(milliseconds: 400));
-          final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+          final Finder close = find.widgetWithText(
+            intake ? OutlinedButton : FilledButton,
+            'Cerrar',
+          );
           await tester.ensureVisible(close);
           await tester.tap(close);
           await tester.pump();
