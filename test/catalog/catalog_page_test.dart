@@ -278,7 +278,7 @@ void main() {
       Finder banner() => find.textContaining(switch (category) {
         'creation' => 'Producto creado',
         'pricing' => 'Precio guardado',
-        _ => 'Entrada registrada. Folio',
+        _ => 'Entrada registrada.',
       });
       Future<void> begin(WidgetTester tester) async {
         // Since T4/T5 the pricing and intake actions live in the product
@@ -408,14 +408,12 @@ void main() {
           await tester.pump();
           // An identical SDK identity frame does not own a new deadline.
           await tester.pump(const Duration(seconds: 1));
-          if (category == 'creation' || category == 'pricing') {
-            // Creation and pricing start their short exit at the unchanged ten-second
-            // deadline: it is still on screen mid-exit, then it is gone.
-            expect(banner(), findsOneWidget);
-            await tester.pump(const Duration(milliseconds: 120));
-            expect(banner(), findsOneWidget);
-            await tester.pumpAndSettle();
-          }
+          // All three banners start their short exit at the unchanged
+          // ten-second deadline: still on screen mid-exit, then gone.
+          expect(banner(), findsOneWidget);
+          await tester.pump(const Duration(milliseconds: 120));
+          expect(banner(), findsOneWidget);
+          await tester.pumpAndSettle();
           expect(banner(), findsNothing);
           expect(requests, hasLength(2));
           expect(find.textContaining('resultado es incierto'), findsNothing);
@@ -2612,7 +2610,7 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       expect(
@@ -2737,14 +2735,14 @@ void main() {
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(FilledButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(FilledButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(tea.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -2767,7 +2765,7 @@ void main() {
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       authoritative = restored;
-      await tapPricingButton(FilledButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -3224,7 +3222,7 @@ void main() {
       );
       expect(ids, 0);
       expect(calls, 0);
-      await tester.tap(find.widgetWithText(FilledButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await open();
       for (final String key in messages.keys) {
@@ -3930,10 +3928,7 @@ void main() {
         'quantity': '2',
         'unitCostMxn': '12.50',
       });
-      expect(
-        find.text('Entrada registrada. Folio intake-key-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
       expect(find.text('Registrar entrada'), findsNothing);
 
       // The next intake advances to a fresh idempotency key.
@@ -4087,7 +4082,7 @@ void main() {
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
     expect(requests[1].idempotencyKey, 'intake-key-1');
-    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada.'), findsOneWidget);
   });
 
   testWidgets(
@@ -4128,10 +4123,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
-      expect(
-        find.text('Se rechazó la entrada de inventario (out-of-range).'),
-        findsOneWidget,
-      );
+      expect(find.text('Se rechazó la entrada de inventario.'), findsOneWidget);
       expect(find.text('Reintentar misma solicitud'), findsNothing);
       expect(
         tester
@@ -4153,10 +4145,7 @@ void main() {
       expect(keyCalls, 2);
       expect(requests, hasLength(2));
       expect(requests.last.idempotencyKey, 'intake-key-2');
-      expect(
-        find.text('Entrada registrada. Folio intake-key-2'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
     },
   );
 
@@ -4203,7 +4192,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(mutations, 1);
-    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada.'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Reintentar misma solicitud'), findsNothing);
   });
@@ -4254,7 +4243,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
 
       // Reopen: the draft for South is restored explicitly and locked.
@@ -4301,10 +4290,7 @@ void main() {
 
       expect(requests, <StockIntakeDraft>[stored]);
       expect(requests.single.idempotencyKey, 'intake-stored');
-      expect(
-        find.text('Entrada registrada. Folio intake-stored'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
     },
   );
 
@@ -4740,7 +4726,9 @@ void main() {
           await tester.tap(find.text('Crear producto'));
           await tester.pump();
           if (close) {
-            final Finder button = find.widgetWithText(FilledButton, 'Cerrar');
+            final Finder button = find.byKey(
+              const ValueKey<String>('panel-back'),
+            );
             await tester.ensureVisible(button);
             await tester.tap(button);
             await tester.pump();
@@ -4799,14 +4787,11 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          // Let the 350 ms panel cross-fade (T9/S15) finish so only the new
-          // panel's 'Cerrar' remains; a refresh is still pending, so a
-          // bounded pump is used instead of pumpAndSettle.
+          // Let the 350 ms panel cross-fade (T9/S15) finish before leaving
+          // through the header; a refresh is still pending, so a bounded
+          // pump is used instead of pumpAndSettle.
           await tester.pump(const Duration(milliseconds: 400));
-          final Finder close = find.widgetWithText(
-            intake ? OutlinedButton : FilledButton,
-            'Cerrar',
-          );
+          final Finder close = find.byKey(const ValueKey<String>('panel-back'));
           await tester.ensureVisible(close);
           await tester.tap(close);
           await tester.pump();

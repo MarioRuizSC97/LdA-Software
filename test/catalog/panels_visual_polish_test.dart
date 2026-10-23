@@ -41,7 +41,7 @@ TextStyle styleOf(WidgetTester tester, Finder finder) {
 }
 
 void main() {
-  testWidgets('Crear producto close is tonal, submit remains primary', (
+  testWidgets('Crear producto keeps header exit, submit remains primary', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -61,7 +61,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Crear producto'));
     await tester.pumpAndSettle();
-    expectTonal(tester, 'Cerrar');
+    expect(find.byKey(const ValueKey<String>('panel-back')), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Crear'), findsOneWidget);
   });
 

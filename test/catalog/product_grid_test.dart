@@ -388,7 +388,7 @@ void main() {
       find.byKey(const ValueKey<String>('pricing-listed-price')),
       findsOneWidget,
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Cerrar'));
+    await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
     await tester.pumpAndSettle();
 
     // Intake: same handoff through the sheet.

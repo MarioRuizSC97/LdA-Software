@@ -63,7 +63,7 @@ void main() {
     expect(find.byKey(_unitKey), findsOneWidget);
     expect(find.byKey(_precisionKey), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Crear'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Cerrar'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('panel-back')), findsOneWidget);
     expect(find.text('Nombre del producto'), findsOneWidget);
     expect(find.text('Identificador de unidad'), findsOneWidget);
     expect(find.text('Decimales del producto'), findsOneWidget);
@@ -172,7 +172,9 @@ void main() {
           'Producto con un nombre largo para comprobar el ajuste de líneas',
         );
         await tester.pump();
-        await tester.ensureVisible(find.widgetWithText(FilledButton, 'Cerrar'));
+        await tester.ensureVisible(
+          find.byKey(const ValueKey<String>('panel-back')),
+        );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       });
