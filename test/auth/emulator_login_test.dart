@@ -2395,7 +2395,7 @@ void main() {
             ?.text,
         '75.00',
       );
-      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(3));
 
       close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
@@ -2944,6 +2944,13 @@ void main() {
       await tester.tap(record);
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const ValueKey('intake-confirm-dialog')),
+        findsOneWidget,
+      );
+      expect(attempts, isEmpty);
+      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+      await tester.pumpAndSettle();
       expect(attempts, hasLength(1));
       final String frozenKey = attempts.single.idempotencyKey;
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -3002,6 +3009,12 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const ValueKey('intake-confirm-dialog')),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+      await tester.pumpAndSettle();
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));

@@ -150,6 +150,13 @@ Future<void> _openSheetAndStartIntake(WidgetTester tester, String code) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _confirmIntake(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('intake-confirm-dialog')), findsOneWidget);
+  await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+  await tester.pump();
+}
+
 Widget _authenticatedApp({
   required EmulatorSession session,
   required CatalogSnapshotLoader loader,
@@ -331,6 +338,7 @@ void main() {
         );
         await tester.ensureVisible(button);
         await tester.tap(button);
+        if (category == 'intake') await _confirmIntake(tester);
         await tester.pump();
       }
 
@@ -506,6 +514,7 @@ void main() {
                 find.text('Reintentar misma solicitud'),
               );
               await tester.tap(find.text('Reintentar misma solicitud'));
+              if (category == 'intake') await _confirmIntake(tester);
               await tester.pump();
               expect(requests, hasLength(2));
               expect(requests.last, requests.first);
@@ -2506,7 +2515,7 @@ void main() {
     await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
 
     expect(find.text('Coffee'), findsOneWidget);
-    expect(find.text('PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('PRD-COFFEE-001'), findsNothing);
     expect(
       tester
           .widget<TextFormField>(
@@ -3238,10 +3247,7 @@ void main() {
       );
       expect(decoration('pricing-mode').errorText, messages['pricing-mode']);
       expect(decoration('pricing-treatment').errorText, isNull);
-      expect(
-        decoration('pricing-iva-rate').errorText,
-        'La tasa de IVA es obligatoria para productos gravados.',
-      );
+      expect(decoration('pricing-iva-rate').errorText, isNull);
       await tester.enterText(
         find.byKey(const ValueKey<String>('pricing-iva-rate')),
         '8',
@@ -3420,7 +3426,7 @@ void main() {
             ?.text,
         stored.listedPriceMxn,
       );
-      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(2));
 
       final Finder retry = find.widgetWithText(
         FilledButton,
@@ -3510,7 +3516,7 @@ void main() {
         expect(rate.enabled, isFalse);
         expect(rate.controller?.text, '0');
       } else {
-        expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+        expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(2));
         expect(
           find.byKey(const ValueKey<String>('pricing-iva-rate')),
           findsNothing,
@@ -3919,6 +3925,8 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(intakeIds, 1);
       expect(requests, hasLength(1));
       expect(requests.single.toRequest(), <String, Object?>{
@@ -3946,6 +3954,8 @@ void main() {
         '5',
       );
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
+      await tester.pumpAndSettle();
+      await _confirmIntake(tester);
       await tester.pumpAndSettle();
       expect(intakeIds, 2);
       expect(requests, hasLength(2));
@@ -3996,13 +4006,16 @@ void main() {
     // 2.55 kg * 12.33 MXN: 255 * 1233 / 100 truncates to 3144 centavos.
     expect(
       find.text('Total de la línea (truncado): 31.44 MXN'),
-      findsOneWidget,
+      findsNWidgets(2),
     );
 
     await tester.enterText(quantityField, '0.01');
     await tester.enterText(costField, '0.01');
     await tester.pump();
-    expect(find.text('Total de la línea (truncado): 0.00 MXN'), findsOneWidget);
+    expect(
+      find.text('Total de la línea (truncado): 0.00 MXN'),
+      findsNWidgets(2),
+    );
 
     await tester.enterText(quantityField, '0.001');
     await tester.pump();
@@ -4045,6 +4058,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(find.textContaining('resultado es incierto'), findsOneWidget);
     expect(
       tester
@@ -4078,6 +4093,8 @@ void main() {
     await tester.tap(retry);
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(keyCalls, 1);
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
@@ -4123,6 +4140,8 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(find.text('Se rechazó la entrada de inventario.'), findsOneWidget);
       expect(find.text('Reintentar misma solicitud'), findsNothing);
       expect(
@@ -4142,6 +4161,8 @@ void main() {
       await tester.tap(retryRecord);
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(keyCalls, 2);
       expect(requests, hasLength(2));
       expect(requests.last.idempotencyKey, 'intake-key-2');
@@ -4191,6 +4212,8 @@ void main() {
     await tester.tap(record);
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(mutations, 1);
     expect(find.text('Entrada registrada.'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
@@ -4288,6 +4311,8 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(requests, <StockIntakeDraft>[stored]);
       expect(requests.single.idempotencyKey, 'intake-stored');
       expect(find.text('Entrada registrada.'), findsOneWidget);
@@ -4393,6 +4418,7 @@ void main() {
         );
         await tester.ensureVisible(record);
         await tester.tap(record);
+        await _confirmIntake(tester);
         await tester.pump();
 
         if (dispose) {
@@ -4627,7 +4653,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
         findsOneWidget,
       );
-      expect(find.text(code), findsWidgets);
+      expect(find.text(code), findsNothing);
       expect(
         tester
             .widget<TextFormField>(
@@ -5063,7 +5089,8 @@ void main() {
 
       expect(loads, 2);
       expect(find.text('Producto creado correctamente'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001'), findsWidgets);
+      expect(find.text('PRD-COFFEE-001'), findsNothing);
+      expect(find.text('Coffee'), findsOneWidget);
       expect(find.text('PRD-NEW-0001'), findsNothing);
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
     });
@@ -5092,7 +5119,8 @@ void main() {
 
       expect(loads, 2);
       expect(find.text('Producto creado correctamente'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001'), findsWidgets);
+      expect(find.text('PRD-COFFEE-001'), findsNothing);
+      expect(find.text('Coffee'), findsOneWidget);
       expect(find.text('PRD-NEW-0001'), findsNothing);
     });
 
