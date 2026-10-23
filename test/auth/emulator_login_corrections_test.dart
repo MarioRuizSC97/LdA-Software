@@ -248,7 +248,7 @@ void main() {
     );
 
     await _tap(tester, _key('correction-detail-back'));
-    await _tap(tester, _key('corrections-close'));
+    await _tap(tester, _key('panel-back'));
     expect(_key('correction-folio'), findsNothing);
     await _tap(tester, _key('corrections-open'));
     expect(backend.lists, 2);

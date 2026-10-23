@@ -27,7 +27,8 @@ class MovementsView extends StatefulWidget {
     required this.movements,
     required this.productNames,
     required this.branchChoices,
-    required this.onClose,
+    // Retained for callers; panel navigation now belongs to the shell header.
+    required VoidCallback onClose,
     super.key,
   });
 
@@ -38,7 +39,6 @@ class MovementsView extends StatefulWidget {
 
   /// Branches from the administrator catalog snapshot.
   final List<CatalogBranchChoice> branchChoices;
-  final VoidCallback onClose;
 
   @override
   State<MovementsView> createState() => _MovementsViewState();
@@ -249,11 +249,6 @@ class _MovementsViewState extends State<MovementsView> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
-              FilledButton.tonalIcon(
-                onPressed: widget.onClose,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Volver'),
-              ),
               Text(
                 'Movimientos',
                 style: Theme.of(context).textTheme.titleLarge,

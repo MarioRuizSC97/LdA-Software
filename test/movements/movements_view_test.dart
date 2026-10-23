@@ -306,7 +306,7 @@ void main() {
     expect(backend.loads, <String?>[null, null]);
   });
 
-  testWidgets('branch filter and refresh reload; back closes', (
+  testWidgets('branch filter and refresh reload without a duplicate back', (
     WidgetTester tester,
   ) async {
     bool closed = false;
@@ -324,8 +324,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.loads, <String?>[null, 'branch-south', 'branch-south']);
 
-    await tester.tap(find.text('Volver'));
-    expect(closed, isTrue);
+    expect(find.text('Volver'), findsNothing);
+    expect(closed, isFalse);
   });
 
   testWidgets('a stale load never overwrites a newer filter', (

@@ -147,9 +147,10 @@ void main() {
         await tester.tap(_key('corrections-open'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        // At large text the folio field may sit below the fold; the open view
-        // is proven by its close action.
-        expect(_key('corrections-close'), findsOneWidget);
+        // At large text the folio field may sit below the fold; its presence
+        // still proves the corrections view is open.
+        expect(_key('corrections-close'), findsNothing);
+        expect(_key('correction-folio'), findsOneWidget);
 
         // While corrections is open its menu entry is disabled, like the
         // inline button.

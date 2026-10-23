@@ -98,7 +98,7 @@ void main() {
         Theme.of(tester.element(tile)).textTheme.titleLarge!.fontSize,
       );
       expect(total.style?.fontWeight, FontWeight.w700);
-      expectTonal(tester, 'Volver al catálogo');
+      expect(find.text('Volver al catálogo'), findsNothing);
       expect(find.widgetWithText(FilledButton, 'Buscar'), findsOneWidget);
       await tester.tap(tile);
       await tester.pumpAndSettle();
@@ -197,7 +197,8 @@ void main() {
         onClose: () {},
       ),
     );
-    for (final label in ['Actualizar', 'Volver', 'Editar nombre']) {
+    expect(find.text('Volver'), findsNothing);
+    for (final label in ['Actualizar', 'Editar nombre']) {
       expectTonal(tester, label);
     }
   });

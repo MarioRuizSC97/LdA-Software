@@ -118,7 +118,9 @@ void main() {
       isNull,
     );
 
-    await tester.tap(_key('corrections-close'));
+    expect(_key('corrections-close'), findsNothing);
+    expect(find.text('Volver al catálogo'), findsNothing);
+    await tester.tap(_key('panel-back'));
     await tester.pumpAndSettle();
     expect(_key('correction-folio'), findsNothing);
     expect(_key('sale-cart-button'), findsOneWidget);

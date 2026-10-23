@@ -99,7 +99,8 @@ void main() {
     expect(find.text('No hay movimientos'), findsOne);
     expect(find.text('Todas'), findsOne);
 
-    await tester.tap(find.text('Volver'));
+    expect(find.text('Volver'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
     await tester.pumpAndSettle();
     expect(find.text('No hay movimientos'), findsNothing);
     expect(find.text('Movimientos'), findsOne);

@@ -15,7 +15,8 @@ class TransferNoticesView extends StatelessWidget {
     required this.state,
     required this.productNames,
     required this.onMarkRead,
-    required this.onClose,
+    // Retained for callers; panel navigation now belongs to the shell header.
+    required VoidCallback onClose,
     this.onRetry,
     super.key,
   });
@@ -23,7 +24,6 @@ class TransferNoticesView extends StatelessWidget {
   final TransferNoticeState state;
   final Map<String, String> productNames;
   final ValueChanged<String> onMarkRead;
-  final VoidCallback onClose;
   final VoidCallback? onRetry;
 
   @override
@@ -49,12 +49,6 @@ class TransferNoticesView extends StatelessWidget {
                             'Avisos de traslados',
                             style: theme.textTheme.titleLarge,
                           ),
-                        ),
-                        IconButton(
-                          key: const ValueKey<String>('notices-close'),
-                          tooltip: 'Cerrar bandeja de avisos',
-                          onPressed: onClose,
-                          icon: const Icon(Icons.close),
                         ),
                       ],
                     ),
