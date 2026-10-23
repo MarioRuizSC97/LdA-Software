@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../sales/sale_format.dart';
 import 'correction_context.dart';
 import 'correction_sale.dart';
@@ -170,6 +171,7 @@ class _Actions extends StatelessWidget {
     runSpacing: 8,
     children: <Widget>[
       FilledButton(
+        style: primaryActionStyle(context),
         key: const ValueKey<String>('correction-action-return'),
         onPressed: onReturn,
         child: const Text('Devolver'),

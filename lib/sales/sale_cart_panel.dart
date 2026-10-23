@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import 'sale_cart.dart';
 import 'sale_cart_controller.dart';
@@ -550,6 +551,7 @@ class _SaleQuantityEntryState extends State<SaleQuantityEntry> {
           runSpacing: 8,
           children: <Widget>[
             FilledButton(
+              style: primaryActionStyle(context),
               key: ValueKey<String>('sale-entry-save-${widget.productId}'),
               onPressed: controller.canEdit ? _save : null,
               child: Text(
@@ -1044,6 +1046,7 @@ class _SaleActions extends StatelessWidget {
       children: <Widget>[
         if (locked) ...<Widget>[
           FilledButton.icon(
+            style: primaryActionStyle(context),
             key: const ValueKey<String>('sale-retry-submit'),
             onPressed: submitting ? null : controller.retrySubmit,
             icon: submitting ? progress : const Icon(Icons.refresh),
@@ -1055,6 +1058,7 @@ class _SaleActions extends StatelessWidget {
           const SizedBox(height: 8),
         ],
         FilledButton(
+          style: primaryActionStyle(context),
           key: const ValueKey<String>('sale-charge'),
           onPressed: controller.canCharge ? controller.charge : null,
           child: submitting && !locked

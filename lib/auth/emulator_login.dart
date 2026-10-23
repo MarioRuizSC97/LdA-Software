@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app/app_info.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../app/theme_mode_switch.dart';
 import '../catalog/catalog_page.dart';
 import '../catalog/product_creation.dart';
@@ -1362,7 +1363,11 @@ class _SessionErrorView extends StatelessWidget {
             ),
             if (canRetry) ...<Widget>[
               const SizedBox(height: 16),
-              FilledButton(onPressed: onRetry, child: Text(retryLabel)),
+              FilledButton(
+                style: primaryActionStyle(context),
+                onPressed: onRetry,
+                child: Text(retryLabel),
+              ),
             ],
           ],
         ),
@@ -1558,6 +1563,7 @@ class _LoginViewState extends State<_LoginView> {
                         ],
                         const SizedBox(height: 20),
                         FilledButton(
+                          style: primaryActionStyle(context),
                           onPressed: _submitting ? null : _submit,
                           child: _submitting
                               ? const SizedBox.square(
