@@ -10,6 +10,7 @@ import '../app/app_info.dart';
 import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../app/panel_transition.dart';
 import '../app/smooth_scroll.dart';
 import '../app/theme_mode_switch.dart';
@@ -1661,6 +1662,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 runSpacing: 8,
                 children: <Widget>[
                   FilledButton(
+                    style: primaryActionStyle(context),
                     onPressed: _creationPending ? null : _submitCreation,
                     child: _creationPending
                         ? Semantics(
@@ -2241,6 +2243,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   runSpacing: 8,
                   children: <Widget>[
                     FilledButton(
+                      style: primaryActionStyle(context),
                       onPressed: _pricingPending ? null : _submitPricing,
                       child: _pricingPending
                           ? Semantics(
@@ -2325,6 +2328,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     runSpacing: 8,
                     children: <Widget>[
                       FilledButton(
+                        style: primaryActionStyle(context),
                         key: ValueKey<String>(
                           'rename-submit-${product.internalCode}',
                         ),
@@ -2781,6 +2785,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                       child: const Text('Corregir'),
                     ),
                     FilledButton(
+                      style: primaryActionStyle(context),
                       onPressed: () {
                         if (answered) return;
                         answered = true;
@@ -2970,6 +2975,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   runSpacing: 8,
                   children: <Widget>[
                     FilledButton(
+                      style: primaryActionStyle(context),
                       onPressed: _intakePending ? null : _submitIntake,
                       child: _intakePending
                           ? Semantics(
@@ -4305,7 +4311,11 @@ class _CatalogError extends StatelessWidget {
       icon: Icons.cloud_off_outlined,
       title: 'Catálogo no disponible',
       message: 'Revisa tu conexión e inténtalo de nuevo.',
-      action: FilledButton(onPressed: onRetry, child: const Text('Reintentar')),
+      action: FilledButton(
+        style: primaryActionStyle(context),
+        onPressed: onRetry,
+        child: const Text('Reintentar'),
+      ),
     );
   }
 }

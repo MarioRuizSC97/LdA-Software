@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_labels.dart';
@@ -141,12 +142,14 @@ class _CorrectionReplacementFormState extends State<CorrectionReplacementForm> {
               const SizedBox(height: 16),
               if (form.isLocked)
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('replacement-retry'),
                   onPressed: form.isSubmitting ? null : form.retrySubmit,
                   child: _label(form.isSubmitting, 'Reintentar'),
                 )
               else
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('replacement-confirm'),
                   onPressed: form.canConfirm ? form.confirm : null,
                   child: _label(form.isSubmitting, 'Confirmar reemplazo'),

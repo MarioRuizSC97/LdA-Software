@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_stock.dart';
 import '../sales/sale_format.dart';
 import 'administrator_movements.dart';
@@ -390,7 +391,11 @@ class _MovementsViewState extends State<MovementsView> {
           children: <Widget>[
             Text(failure, textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            FilledButton(onPressed: _load, child: const Text('Reintentar')),
+            FilledButton(
+              style: primaryActionStyle(context),
+              onPressed: _load,
+              child: const Text('Reintentar'),
+            ),
           ],
         ),
       );
@@ -592,6 +597,7 @@ class _SellerNameDialogState extends State<_SellerNameDialog> {
           child: const Text('Cancelar'),
         ),
         FilledButton(
+          style: primaryActionStyle(context),
           onPressed: _pending ? null : _save,
           child: Text(uncertain ? 'Reintentar' : 'Guardar'),
         ),

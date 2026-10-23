@@ -3,6 +3,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import '../catalog/catalog_stock.dart';
 import '../firebase/emulator_transfer_gateway.dart';
@@ -645,6 +646,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
                   runSpacing: 8,
                   children: <Widget>[
                     FilledButton(
+                      style: primaryActionStyle(context),
                       key: const ValueKey<String>('transfer-submit'),
                       onPressed: _canSubmit ? _onSubmit : null,
                       child: _pending
@@ -953,6 +955,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           child: const Text('Cancelar'),
         ),
         FilledButton(
+          style: primaryActionStyle(context),
           key: const ValueKey<String>('transfer-confirm-ok'),
           onPressed: () {
             if (isAnswered()) return;

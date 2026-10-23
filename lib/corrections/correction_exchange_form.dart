@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
@@ -220,12 +221,14 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
               const SizedBox(height: 16),
               if (form.isLocked)
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('exchange-retry'),
                   onPressed: form.isSubmitting ? null : form.retrySubmit,
                   child: _label(form.isSubmitting, 'Reintentar'),
                 )
               else
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('exchange-confirm'),
                   onPressed: form.canConfirm ? form.confirm : null,
                   child: _label(form.isSubmitting, 'Confirmar cambio'),

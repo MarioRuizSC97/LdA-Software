@@ -153,6 +153,35 @@ void _size(WidgetTester tester, double width) {
 
 void main() {
   for (final brightness in Brightness.values) {
+    for (final panel in ['configure-price', 'intake']) {
+      testWidgets('$panel primary tone $brightness', (tester) async {
+        _size(tester, 1200);
+        await _Harness().mount(tester, brightness: brightness);
+        await _open(tester, panel);
+        if (panel == 'intake') await _fill(tester);
+        final button = find.widgetWithText(
+          FilledButton,
+          panel == 'intake' ? 'Registrar entrada' : 'Guardar precio / IVA',
+        );
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        final colors = Theme.of(tester.element(button)).colorScheme;
+        final fill = tester
+            .widget<Material>(
+              find
+                  .descendant(of: button, matching: find.byType(Material))
+                  .first,
+            )
+            .color;
+        expect(
+          fill,
+          brightness == Brightness.light
+              ? colors.primaryContainer
+              : colors.primary,
+        );
+        expect(fill, isNot(colors.secondaryContainer));
+      });
+    }
     for (final width in [400.0, 1200.0]) {
       for (final panel in ['configure-price', 'intake']) {
         testWidgets('$panel context, code and overflow $brightness $width', (

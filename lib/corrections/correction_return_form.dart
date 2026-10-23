@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../sales/sale_format.dart';
 import 'correction_context.dart';
 import 'correction_draft.dart';
@@ -155,12 +156,14 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
               const SizedBox(height: 16),
               if (form.isLocked)
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('return-retry'),
                   onPressed: form.isSubmitting ? null : form.retrySubmit,
                   child: _label(form.isSubmitting, 'Reintentar'),
                 )
               else
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('return-confirm'),
                   onPressed: form.canConfirm ? form.confirm : null,
                   child: _label(form.isSubmitting, 'Confirmar devolución'),

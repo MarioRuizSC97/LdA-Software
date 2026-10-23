@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
@@ -298,6 +299,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: FilledButton(
+                    style: primaryActionStyle(context),
                     key: const ValueKey<String>('correction-search'),
                     onPressed: _searching ? null : _search,
                     child: _searching
@@ -429,6 +431,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
                     spacing: 8,
                     children: <Widget>[
                       FilledButton(
+                        style: primaryActionStyle(context),
                         key: const ValueKey<String>('correction-refresh-retry'),
                         onPressed: () => _refreshSale(saleId),
                         child: const Text('Reintentar'),
