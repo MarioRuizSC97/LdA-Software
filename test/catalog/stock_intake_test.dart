@@ -60,6 +60,19 @@ void main() {
       }
     });
 
+    test('names out-of-range precision as decimales', () {
+      expect(
+        const StockIntakeQuantitySpec(unit: 'piece', precision: 7).validate,
+        throwsA(
+          isA<StockIntakeValidationException>().having(
+            (StockIntakeValidationException error) => error.message,
+            'message',
+            'Los decimales de cantidad deben ser un entero del 0 al 6.',
+          ),
+        ),
+      );
+    });
+
     test('rejects invalid units and out-of-range precisions', () {
       for (final StockIntakeQuantitySpec invalid in <StockIntakeQuantitySpec>[
         const StockIntakeQuantitySpec(unit: '', precision: 0),
@@ -99,6 +112,20 @@ void main() {
       expect(
         StockIntakeDraft.calculationPolicyVersion,
         'mxn-unit-cost-truncate-v1',
+      );
+    });
+
+    test('names excess quantity digits as decimales', () {
+      expect(
+        () => _draft(quantity: '1.5').quantityScaled,
+        throwsA(
+          isA<StockIntakeValidationException>().having(
+            (StockIntakeValidationException error) => error.message,
+            'message',
+            'La cantidad excede los decimales del producto (0); los dígitos '
+                'de más se rechazan aunque sean ceros.',
+          ),
+        ),
       );
     });
 

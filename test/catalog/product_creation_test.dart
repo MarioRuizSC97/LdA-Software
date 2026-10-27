@@ -400,7 +400,7 @@ void main() {
         isA<ProductCreationValidationException>().having(
           (ProductCreationValidationException error) => error.message,
           'message',
-          'La precisión debe ser un entero del 0 al 6.',
+          'Los decimales deben ser un entero del 0 al 6.',
         ),
       ),
     );

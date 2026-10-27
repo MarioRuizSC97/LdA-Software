@@ -348,7 +348,7 @@ void main() {
 
     await _openSheet(tester, _coffee.internalCode);
     expect(find.text('PRD-COFFEE-001'), findsOneWidget);
-    expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
+    expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
     expect(find.text('Modo de precio: IVA incluido'), findsOneWidget);
     expect(find.text('Tratamiento de IVA: Gravado'), findsOneWidget);
     expect(find.text('Tasa de IVA: 16%'), findsOneWidget);

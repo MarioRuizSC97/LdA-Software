@@ -608,11 +608,11 @@ void main() {
       );
 
       await _pickProduct(tester, 0, 'Café');
-      expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
+      expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
       expect(find.text('Hasta 2 decimales.'), findsOneWidget);
 
       await _pickProduct(tester, 0, 'Cinta');
-      expect(find.text('Unidad: piece (precisión 0)'), findsOneWidget);
+      expect(find.text('Unidad: piece (decimales: 0)'), findsOneWidget);
       expect(find.text('Solo números enteros.'), findsOneWidget);
     });
 
@@ -1215,7 +1215,7 @@ void main() {
 
       expect(find.text('branch-gone'), findsWidgets);
       expect(find.text('PRD-GHOST-0001'), findsWidgets);
-      expect(find.text('Unidad: l (precisión 2)'), findsOneWidget);
+      expect(find.text('Unidad: l (decimales: 2)'), findsOneWidget);
       expect(
         tester.widget<TextFormField>(_quantities().first).controller!.text,
         '3.25',

@@ -1709,8 +1709,8 @@ void main() {
     // (T4/T5); the per-branch stock line stays on the compact card.
     expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
     await _openProductSheet(tester, _coffee.internalCode);
-    expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
-    expect(find.text('Cantidad: kg (precisión 2)'), findsNothing);
+    expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
+    expect(find.text('Cantidad: kg (decimales: 2)'), findsNothing);
     expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
     await _closeProductSheet(tester);
@@ -1872,8 +1872,8 @@ void main() {
         RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'La precisión es obligatoria.',
-        RegExp('^Error en la precisión: '),
+        'Los decimales son obligatorios.',
+        RegExp('^Error en los decimales: '),
       );
 
       // Invalid non-empty values report their own field, not the banner.
@@ -1882,7 +1882,7 @@ void main() {
       await tester.pump();
       expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
       expect(find.text('La unidad es obligatoria.'), findsNothing);
-      expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+      expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pump();
@@ -1901,8 +1901,8 @@ void main() {
         RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'La precisión es obligatoria.',
-        RegExp('^Error en la precisión: '),
+        'Los decimales son obligatorios.',
+        RegExp('^Error en los decimales: '),
       );
       expect(
         tester
@@ -1952,7 +1952,7 @@ void main() {
     await tester.pump();
     expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
     expect(find.text('La unidad es obligatoria.'), findsOneWidget);
-    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+    expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-unit')),
@@ -1960,7 +1960,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('La unidad es obligatoria.'), findsNothing);
-    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+    expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pump();

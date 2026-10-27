@@ -1619,7 +1619,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _creationPrecisionError != null,
                 label: _creationPrecisionError == null
                     ? null
-                    : 'Error en la precisión: $_creationPrecisionError',
+                    : 'Error en los decimales: $_creationPrecisionError',
                 child: DropdownButtonFormField<int>(
                   key: const ValueKey<String>('create-product-precision'),
                   isExpanded: true,
@@ -2842,7 +2842,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 const SizedBox(height: 8),
                 Text(
                   'Unidad: ${product.quantitySpec.unit} '
-                  '(precisión ${product.quantitySpec.precision})',
+                  '(decimales: ${product.quantitySpec.precision})',
                   style: theme.textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 16),
@@ -3333,9 +3333,9 @@ String? _creationUnitFieldError(String unit) {
 }
 
 String? _creationPrecisionFieldError(int? precision) {
-  if (precision == null) return 'La precisión es obligatoria.';
+  if (precision == null) return 'Los decimales son obligatorios.';
   if (precision < 0 || precision > 6) {
-    return 'La precisión debe ser un entero del 0 al 6.';
+    return 'Los decimales deben ser un entero del 0 al 6.';
   }
   return null;
 }
@@ -4159,7 +4159,7 @@ class _ProductSheet extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   'Unidad: ${product.quantitySpec.unit} '
-                  '(precisión ${product.quantitySpec.precision})',
+                  '(decimales: ${product.quantitySpec.precision})',
                   style: secondaryStyle,
                 ),
               ],

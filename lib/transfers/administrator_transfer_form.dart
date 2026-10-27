@@ -58,7 +58,7 @@ String _reasonMessage(TransferValidationReason reason) => switch (reason) {
     'Cada producto solo puede aparecer una vez.',
   TransferValidationReason.product => 'El código del producto no es válido.',
   TransferValidationReason.specification =>
-    'La unidad o la precisión del producto no es válida.',
+    'La unidad o los decimales del producto no son válidos.',
   TransferValidationReason.quantity =>
     'La cantidad debe ser un número positivo escrito con punto decimal.',
   TransferValidationReason.quantityRange => 'La cantidad es demasiado grande.',
@@ -848,7 +848,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           Text(
             spec == null
                 ? 'Selecciona un producto para ver la unidad.'
-                : 'Unidad: ${spec.unit} (precisión ${spec.precision})',
+                : 'Unidad: ${spec.unit} (decimales: ${spec.precision})',
             key: ValueKey<String>('transfer-unit-${row.id}'),
           ),
           const SizedBox(height: 4),
