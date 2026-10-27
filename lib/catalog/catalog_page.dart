@@ -299,6 +299,31 @@ class AuthenticatedCatalogPage extends StatefulWidget {
       _AuthenticatedCatalogPageState();
 }
 
+// Only exact classified codes select copy; backend text never reaches the UI.
+String _productRejectionMessage(String code, {required bool creation}) {
+  final summary = creation
+      ? 'Se rechazó la creación del producto.'
+      : 'Se rechazó el precio del producto.';
+  final detail = switch (code) {
+    'permission-denied' =>
+      creation
+          ? 'No tienes permiso para crear productos.'
+          : 'No tienes permiso para cambiar el precio del producto.',
+    'unauthenticated' => 'Tu sesión expiró. Inicia sesión para continuar.',
+    'failed-precondition' =>
+      creation
+          ? 'No se cumplen las condiciones para crear el producto. Revisa los datos.'
+          : 'El producto cambió mientras lo editabas; vuelve a abrirlo.',
+    'invalid-argument' =>
+      'Revisa los datos del producto antes de volver a intentar.',
+    'already-exists' => 'Ya existe un producto con esos datos.',
+    'not-found' =>
+      'El producto ya no está disponible; vuelve a abrir el catálogo.',
+    _ => 'No se pudo guardar el producto. Intenta de nuevo.',
+  };
+  return '$summary $detail';
+}
+
 class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   final PrivacyCurtain _privacy = PrivacyCurtain();
   final TextEditingController _name = TextEditingController();
@@ -1666,7 +1691,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       setState(() {
         _creationPending = false;
         _creationUncertain = false;
-        _creationError = 'Se rechazó la creación del producto (${error.code}).';
+        _creationError = _productRejectionMessage(error.code, creation: true);
       });
     } on ProductCreationStaleException {
       // A newer attempt or session owns presentation authority.
@@ -2076,7 +2101,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _pricingPending = false;
         _pricingUncertain = false;
         _lockedPricingDraft = null;
-        _pricingError = 'Se rechazó el precio del producto (${error.code}).';
+        _pricingError = _productRejectionMessage(error.code, creation: false);
       });
     } on ProductPricingUnresolvedException {
       if (!mounted || generation != _pricingGeneration) return;
@@ -2933,9 +2958,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         in _snapshot?.branchChoices ?? <CatalogBranchChoice>[]) {
       if (choice.branchId == draft.branchId) branchName = choice.branchName;
     }
+    final token = _privacy.token;
     bool answered = false;
-    return await showGeneralDialog<bool>(
+    return await showCurtainedDialog<bool>(
           context: context,
+          curtain: _privacy,
           barrierDismissible: false,
           barrierColor: Colors.transparent,
           transitionDuration: MediaQuery.disableAnimationsOf(context)
@@ -2978,16 +3005,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   actions: <Widget>[
                     OutlinedButton(
                       onPressed: () {
-                        if (answered) return;
+                        if (answered || !_privacy.isCurrent(token)) return;
                         answered = true;
                         Navigator.of(dialogContext).pop(false);
                       },
                       child: const Text('Corregir'),
                     ),
                     FilledButton(
-                      style: primaryActionStyle(context),
+                      style: primaryActionStyle(dialogContext),
                       onPressed: () {
-                        if (answered) return;
+                        if (answered || !_privacy.isCurrent(token)) return;
                         answered = true;
                         Navigator.of(dialogContext).pop(true);
                       },

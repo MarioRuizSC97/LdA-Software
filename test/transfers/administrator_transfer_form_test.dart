@@ -697,6 +697,46 @@ void main() {
     });
   });
 
+  for (final dispose in [false, true]) {
+    testWidgets(
+      'stale transfer confirmation cannot submit after ${dispose ? 'disposal' : 'owner change'}',
+      (tester) async {
+        final harness = await _pump(tester);
+        await _fillSingleLine(tester);
+        await _openConfirmation(tester);
+        final staleConfirm = tester
+            .widget<FilledButton>(_key('transfer-confirm-ok'))
+            .onPressed!;
+        if (dispose) {
+          await _unmount(tester);
+        } else {
+          harness.owner = 'admin-2';
+          await tester.pumpWidget(harness.widget());
+        }
+        staleConfirm();
+        await tester.pumpAndSettle();
+        expect(_key('transfer-confirm-dialog'), findsNothing);
+        expect(harness.backend.invocations, 0);
+        expect(harness.completed, isEmpty);
+        if (!dispose) {
+          expect(
+            tester.widget<TextFormField>(_quantities().first).controller!.text,
+            isEmpty,
+          );
+          // The new owner can build a new draft with a new key.
+          await _fillSingleLine(tester);
+          await _openConfirmation(tester);
+          expect(harness.minted, ['key-1', 'key-2']);
+          await _confirm(tester);
+          harness.succeed();
+          await tester.pumpAndSettle();
+          expect(harness.backend.invocations, 1);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   group('confirmation freezes the payload', () {
     testWidgets('falls back to the id only when the product name is unknown', (
       WidgetTester tester,
