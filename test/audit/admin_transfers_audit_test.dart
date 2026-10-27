@@ -104,10 +104,6 @@ void main() {
   expect(tester.widget<TextFormField>(find.byType(TextFormField).first).controller!.text, isEmpty);
   expect(calls, 0);
  });
- testWidgets('piece unit has Spanish user-facing label', (tester) async {
-  await tester.pumpWidget(_app(brightness: Brightness.light, submit: (_) => throw StateError('not submitted')));
-  await tester.pumpAndSettle();
-  await _line(tester, 0, 'Cinta', '1');
-  expect(find.textContaining('piece'), findsNothing, reason: 'T22 D2: English storage unit must be localized for Spanish users');
- });
+ // T22 D7: unit names such as 'piece' are product data entered at creation
+ // (T16 decision), not app copy, so no localization is asserted here.
 }
