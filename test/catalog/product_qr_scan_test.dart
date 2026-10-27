@@ -774,6 +774,9 @@ void main() {
       // The typed search stays fully usable on the web.
       await tester.enterText(_searchField(), 'grano');
       await tester.pumpAndSettle();
+      // Leave focus mode before inspecting the retained, filtered grid.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
       expect(find.text('Café Grano Selecto'), findsOneWidget);
       expect(find.text('Agua Mineral 1 L'), findsNothing);
 
