@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import 'cost_pin_test_helper.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/app/inventory_theme.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
@@ -94,6 +97,7 @@ Future<void> _open(
     );
     await tester.ensureVisible(action);
     await tester.tap(action);
+    if (panel == 'intake') await unlockCostPin(tester);
   }
   await tester.pumpAndSettle();
 }
@@ -127,6 +131,7 @@ void _pill(InputBorder? border) {
 }
 
 void main() {
+  setUpCostPin();
   for (final panel in ['creation', 'pricing', 'intake']) {
     testWidgets('$panel has only header exit and returns to catalog', (
       tester,

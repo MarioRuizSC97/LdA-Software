@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 
 import 'package:flutter/material.dart';
+
+import 'cost_pin_test_helper.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -147,7 +150,7 @@ Future<void> _openSheetAndStartIntake(WidgetTester tester, String code) async {
   final Finder intake = find.byKey(ValueKey<String>('intake-$code'));
   await tester.ensureVisible(intake);
   await tester.tap(intake);
-  await tester.pumpAndSettle();
+  await unlockCostPin(tester);
 }
 
 Future<void> _confirmIntake(WidgetTester tester) async {
@@ -260,6 +263,7 @@ class _FakeNoticeStreams implements TransferNoticeStreamSource {
 }
 
 void main() {
+  setUpCostPin();
   for (final String category in <String>['creation', 'pricing', 'intake']) {
     group('$category notice ownership', () {
       final List<Object> requests = <Object>[];
@@ -315,6 +319,7 @@ void main() {
           );
           await _selectCreationPrecision(tester, 2);
         } else if (category == 'intake') {
+          await unlockCostPin(tester);
           await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
           await tester.pumpAndSettle();
           await tester.tap(find.text('North Demo Branch').last);
@@ -431,7 +436,8 @@ void main() {
             await _openProductSheet(tester, 'PRD-COFFEE-001');
             expect(find.text('Coffee'), findsWidgets);
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-            expect(find.text('Costo no disponible'), findsOneWidget);
+            expect(find.text('Costo no disponible'), findsNothing);
+            expect(find.text('Ver costo'), findsOneWidget);
             await _closeProductSheet(tester);
             expect(find.textContaining('Sin entrada registrada'), findsWidgets);
           } else {
@@ -689,6 +695,8 @@ void main() {
             findsOneWidget,
           );
           await _openProductSheet(tester, _coffee.internalCode);
+          expect(find.text(state.$3), findsNothing);
+          await revealCost(tester);
           expect(find.text(state.$3), findsOneWidget);
           expect(find.bySemanticsLabel(state.$3), findsOneWidget);
           expect(
@@ -751,6 +759,7 @@ void main() {
         loader.requests.last.complete(snapshot(cents: 345));
         await tester.pumpAndSettle();
         await _openProductSheet(tester, _coffee.internalCode);
+        await revealCost(tester);
         expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
         await _closeProductSheet(tester);
         for (final CatalogSnapshot next in <CatalogSnapshot>[
@@ -771,6 +780,7 @@ void main() {
               : next.costs.isEmpty
               ? 'Sin costo registrado'
               : 'Último costo unitario: 6.78 MXN';
+          await revealCost(tester);
           expect(find.text(expected), findsOneWidget);
           expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
           await _closeProductSheet(tester);
@@ -4055,6 +4065,9 @@ void main() {
       find.byKey(const ValueKey<String>('intake-unit-cost')),
       '12.50',
     );
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Registrar entrada'),
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
     await tester.pumpAndSettle();
 
@@ -4136,6 +4149,9 @@ void main() {
       await tester.enterText(
         find.byKey(const ValueKey<String>('intake-unit-cost')),
         '12.50',
+      );
+      await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Registrar entrada'),
       );
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
@@ -4781,7 +4797,7 @@ void main() {
 
     for (final bool intake in <bool>[false, true]) {
       testWidgets(
-        'manual ${intake ? 'intake' : 'pricing'} close cancels delayed creation handoff',
+        'manual ${intake ? 'navigation after intake exit' : 'pricing close'} cancels delayed creation handoff',
         (WidgetTester tester) async {
           final _CatalogLoader loader = _CatalogLoader();
           await tester.pumpWidget(
@@ -4809,6 +4825,7 @@ void main() {
           await tester.pumpAndSettle();
           await tester.tap(action);
           await tester.pumpAndSettle();
+          if (intake) await unlockCostPin(tester);
           await fillAndCreate(tester);
           await tester.pump();
           await tester.pump();
@@ -4817,6 +4834,13 @@ void main() {
           // through the header; a refresh is still pending, so a bounded
           // pump is used instead of pumpAndSettle.
           await tester.pump(const Duration(milliseconds: 400));
+          if (intake) {
+            // Creation now exits intake instead of suspending its PIN grant.
+            // A new manual navigation still cancels the delayed handoff.
+            expect(find.byKey(const ValueKey('intake-quantity')), findsNothing);
+            await tester.tap(find.text('Crear producto'));
+            await tester.pump(const Duration(milliseconds: 400));
+          }
           final Finder close = find.byKey(const ValueKey<String>('panel-back'));
           await tester.ensureVisible(close);
           await tester.tap(close);
