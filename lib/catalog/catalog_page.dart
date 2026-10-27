@@ -63,6 +63,15 @@ typedef StockIntakeDraftLookup = StockIntakeDraft? Function(
   String branchId,
 );
 
+// Ephemeral navigation state, never a submitted/persisted intake draft or
+// authorization. No widgets/controllers from the intake survive underneath.
+typedef _IntakeReturn = ({
+  CatalogProduct product,
+  String? branch,
+  String quantity,
+  String cost,
+});
+
 class CatalogPage extends StatefulWidget {
   const CatalogPage({
     required this.repository,
@@ -306,6 +315,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _renameUncertain = false;
   int _renameGeneration = 0;
   CatalogProduct? _intakeProduct;
+  _IntakeReturn? _intakeReturn;
   StockIntakeDraft? _lockedIntakeDraft;
   StockIntakeResult? _intakeSuccess;
   bool _intakeNoticeExpired = false;
@@ -412,6 +422,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
     if (sessionChanged ||
         oldWidget.submitStockIntake != widget.submitStockIntake) {
+      _intakeReturn = null;
       _intakeGeneration += 1;
       _clearIntakePresentation();
     }
@@ -462,14 +473,25 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       ? widget.saleCorrections
       : null;
 
-  void _leaveIntakeForPanel() {
+  void _leaveIntakeForPanel({bool rememberIntake = false}) {
     _privacy.invalidate();
-    if (_intakeProduct == null) return;
+    if (!rememberIntake) _intakeReturn = null;
+    final product = _intakeProduct;
+    if (product == null) return;
+    if (rememberIntake) {
+      _intakeReturn = (
+        product: product,
+        branch: _intakeBranch,
+        quantity: _intakeQuantity.text,
+        cost: _intakeCost.text,
+      );
+    }
     _intakeGeneration += 1;
     _clearIntakePresentation();
   }
 
   Future<void> _logoutWithPrivacy() async {
+    _intakeReturn = null;
     _privacy.invalidate();
     _presentationRevision += 1;
     setState(() {
@@ -495,7 +517,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showMovements() {
-    _leaveIntakeForPanel();
+    _leaveIntakeForPanel(rememberIntake: true);
     _presentationRevision += 1;
     setState(() => _movementsVisible = true);
   }
@@ -516,7 +538,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showTransfer() {
-    _leaveIntakeForPanel();
+    _leaveIntakeForPanel(rememberIntake: true);
     _presentationRevision += 1;
     setState(() {
       _transferSnapshot = _snapshot;
@@ -531,6 +553,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _closeTransfer({bool restorePreviousPanel = false}) {
+    // Only header Volver preserves the back chain; Cerrar ends it.
+    if (!restorePreviousPanel) _intakeReturn = null;
     _presentationRevision += 1;
     setState(() {
       if (restorePreviousPanel &&
@@ -585,13 +609,25 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final List<VoidCallback> closers = _openPanelClosers(
       restoreTransferPanel: true,
     );
-    if (closers.isNotEmpty) closers.first();
+    if (closers.isEmpty) return;
+    final returningFromPanel = _movementsVisible || _transferVisible;
+    closers.first();
+    if (returningFromPanel && !_movementsVisible && !_transferVisible) {
+      final remembered = _intakeReturn;
+      _intakeReturn = null;
+      if (remembered != null) {
+        unawaited(_showIntake(remembered.product, restore: remembered));
+      }
+    }
   }
 
   /// "Inicio": closes every open panel and returns to the catalog. Retained
   /// uncertain drafts stay stored and are offered again when reopened.
   void _goHome() {
     if (_navigationBlocked) return;
+    _intakeReturn = null;
+    _privacy.invalidate();
+    _presentationRevision += 1;
     for (final VoidCallback close in _openPanelClosers()) {
       close();
     }
@@ -2499,12 +2535,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   bool _intakePinPromptOpen = false;
 
-  Future<void> _showIntake(CatalogProduct product) async {
+  Future<void> _showIntake(
+    CatalogProduct product, {
+    _IntakeReturn? restore,
+  }) async {
     if (_intakePinPromptOpen ||
         widget.session.role != InventoryRole.administrator ||
         widget.submitStockIntake == null) {
       return;
     }
+    _intakeReturn = null;
     _privacy.invalidate();
     final privacyToken = _privacy.token;
     _intakePinPromptOpen = true;
@@ -2560,7 +2600,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _intakeBranch = unresolvedBranchId;
         _lockIntakeDraft(unresolved);
       } else {
-        _intakeBranch = null;
+        _intakeBranch = restore?.branch;
+        _intakeQuantity.text = restore?.quantity ?? '';
+        _intakeCost.text = restore?.cost ?? '';
         _intakeUncertain = false;
       }
     });
@@ -2730,6 +2772,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _intakeUncertain = false;
         _lockedIntakeDraft = null;
         _intakeProduct = null;
+        _intakeReturn = null;
         _intakeSuccess = result;
         _intakeNoticeExpired = false;
         _expireSuccessNotice('intake', () {
@@ -3092,7 +3135,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// chain that produced this record.
   Widget _bodyPanel(({String? identity, Widget child}) panel) {
     if (panel.identity case final String identity) {
-      return PanelTransition(identity: identity, child: panel.child);
+      return PanelTransition(
+        // An intake privacy boundary must unmount the previous presentation,
+        // not keep its sensitive text alive as a fading outgoing panel.
+        key: ValueKey<int>(_intakeGeneration),
+        identity: identity,
+        child: panel.child,
+      );
     }
     return panel.child;
   }
