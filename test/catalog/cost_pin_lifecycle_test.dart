@@ -156,6 +156,38 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await CostPinStore().create('1234');
   });
+  testWidgets('system back restores intake only behind a fresh PIN', (
+    tester,
+  ) async {
+    await _mount(tester);
+    await _intake(tester);
+    await _typeDraft(tester);
+    await _tap(tester, 'transfer-open');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Ingresa el PIN'), findsOneWidget);
+    _expectNoIntake(tester);
+    await unlockCostPin(tester);
+    _expectDraft(tester);
+    await _tap(tester, 'transfer-open');
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(_key('cost-pin-dialog'), findsNothing);
+    _expectNoIntake(tester);
+  });
+  testWidgets('system back dismisses details before catalog navigation', (
+    tester,
+  ) async {
+    await _mount(tester);
+    await _details(tester);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(_key('product-sheet-LIFECYCLE'), findsNothing);
+    expect(find.text('Desliza otra vez para salir'), findsNothing);
+    expect(find.byType(AuthenticatedCatalogPage), findsOneWidget);
+  });
   for (final replacement in <EmulatorSession?>[
     null,
     const EmulatorSession(

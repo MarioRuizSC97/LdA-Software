@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/services.dart' show HapticFeedback, SystemNavigator;
 
 import '../app/app_bar_surface.dart';
 import '../app/app_info.dart';
@@ -71,6 +71,34 @@ typedef _IntakeReturn = ({
   String quantity,
   String cost,
 });
+
+class _CatalogBackEdge extends StatefulWidget {
+  const _CatalogBackEdge({required this.onBack});
+  final VoidCallback onBack;
+
+  @override
+  State<_CatalogBackEdge> createState() => _CatalogBackEdgeState();
+}
+
+class _CatalogBackEdgeState extends State<_CatalogBackEdge> {
+  double _distance = 0;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.translucent,
+    excludeFromSemantics: true,
+    onHorizontalDragStart: (_) => _distance = 0,
+    onHorizontalDragUpdate: (details) => _distance += details.primaryDelta ?? 0,
+    onHorizontalDragEnd: (details) {
+      if (_distance >= 64 ||
+          (_distance >= 20 && (details.primaryVelocity ?? 0) >= 700)) {
+        widget.onBack();
+      }
+      _distance = 0;
+    },
+    onHorizontalDragCancel: () => _distance = 0,
+  );
+}
 
 class CatalogPage extends StatefulWidget {
   const CatalogPage({
@@ -621,6 +649,69 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
   }
 
+  Timer? _exitConfirmation;
+
+  void _systemBack({required bool searchActive}) {
+    // Search owns its own PopScope. Use the build-time focus state: its
+    // callback may already have unfocused the field during this same pop.
+    if (searchActive || _navigationBlocked) return;
+    if (_openPanelClosers().isNotEmpty || _intakeReturn != null) {
+      _exitConfirmation?.cancel();
+      _goBack();
+      return;
+    }
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    if (_exitConfirmation?.isActive ?? false) {
+      _exitConfirmation?.cancel();
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+    _exitConfirmation = Timer(const Duration(seconds: 2), () {});
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Desliza otra vez para salir'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
+
+  Widget _backNavigation(Widget child) => Builder(
+    builder: (context) {
+      final searchActive =
+          CatalogSearchChromeScope.maybeOf(context)?.value ?? false;
+      final panelOpen = _openPanelClosers().isNotEmpty;
+      if (panelOpen) _exitConfirmation?.cancel();
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _systemBack(searchActive: searchActive);
+        },
+        child:
+            !kIsWeb &&
+                defaultTargetPlatform == TargetPlatform.iOS &&
+                panelOpen &&
+                !searchActive
+            ? Stack(
+                children: [
+                  child,
+                  // Only this edge strip enters the gesture arena; horizontal
+                  // controls and selection away from it keep their own drags.
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 24,
+                    child: _CatalogBackEdge(onBack: _goBack),
+                  ),
+                ],
+              )
+            : child,
+      );
+    },
+  );
+
   /// "Inicio": closes every open panel and returns to the catalog. Retained
   /// uncertain drafts stay stored and are offered again when reopened.
   void _goHome() {
@@ -839,6 +930,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   @override
   void dispose() {
+    _exitConfirmation?.cancel();
     _privacy.invalidate();
     for (final Timer timer in _successTimers.values) {
       timer.cancel();
@@ -1474,7 +1566,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
-    return AppBarSurfaceScope(child: CatalogSearchChromeScope(child: scaffold));
+    return AppBarSurfaceScope(
+      child: CatalogSearchChromeScope(child: _backNavigation(scaffold)),
+    );
   }
 
   void _showCreation() {
