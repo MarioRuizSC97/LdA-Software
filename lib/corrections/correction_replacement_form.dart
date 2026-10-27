@@ -214,6 +214,7 @@ class _LineEditor extends StatelessWidget {
               Row(
                 children: <Widget>[
                   Checkbox(
+                    semanticLabel: 'Seleccionar $name',
                     key: ValueKey<String>('replacement-line-select-$index'),
                     value: entry.selected,
                     onChanged: editable

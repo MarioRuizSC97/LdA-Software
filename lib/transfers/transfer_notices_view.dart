@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:lda_inventory/app/panel_layout.dart';
 import 'package:lda_inventory/movements/inventory_movement.dart';
+import 'package:lda_inventory/sales/sale_format.dart';
 import 'package:lda_inventory/transfers/transfer_notice.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
@@ -254,7 +255,7 @@ class _NoticeCard extends StatelessWidget {
     return Semantics(
       container: true,
       label:
-          'Traslado ${notice.transferId}, '
+          'Traslado del ${formatSaleDateTime(notice.occurredAt.toLocal())}, '
           '${isRead ? 'leído' : 'sin leer'}',
       child: Card(
         margin: EdgeInsets.zero,
@@ -267,7 +268,7 @@ class _NoticeCard extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      'Traslado ${notice.transferId}',
+                      'Traslado del ${formatSaleDateTime(notice.occurredAt.toLocal())}',
                       style: theme.textTheme.titleSmall,
                       softWrap: true,
                     ),
@@ -285,9 +286,21 @@ class _NoticeCard extends StatelessWidget {
               for (final TransferNoticeLine line in notice.lines)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${productNames[line.productId] ?? line.productId}: '
-                    '${formatSignedQuantity(line.quantityScaled, line.precision, line.unit)}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '${productNames[line.productId] ?? 'Producto no disponible'}: '
+                        '${formatSignedQuantity(line.quantityScaled, line.precision, line.unit)}',
+                      ),
+                      if (!productNames.containsKey(line.productId))
+                        Text(
+                          'código ${line.productId}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               const SizedBox(height: 8),

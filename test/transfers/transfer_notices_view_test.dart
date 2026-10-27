@@ -111,7 +111,8 @@ void main() {
         findsNothing,
       );
       // The notice stays visible (retained history), just marked read.
-      expect(find.textContaining(_transferA), findsOneWidget);
+      expect(find.textContaining('Traslado del '), findsOneWidget);
+      expect(find.textContaining(_transferA), findsNothing);
       expect(marked, isEmpty);
     });
 

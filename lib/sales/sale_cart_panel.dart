@@ -973,7 +973,7 @@ class _SaleTotals extends StatelessWidget {
             style: theme.textTheme.titleLarge,
           ),
           SaleQuoteStatus.rejected => Text(
-            'No se pudo calcular el total: ${controller.quoteMessage}',
+            controller.quoteMessage ?? saleRejectedMessage,
             style: TextStyle(color: theme.colorScheme.error),
           ),
           _ => Wrap(
