@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
@@ -165,6 +166,20 @@ void main() {
   testWidgets('a request in flight disables Inicio and Volver', (
     WidgetTester tester,
   ) async {
+    final platformCalls = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        platformCalls.add(call.method);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
     final List<ProductCreationDraft> sent = <ProductCreationDraft>[];
     await tester.pumpWidget(
       _adminPage(
@@ -205,6 +220,11 @@ void main() {
     expect(_enabled(tester, _back), isFalse);
     await tester.tap(_back, warnIfMissed: false);
     await tester.pump();
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.text('Desliza otra vez para salir'), findsNothing);
+    expect(platformCalls, isNot(contains('SystemNavigator.pop')));
+    // System back must obey the same pending guard as the header.
     // The form remains mounted even though back navigation was attempted.
     expect(
       find.byKey(const ValueKey<String>('create-product-name')),
