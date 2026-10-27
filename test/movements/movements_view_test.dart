@@ -130,10 +130,7 @@ void main() {
       findsOne,
     );
     expect(
-      find.descendant(
-        of: intake,
-        matching: find.textContaining('PRD-UNKNOWN-01'),
-      ),
+      find.descendant(of: intake, matching: find.text('código PRD-UNKNOWN-01')),
       findsOne,
     );
     expect(
@@ -149,6 +146,14 @@ void main() {
       'Vendedor sin nombre (seller…)',
     );
     expect(find.text('Asignar nombre'), findsOne);
+    await tester.scrollUntilVisible(
+      find.text('Movimiento ilegible'),
+      150,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ),
+    );
     expect(find.text('Movimiento ilegible'), findsOne);
     // Intake never reads a profile, and each seller is read once.
     expect(backend.profileReads, <String>[namedSellerId, unnamedSellerId]);

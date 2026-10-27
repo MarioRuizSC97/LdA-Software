@@ -421,7 +421,8 @@ void main() {
       ),
     );
     await _tap(tester, _key('sale-invoice-switch'));
-    expect(find.textContaining('product has no price'), findsOneWidget);
+    expect(find.text(saleMissingPriceMessage), findsOneWidget);
+    expect(find.textContaining('product has no price'), findsNothing);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
   });
 
@@ -543,10 +544,7 @@ void main() {
     sales.holdQuotes = true;
     await _tap(tester, _key('sale-charge'));
 
-    expect(
-      find.text('La venta fue rechazada: product does not exist'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
     expect(sales.quotedCarts, hasLength(3));
     expect(_enabled(tester, _key('sale-charge')), isFalse);
     expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
@@ -554,10 +552,7 @@ void main() {
     sales.heldQuotes.single.complete(sales.quoteNow(sales.quotedCarts.last));
     await tester.pumpAndSettle();
     expect(_enabled(tester, _key('sale-charge')), isTrue);
-    expect(
-      find.text('La venta fue rechazada: product does not exist'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
   });
 
   testWidgets('the English mismatch text without a reason is a plain '
@@ -579,10 +574,7 @@ void main() {
       find.text('El total cambió. Revisa el nuevo total y vuelve a cobrar.'),
       findsNothing,
     );
-    expect(
-      find.text('La venta fue rechazada: $paymentMismatchMessage'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
     expect(sales.quotedCarts, hasLength(3));
   });
 

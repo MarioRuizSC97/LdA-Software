@@ -293,6 +293,7 @@ class _ReturnLineEditor extends StatelessWidget {
               Row(
                 children: <Widget>[
                   Checkbox(
+                    semanticLabel: 'Seleccionar $name',
                     key: ValueKey<String>('exchange-line-select-$index'),
                     value: entry.selected,
                     onChanged: editable

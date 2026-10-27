@@ -56,6 +56,24 @@ const String saleInsufficientStockMessage =
     'No hay existencias suficientes para completar la venta.';
 const String saleSessionMessage =
     'Tu sesión ya no permite registrar ventas. Vuelve a iniciar sesión.';
+const String saleMissingPriceMessage =
+    'Un producto del carrito no tiene precio; pide al administrador que lo configure.';
+const String saleRejectedMessage =
+    'No se pudo completar la venta. Revisa el carrito e inténtalo de nuevo.';
+
+// Never interpolate backend messages or identifiers into user-facing copy.
+String saleRejectionMessage(SaleRejectedException error) {
+  if (error.isPaymentMismatch) return saleTotalChangedMessage;
+  if (error.isInsufficientStock) return saleInsufficientStockMessage;
+  if (error.code == 'failed-precondition' &&
+      (error.reason == 'missing-price' ||
+          error.message == 'product has no price' ||
+          error.message.startsWith('product has no price:'))) {
+    return saleMissingPriceMessage;
+  }
+  return saleRejectedMessage;
+}
+
 const String salePendingReceiptMessage =
     'Hay una venta registrada que aún no revisas. Revisa el comprobante y '
     'toca "Nueva venta" para continuar.';
@@ -340,13 +358,7 @@ class SaleCartController extends ChangeNotifier {
       if (_disposed) return;
       _submitting = false;
       _lockedDraft = null;
-      _message = error.isPaymentMismatch
-          ? saleTotalChangedMessage
-          : error.isInsufficientStock
-          ? saleInsufficientStockMessage
-          : error.message.isEmpty
-          ? 'La venta fue rechazada.'
-          : 'La venta fue rechazada: ${error.message}';
+      _message = saleRejectionMessage(error);
       // Every rejection re-quotes: the old ready quote may be stale (a
       // changed price, short stock), so it must never keep "Cobrar" enabled.
       _requote();
@@ -465,7 +477,7 @@ class SaleCartController extends ChangeNotifier {
     } on SaleRejectedException catch (error) {
       if (!_isCurrentQuote(generation)) return;
       _quoteStatus = SaleQuoteStatus.rejected;
-      _quoteMessage = error.message;
+      _quoteMessage = saleRejectionMessage(error);
     } on SaleSessionException {
       if (!_isCurrentQuote(generation)) return;
       _quoteStatus = SaleQuoteStatus.rejected;

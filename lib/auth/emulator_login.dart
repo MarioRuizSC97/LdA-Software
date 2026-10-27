@@ -1425,6 +1425,8 @@ class _LoginViewState extends State<_LoginView> {
   }
 
   Future<void> _submit() async {
+    // Session-generation changes release this guard in didUpdateWidget.
+    if (_submitting) return;
     final String email = _email.text.trim();
     final String password = _password.text;
     if (email.isEmpty || password.isEmpty) {

@@ -226,7 +226,7 @@ class _MovementsViewState extends State<MovementsView> {
     for (final CatalogBranchChoice choice in widget.branchChoices) {
       if (choice.branchId == branchId) return choice.branchName;
     }
-    return branchId;
+    return 'Sucursal no disponible';
   }
 
   @override
@@ -423,7 +423,7 @@ class _MovementsViewState extends State<MovementsView> {
 
   Widget _movementRow(InventoryMovement movement) {
     final String product =
-        widget.productNames[movement.productId] ?? movement.productId;
+        widget.productNames[movement.productId] ?? 'Producto no disponible';
     final String quantity = formatSignedQuantity(
       movement.quantityScaled,
       movement.precision,
@@ -462,6 +462,13 @@ class _MovementsViewState extends State<MovementsView> {
                     ],
                   ),
                 ),
+                if (!widget.productNames.containsKey(movement.productId))
+                  Text(
+                    'código ${movement.productId}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 Text(
                   '${_branchLabel(movement.branchId)} · '
                   '${formatSaleDateTime(movement.occurredAt)}',
@@ -526,6 +533,7 @@ class _SellerNameDialogState extends State<_SellerNameDialog> {
   }
 
   Future<void> _save() async {
+    if (_pending) return;
     // After an uncertain outcome only the identical name may be retried.
     final String? name = _lockedName ?? normalizeSellerDisplayName(_name.text);
     if (name == null) {
