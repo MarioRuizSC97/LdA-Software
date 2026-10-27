@@ -2,6 +2,9 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
+
+import 'cost_pin_test_helper.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/app/inventory_theme.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
@@ -130,6 +133,7 @@ Future<void> _open(WidgetTester tester, String panel) async {
   await _tap(tester, _key('product-details-$_code'));
   expect(find.text(_code), findsOneWidget);
   await _tap(tester, _key('$panel-$_code'));
+  if (panel == 'intake') await unlockCostPin(tester);
 }
 
 Future<void> _choose(WidgetTester tester, String key, String label) async {
@@ -152,6 +156,7 @@ void _size(WidgetTester tester, double width) {
 }
 
 void main() {
+  setUpCostPin();
   for (final brightness in Brightness.values) {
     for (final panel in ['configure-price', 'intake']) {
       testWidgets('$panel primary tone $brightness', (tester) async {

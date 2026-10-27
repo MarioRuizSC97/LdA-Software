@@ -17,6 +17,8 @@ import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
+import '../catalog/cost_pin_test_helper.dart';
+
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
     this.restored,
@@ -392,6 +394,7 @@ class _FakeNoticeStreams implements TransferNoticeStreamSource {
 }
 
 void main() {
+  setUpCostPin();
   testWidgets('shows a safe loading state while bootstrap is pending', (
     WidgetTester tester,
   ) async {
@@ -2923,7 +2926,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
-      await tester.pumpAndSettle();
+      await unlockCostPin(tester);
       await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('North Demo Branch').last);
@@ -2990,7 +2993,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
-      await tester.pumpAndSettle();
+      await unlockCostPin(tester);
       expect(find.text('North Demo Branch'), findsOneWidget);
       expect(
         tester

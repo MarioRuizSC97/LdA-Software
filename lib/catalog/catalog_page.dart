@@ -9,6 +9,9 @@ import '../app/app_bar_surface.dart';
 import '../app/app_info.dart';
 import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
+import '../app/cost_pin_dialog.dart';
+import '../app/cost_pin_store.dart';
+import '../app/privacy_curtain.dart';
 import '../app/panel_layout.dart';
 import '../app/primary_action_style.dart';
 import '../app/panel_transition.dart';
@@ -170,6 +173,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     required this.session,
     required this.catalogLoader,
     required this.onLogout,
+    this.costPinStore,
     this.environment = BackendEnvironment.localEmulator,
     this.createProduct,
     this.createDraftId,
@@ -201,6 +205,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final BackendEnvironment environment;
   final CatalogSnapshotLoader catalogLoader;
   final Future<void> Function() onLogout;
+  final CostPinStore? costPinStore;
   final ProductCreationSubmit? createProduct;
   final ProductDraftIdFactory? createDraftId;
   final ProductCreationDraft? unresolvedProductDraft;
@@ -258,6 +263,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
 }
 
 class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
+  final PrivacyCurtain _privacy = PrivacyCurtain();
   final TextEditingController _name = TextEditingController();
   final TextEditingController _unit = TextEditingController();
   final TextEditingController _listedPrice = TextEditingController();
@@ -342,6 +348,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   @override
   void initState() {
     super.initState();
+    _privacy.bind(_sessionIdentity(widget.session));
     _configureCreation();
     _configureSale();
     _configureNotices();
@@ -353,6 +360,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     super.didUpdateWidget(oldWidget);
     final bool sessionChanged =
         _sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session);
+    if (sessionChanged) {
+      _presentationRevision += 1;
+      _privacy.bind(_sessionIdentity(widget.session));
+    }
     final ProductCreationCoordinator? coordinator = _creationCoordinator;
     // The shell freezes our request before token refresh can rebuild this
     // page. That matching pending echo is not an uncertain restored request.
@@ -451,7 +462,25 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       ? widget.saleCorrections
       : null;
 
+  void _leaveIntakeForPanel() {
+    _privacy.invalidate();
+    if (_intakeProduct == null) return;
+    _intakeGeneration += 1;
+    _clearIntakePresentation();
+  }
+
+  Future<void> _logoutWithPrivacy() async {
+    _privacy.invalidate();
+    _presentationRevision += 1;
+    setState(() {
+      _intakeGeneration += 1;
+      _clearIntakePresentation();
+    });
+    await widget.onLogout();
+  }
+
   void _showCorrections() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() {
       _cartVisible = false;
@@ -466,6 +495,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showMovements() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() => _movementsVisible = true);
   }
@@ -486,6 +516,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showTransfer() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() {
       _transferSnapshot = _snapshot;
@@ -642,6 +673,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _showNotices() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() {
       _cartVisible = false;
@@ -734,6 +766,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// Opens the cart, unless a committed sale awaits acknowledgement: then
   /// its receipt is shown instead.
   void _openCart(SaleCartController sale) {
+    _leaveIntakeForPanel();
     final bool receiptPending = sale.reconcileOnOpen();
     setState(() => _cartVisible = !receiptPending);
   }
@@ -770,6 +803,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   @override
   void dispose() {
+    _privacy.invalidate();
     for (final Timer timer in _successTimers.values) {
       timer.cancel();
     }
@@ -1205,7 +1239,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           AppSidePanelEntry(
                             icon: const Icon(Icons.logout),
                             label: 'Cerrar sesión',
-                            onSelected: widget.onLogout,
+                            onSelected: _logoutWithPrivacy,
                           ),
                         ],
                       ),
@@ -1213,7 +1247,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     // for it — mobile only moved Reload out of the bar (S2c).
                     if (!compactBar) ...<Widget>[
                       OutlinedButton(
-                        onPressed: widget.onLogout,
+                        onPressed: _logoutWithPrivacy,
                         child: const Text('Cerrar sesión'),
                       ),
                       const SizedBox(width: 12),
@@ -1408,6 +1442,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _showCreation() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() => _creationVisible = true);
   }
@@ -1732,6 +1767,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   );
 
   void _showPricing(CatalogProduct product) {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
       product.internalCode,
@@ -2461,7 +2497,34 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     ]);
   }
 
-  void _showIntake(CatalogProduct product) {
+  bool _intakePinPromptOpen = false;
+
+  Future<void> _showIntake(CatalogProduct product) async {
+    if (_intakePinPromptOpen ||
+        widget.session.role != InventoryRole.administrator ||
+        widget.submitStockIntake == null) {
+      return;
+    }
+    _privacy.invalidate();
+    final privacyToken = _privacy.token;
+    _intakePinPromptOpen = true;
+    final session = _sessionIdentity(widget.session);
+    final generation = _intakeGeneration;
+    final revision = _presentationRevision;
+    final accepted = await showCostPinDialog(
+      context,
+      store: widget.costPinStore,
+      curtain: _privacy,
+    );
+    _intakePinPromptOpen = false;
+    if (!mounted ||
+        !accepted ||
+        !_privacy.isCurrent(privacyToken) ||
+        _sessionIdentity(widget.session) != session ||
+        generation != _intakeGeneration ||
+        revision != _presentationRevision) {
+      return;
+    }
     _presentationRevision += 1;
     // Explicitly scan every existing administrator branch choice for an
     // unresolved draft. A draft found for any branch — including one different
@@ -2837,6 +2900,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
+                TextButton(
+                  onPressed: locked || _intakeConfirming
+                      ? null
+                      : () => showCostPinDialog(
+                          context,
+                          change: true,
+                          store: widget.costPinStore,
+                          curtain: _privacy,
+                        ),
+                  child: const Text('Cambiar PIN'),
+                ),
                 const SizedBox(height: 12),
                 Text(product.name, style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
@@ -3038,6 +3112,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     return (
       identity: 'catalog',
       child: _CatalogList(
+        curtain: _privacy,
+        pinStore: widget.costPinStore,
         qrScan: widget.qrScan,
         items: items,
         role: widget.session.role,
@@ -3656,7 +3732,11 @@ class _ConnectionStatus extends StatelessWidget {
 }
 
 class _CatalogList extends StatefulWidget {
+  final PrivacyCurtain? curtain;
+  final CostPinStore? pinStore;
   const _CatalogList({
+    this.curtain,
+    this.pinStore,
     required this.items,
     this.branchChoices = const <CatalogBranchChoice>[],
     this.snapshot,
@@ -3740,6 +3820,8 @@ class _CatalogListState extends State<_CatalogList> {
   }
 
   Widget _card(CatalogItem item) => _ProductCard(
+    curtain: widget.curtain,
+    pinStore: widget.pinStore,
     item: item,
     costLabel: widget.role == InventoryRole.administrator
         ? _latestCostLabel(widget.snapshot, item.product.internalCode)
@@ -3912,7 +3994,11 @@ String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
 /// on every platform. The seller's sale action stays on the card so selling
 /// remains one tap.
 class _ProductCard extends StatelessWidget {
+  final PrivacyCurtain? curtain;
+  final CostPinStore? pinStore;
   const _ProductCard({
+    this.curtain,
+    this.pinStore,
     required this.costLabel,
     required this.item,
     required this.role,
@@ -3934,15 +4020,37 @@ class _ProductCard extends StatelessWidget {
   CatalogProduct get product => item.product;
 
   void _openDetails(BuildContext context) {
+    // This local flag dies with the sheet; it never authorizes intake or a
+    // subsequent sheet. Cost data is still in memory, not access-controlled.
+    bool costRevealed = false;
+    curtain?.invalidate();
+    final token = curtain?.token;
     showProductPeek(
       context: context,
-      builder: (BuildContext context) => _ProductSheet(
-        costLabel: costLabel,
-        item: item,
-        role: role,
-        branchChoices: branchChoices,
-        onConfigurePricing: onConfigurePricing,
-        onRecordIntake: onRecordIntake,
+      curtain: curtain,
+      builder: (BuildContext context) => StatefulBuilder(
+        builder: (context, updateSheet) => _ProductSheet(
+          costLabel: costRevealed ? costLabel : null,
+          onRevealCost: role == InventoryRole.administrator && !costRevealed
+              ? () async {
+                  final accepted = await showCostPinDialog(
+                    context,
+                    store: pinStore,
+                    curtain: curtain,
+                  );
+                  if (context.mounted &&
+                      accepted &&
+                      (curtain == null || curtain!.isCurrent(token!))) {
+                    updateSheet(() => costRevealed = true);
+                  }
+                }
+              : null,
+          item: item,
+          role: role,
+          branchChoices: branchChoices,
+          onConfigurePricing: onConfigurePricing,
+          onRecordIntake: onRecordIntake,
+        ),
       ),
     );
   }
@@ -4041,7 +4149,10 @@ class _ProductCard extends StatelessWidget {
 /// intake actions. The unauthenticated diagnostic page (role null) keeps the
 /// full detail set it always showed.
 class _ProductSheet extends StatelessWidget {
+  final VoidCallback? onRevealCost;
+
   const _ProductSheet({
+    this.onRevealCost,
     required this.costLabel,
     required this.item,
     required this.role,
@@ -4146,6 +4257,11 @@ class _ProductSheet extends StatelessWidget {
                   ),
                 ],
               ],
+              if (administrator && onRevealCost != null)
+                TextButton(
+                  onPressed: onRevealCost,
+                  child: const Text('Ver costo'),
+                ),
               if (administrator && costLabel != null) ...<Widget>[
                 const SizedBox(height: 4),
                 Semantics(

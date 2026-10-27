@@ -2,12 +2,16 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
+import '../app/privacy_curtain.dart';
+
 /// Presents product details without changing their role or action ownership.
 Future<void> showProductPeek({
   required BuildContext context,
   required WidgetBuilder builder,
-}) => showGeneralDialog<void>(
+  PrivacyCurtain? curtain,
+}) => showCurtainedDialog<void>(
   context: context,
+  curtain: curtain,
   barrierDismissible: true,
   barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
   barrierColor: Colors.black54,
