@@ -4396,6 +4396,92 @@ void main() {
     },
   );
 
+  for (final change in ['uid', 'branch', 'role', 'logout', 'dispose']) {
+    testWidgets('intake confirmation revokes stale action on $change', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      var calls = 0;
+      Future<StockIntakeResult> submit(StockIntakeDraft draft) async {
+        calls++;
+        return _intakeResult(draft);
+      }
+
+      Future<CatalogSnapshot> load(EmulatorSession _) async =>
+          _snapshotWithBranches(_coffee);
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: load,
+          submitStockIntake: submit,
+          createIntakeId: () => 'intake-revoked',
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
+      await tester.tap(find.byKey(const ValueKey('intake-branch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('North Demo Branch').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('intake-quantity')),
+        '3',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('intake-unit-cost')),
+        '12.50',
+      );
+      final record = find.widgetWithText(FilledButton, 'Registrar entrada');
+      await tester.ensureVisible(record);
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      final staleConfirm = tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Confirmar'))
+          .onPressed!;
+      if (change == 'logout') {
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Cerrar sesión'),
+            )
+            .onPressed!();
+      } else if (change == 'dispose') {
+        await tester.pumpWidget(const SizedBox.shrink());
+      } else {
+        await tester.pumpWidget(
+          _authenticatedApp(
+            session: EmulatorSession(
+              userId: change == 'uid' ? 'another-admin' : _administrator.userId,
+              email: _administrator.email,
+              role: change == 'role'
+                  ? InventoryRole.seller
+                  : InventoryRole.administrator,
+              branchId: change == 'branch' || change == 'role'
+                  ? 'branch-south'
+                  : null,
+            ),
+            loader: load,
+            submitStockIntake: submit,
+          ),
+        );
+      }
+      // Even a callback retained before the route is removed has no authority.
+      staleConfirm();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('intake-confirm-dialog')), findsNothing);
+      expect(
+        find.textContaining('Costo unitario: 12.50', skipOffstage: false),
+        findsNothing,
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Costo unitario: 12[.,]50')),
+        findsNothing,
+      );
+      expect(calls, 0);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+  }
+
   testWidgets(
     'stale intake completion is discarded after role change and disposal',
     (WidgetTester tester) async {
@@ -4558,6 +4644,74 @@ void main() {
     },
   );
 
+  for (final creation in [true, false]) {
+    for (final code in [
+      'permission-denied',
+      'failed-precondition',
+      'private-id English exception',
+    ]) {
+      testWidgets(
+        '${creation ? 'creation' : 'pricing'} rejection safely maps $code',
+        (tester) async {
+          final semantics = tester.ensureSemantics();
+          await tester.pumpWidget(
+            _authenticatedApp(
+              session: _administrator,
+              loader: (_) async => _snapshotWithBranches(_coffee),
+              createDraftId: () => 'rejection-test',
+              createProduct: (_) async =>
+                  throw ProductCreationRejectedException(code: code),
+              setProductPrice: (_) async =>
+                  throw ProductPricingRejectedException(code: code),
+            ),
+          );
+          await tester.pumpAndSettle();
+          if (creation) {
+            await tester.tap(find.text('Crear producto'));
+            await tester.pumpAndSettle();
+            await tester.enterText(
+              find.byKey(const ValueKey('create-product-name')),
+              'Coffee',
+            );
+            await tester.enterText(
+              find.byKey(const ValueKey('create-product-unit')),
+              'kg',
+            );
+            await _selectCreationPrecision(tester, 0);
+          } else {
+            await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
+          }
+          final action = find.widgetWithText(
+            FilledButton,
+            creation ? 'Crear' : 'Guardar precio / IVA',
+          );
+          await tester.ensureVisible(action);
+          await tester.tap(action);
+          await tester.pumpAndSettle();
+          final detail = switch (code) {
+            'permission-denied' =>
+              creation
+                  ? 'No tienes permiso para crear productos.'
+                  : 'No tienes permiso para cambiar el precio del producto.',
+            'failed-precondition' =>
+              creation
+                  ? 'No se cumplen las condiciones para crear el producto. Revisa los datos.'
+                  : 'El producto cambió mientras lo editabas; vuelve a abrirlo.',
+            _ => 'No se pudo guardar el producto. Intenta de nuevo.',
+          };
+          expect(find.textContaining(detail), findsOneWidget);
+          expect(find.textContaining(code), findsNothing);
+          expect(
+            find.bySemanticsLabel(RegExp(RegExp.escape(code))),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+          semantics.dispose();
+        },
+      );
+    }
+  }
+
   for (final bool validation in <bool>[false, true]) {
     testWidgets(
       'client-valid creation retains server ${validation ? 'validation' : 'rejection'} banner',
@@ -4599,9 +4753,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(
           find.text(
-            validation
-                ? 'Server validation declined the request.'
-                : 'Se rechazó la creación del producto (permission-denied).',
+            validation ? 'Server validation declined the request.' : 'Se rechazó la creación del producto. No tienes permiso para crear productos.',
           ),
           findsOneWidget,
         );

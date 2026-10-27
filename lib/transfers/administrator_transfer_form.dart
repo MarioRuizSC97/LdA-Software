@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app/panel_layout.dart';
 import '../app/primary_action_style.dart';
+import '../app/privacy_curtain.dart';
 import '../catalog/catalog_product.dart';
 import '../catalog/catalog_stock.dart';
 import '../firebase/emulator_transfer_gateway.dart';
@@ -151,6 +152,7 @@ class AdministratorTransferForm extends StatefulWidget {
 }
 
 class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
+  final PrivacyCurtain _privacy = PrivacyCurtain();
   final List<_LineRow> _rows = <_LineRow>[];
 
   int _nextRowId = 0;
@@ -169,6 +171,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
   @override
   void initState() {
     super.initState();
+    _privacy.bind(widget.ownerUserId);
     // A retained operation is resumed, never replaced: no key is minted while
     // the shell still holds an unresolved payload.
     final TransferDraft? stored = widget.unresolvedDraft();
@@ -186,6 +189,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ownerUserId != widget.ownerUserId) {
       // A different owner must never inherit or report the previous payload.
+      _privacy.bind(widget.ownerUserId);
       _generation += 1;
       _resetEditing();
       _sessionLost = false;
@@ -199,6 +203,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
 
   @override
   void dispose() {
+    _privacy.invalidate();
     _generation += 1;
     for (final _LineRow row in _rows) {
       row.quantity.dispose();
@@ -366,9 +371,11 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
       _error = null;
     });
     final int generation = _generation;
+    final token = _privacy.token;
     bool answered = false;
-    final TransferDraft? confirmed = await showGeneralDialog<TransferDraft>(
+    final TransferDraft? confirmed = await showCurtainedDialog<TransferDraft>(
       context: context,
+      curtain: _privacy,
       barrierDismissible: false,
       barrierColor: Colors.transparent,
       transitionDuration: MediaQuery.disableAnimationsOf(context)
@@ -391,14 +398,15 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
             child: _confirmationDialog(
               draft,
               dialogContext,
-              () => answered,
+              () => answered || !_privacy.isCurrent(token),
               () => answered = true,
             ),
           ),
         ],
       ),
     );
-    final bool stale = !mounted || generation != _generation;
+    final bool stale =
+        !mounted || generation != _generation || !_privacy.isCurrent(token);
     if (!stale) {
       setState(() {
         _dialogOpen = false;
@@ -955,7 +963,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           child: const Text('Cancelar'),
         ),
         FilledButton(
-          style: primaryActionStyle(context),
+          style: primaryActionStyle(dialogContext),
           key: const ValueKey<String>('transfer-confirm-ok'),
           onPressed: () {
             if (isAnswered()) return;
