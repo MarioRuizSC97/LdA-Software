@@ -281,6 +281,44 @@ void main() {
       );
     }
   }
+  testWidgets(
+    'an authorized intake panel does not survive a session replacement',
+    (tester) async {
+      final session = await _mount(tester);
+      await _details(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('intake-LIFECYCLE')),
+      );
+      await tester.tap(find.byKey(const ValueKey('intake-LIFECYCLE')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('cost-pin')), '1234');
+      await tester.tap(find.text('Continuar'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('intake-quantity')), findsOneWidget);
+      session.value = const EmulatorSession(
+        userId: 'admin',
+        email: 'admin@demo.invalid',
+        role: InventoryRole.seller,
+        branchId: 'branch-north',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('intake-quantity')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('product-sheet-LIFECYCLE')),
+        findsNothing,
+      );
+      // Reopening the sheet in the new session must not inherit the intake
+      // presentation the previous session authorized.
+      await _details(tester);
+      expect(
+        find.byKey(const ValueKey('product-sheet-LIFECYCLE')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('intake-quantity')), findsNothing);
+      expect(find.byKey(const ValueKey('cost-pin-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final intake in [false, true]) {
     testWidgets(
       'same-identity navigation invalidates pending ${intake ? 'intake' : 'cost'} answer without popping a newer PIN',

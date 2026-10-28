@@ -425,6 +425,10 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session);
     if (sessionChanged) {
       _presentationRevision += 1;
+      // A replaced session never inherits an intake presentation the previous
+      // session's PIN authorized; the shell header is its only exit.
+      _intakeGeneration += 1;
+      _clearIntakePresentation();
       _privacy.bind(_sessionIdentity(widget.session));
     }
     final ProductCreationCoordinator? coordinator = _creationCoordinator;
