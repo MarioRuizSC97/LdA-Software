@@ -49,7 +49,6 @@ Future<void> _mount(
           state: _state(name),
           productNames: names,
           onMarkRead: (id) => marked?.add(id),
-          onClose: () {},
           onRetry: () {},
         ),
       ),

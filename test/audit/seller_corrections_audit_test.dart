@@ -27,7 +27,7 @@ Future<void> _tap(WidgetTester tester, String key) async {
 
 Widget _view(String name, FakeCorrections backend) => switch (name) {
   'lookup' => CorrectionLookupView(corrections: backend.corrections,
-    productNames: catalogNames, onClose: () {}),
+    productNames: catalogNames),
   'detail' => CorrectionSaleDetail(sale: lookupSale(), productNames: catalogNames,
     onBack: () {}, onReturn: () {}, onReplace: () {}, onExchange: () {}),
   'return' => CorrectionReturnForm(sale: lookupSale(), corrections: backend.corrections,

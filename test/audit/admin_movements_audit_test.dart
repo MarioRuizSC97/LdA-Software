@@ -37,7 +37,6 @@ Widget _app(AdministratorMovements movements, Brightness brightness) =>
             CatalogBranchChoice(branchId: 'branch-north', branchName: 'Norte'),
             CatalogBranchChoice(branchId: 'branch-south', branchName: 'Sur'),
           ],
-          onClose: () {},
         ),
       ),
     );
