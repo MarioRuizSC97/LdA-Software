@@ -62,7 +62,6 @@ void main() {
                 'PRD-SUGAR-002': 'Azúcar',
               },
               onMarkRead: marked.add,
-              onClose: () {},
             ),
           ),
         ),
@@ -99,7 +98,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: marked.add,
-              onClose: () {},
             ),
           ),
         ),
@@ -137,7 +135,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: (_) {},
-              onClose: () {},
             ),
           ),
         ),
@@ -166,7 +163,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: (_) {},
-              onClose: () {},
             ),
           ),
         ),
@@ -190,7 +186,6 @@ void main() {
             state: const TransferNoticeState(),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () {},
           ),
         ),
       ),
@@ -210,7 +205,6 @@ void main() {
             state: const TransferNoticeState(phase: TransferNoticePhase.error),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () {},
             onRetry: () => retries += 1,
           ),
         ),
@@ -234,7 +228,6 @@ void main() {
   testWidgets('inbox has no duplicate close control', (
     WidgetTester tester,
   ) async {
-    var closed = false;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -242,7 +235,6 @@ void main() {
             state: const TransferNoticeState(),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () => closed = true,
           ),
         ),
       ),
@@ -250,7 +242,6 @@ void main() {
 
     expect(find.byKey(const ValueKey<String>('notices-close')), findsNothing);
     expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
-    expect(closed, isFalse);
   });
 
   testWidgets('exposes accessible labels without overflowing at 320 px', (
@@ -279,7 +270,6 @@ void main() {
             state: state,
             productNames: const <String, String>{'PRD-COFFEE-001': 'Café'},
             onMarkRead: (_) {},
-            onClose: () {},
           ),
         ),
       ),

@@ -40,7 +40,6 @@ void main() {
                     branchName: 'Sucursal del Sur',
                   ),
                 ],
-                onClose: () {},
               ),
             ),
           ),

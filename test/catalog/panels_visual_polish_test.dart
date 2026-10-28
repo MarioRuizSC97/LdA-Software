@@ -88,7 +88,6 @@ void main() {
             acknowledge: (_) {},
           ),
           productNames: const {},
-          onClose: () {},
         ),
       );
       final tile = find.byType(ListTile);
@@ -141,7 +140,6 @@ void main() {
           state: const TransferNoticeState(phase: TransferNoticePhase.ready),
           productNames: const {},
           onMarkRead: (_) {},
-          onClose: () {},
         ),
       );
       final divider = find.byType(Divider);
@@ -194,7 +192,6 @@ void main() {
         ),
         productNames: const {'PRD-COFFEE-001': 'Café'},
         branchChoices: const [],
-        onClose: () {},
       ),
     );
     expect(find.text('Volver'), findsNothing);
@@ -224,7 +221,6 @@ void main() {
         ),
         productNames: const {'PRD-COFFEE-001': 'Café'},
         branchChoices: const [],
-        onClose: () {},
       ),
     );
     final line = find.byWidgetPredicate(

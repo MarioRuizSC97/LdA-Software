@@ -26,7 +26,6 @@ Future<void> _pumpLookup(WidgetTester tester, FakeCorrections backend) async {
           corrections: backend.corrections,
           productNames: catalogNames,
           products: exchangeCatalog,
-          onClose: () {},
         ),
       ),
     ),

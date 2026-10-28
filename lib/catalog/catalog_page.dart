@@ -1533,7 +1533,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           branchChoices:
                               _snapshot?.branchChoices ??
                               const <CatalogBranchChoice>[],
-                          onClose: _closeMovements,
                         ),
                       )
                     : showCorrections
@@ -1543,7 +1542,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           corrections: corrections,
                           productNames: _productNames(),
                           products: _catalogProducts(),
-                          onClose: _closeCorrections,
                         ),
                       )
                     : transfer != null && _transferVisible
@@ -1555,7 +1553,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                           state: noticeController.state,
                           productNames: _productNames(),
                           onMarkRead: _markNoticeRead,
-                          onClose: _closeNotices,
                           onRetry: noticeController.retry,
                         ),
                       )

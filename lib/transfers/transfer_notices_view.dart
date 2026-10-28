@@ -16,8 +16,6 @@ class TransferNoticesView extends StatelessWidget {
     required this.state,
     required this.productNames,
     required this.onMarkRead,
-    // Retained for callers; panel navigation now belongs to the shell header.
-    required VoidCallback onClose,
     this.onRetry,
     super.key,
   });

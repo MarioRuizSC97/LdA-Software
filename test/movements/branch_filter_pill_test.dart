@@ -31,7 +31,6 @@ void main() {
               branchChoices: const [
                 CatalogBranchChoice(branchId: 'north', branchName: 'Norte'),
               ],
-              onClose: () {},
             ),
           ),
         ),
@@ -134,7 +133,6 @@ void main() {
                     branchName: 'Norte',
                   ),
                 ],
-                onClose: () {},
               ),
             ),
           ),

@@ -46,7 +46,6 @@ Future<void> _pump(WidgetTester tester, Size size) async {
           branchChoices: const <CatalogBranchChoice>[
             CatalogBranchChoice(branchId: 'branch-north', branchName: 'Norte'),
           ],
-          onClose: () {},
         ),
       ),
     ),

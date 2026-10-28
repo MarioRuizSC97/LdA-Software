@@ -40,8 +40,6 @@ class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
     required this.productNames,
-    // Retained for callers; panel navigation now belongs to the shell header.
-    required VoidCallback onClose,
     this.products = const <CatalogProduct>[],
     super.key,
   });

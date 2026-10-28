@@ -28,7 +28,6 @@ final List<_View> _views = <_View>[
     (FakeCorrections backend) => CorrectionLookupView(
       corrections: backend.corrections,
       productNames: catalogNames,
-      onClose: () {},
     ),
   ),
   _View(

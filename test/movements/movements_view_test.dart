@@ -50,7 +50,7 @@ class _Backend {
   );
 }
 
-Widget _view(_Backend backend, {VoidCallback? onClose}) => MaterialApp(
+Widget _view(_Backend backend) => MaterialApp(
   home: Scaffold(
     body: MovementsView(
       movements: backend.movements,
@@ -59,7 +59,6 @@ Widget _view(_Backend backend, {VoidCallback? onClose}) => MaterialApp(
         CatalogBranchChoice(branchId: 'branch-north', branchName: 'Norte'),
         CatalogBranchChoice(branchId: 'branch-south', branchName: 'Sur'),
       ],
-      onClose: onClose ?? () {},
     ),
   ),
 );
@@ -314,8 +313,7 @@ void main() {
   testWidgets('branch filter and refresh reload without a duplicate back', (
     WidgetTester tester,
   ) async {
-    bool closed = false;
-    await tester.pumpWidget(_view(backend, onClose: () => closed = true));
+    await tester.pumpWidget(_view(backend));
     await tester.pumpAndSettle();
 
     await tester.tap(_key('movements-branch-filter'));
@@ -330,7 +328,6 @@ void main() {
     expect(backend.loads, <String?>[null, 'branch-south', 'branch-south']);
 
     expect(find.text('Volver'), findsNothing);
-    expect(closed, isFalse);
   });
 
   testWidgets('a stale load never overwrites a newer filter', (

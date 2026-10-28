@@ -39,7 +39,6 @@ Future<void> _pump(WidgetTester tester, Size size) async {
           ),
           productNames: const <String, String>{'PRD-COFFEE-001': 'Café'},
           onMarkRead: (_) {},
-          onClose: () {},
         ),
       ),
     ),

@@ -28,8 +28,6 @@ class MovementsView extends StatefulWidget {
     required this.movements,
     required this.productNames,
     required this.branchChoices,
-    // Retained for callers; panel navigation now belongs to the shell header.
-    required VoidCallback onClose,
     super.key,
   });
 
