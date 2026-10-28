@@ -377,6 +377,51 @@ void main() {
     });
   }
   testWidgets(
+    'a retained duplicate draft bypasses the confirmation advisory',
+    (WidgetTester tester) async {
+      // Duplicate rows can only exist in a retained draft. Submission then
+      // sends that frozen payload directly, so the per-line advisory in the
+      // confirmation dialog is never computed for them.
+      TransferDraft? submitted;
+      await _pump(
+        tester,
+        const Size(1200, 800),
+        holdingsByProduct: _holdings,
+        submitTransfer: (TransferDraft draft) async {
+          submitted = draft;
+          throw StateError('test submission');
+        },
+        unresolved: TransferDraft(
+          idempotencyKey: 'retained-key',
+          sourceBranchId: 'branch-north',
+          destinationBranchId: 'branch-south',
+          lines: const <TransferLine>[
+            TransferLine(
+              productId: 'PRD-COFFEE-001',
+              quantity: '7.00',
+              quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+            ),
+            TransferLine(
+              productId: 'PRD-COFFEE-001',
+              quantity: '7.00',
+              quantitySpec: QuantitySpec(unit: 'kg', precision: 2),
+            ),
+          ],
+        ),
+      );
+      await tester.ensureVisible(_key('transfer-submit'));
+      await tester.tap(_key('transfer-submit'));
+      await tester.pumpAndSettle();
+      expect(submitted?.lines.length, 2);
+      expect(_key('transfer-confirm-dialog'), findsNothing);
+      expect(
+        find.textContaining('Revisa las existencias en origen de:'),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
     'wide: duplicate product rows sum without merging other products of the same unit',
     (WidgetTester tester) async {
       // Retained rows exercise summary aggregation without changing the editing
