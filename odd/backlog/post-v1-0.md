@@ -14,7 +14,10 @@ Every item below was explicitly left out of v1.0 during the UI rounds. Each line
 
 - Seller can request another branch's stock from the product sheet (rules deny it on purpose today). Source: odd/tasks/v1-0-ui-t19.md D6.
 - Low-stock reminders/alerts. Source: odd/tasks/v1-0-ui-t17.md D1.
-- Source branch in the seller's transfer notice title ('Traslado del 27 oct, 14:05 · desde North'): the notice model the seller receives carries no source branch today, so the server would need to include it. Source: odd/tasks/v1-0-ui-t22.md D5 (T22G).
+- Source branch in the seller's transfer notice title ('Traslado del 27 oct, 14:05 · desde North'). Source: odd/tasks/v1-0-ui-t22.md D5 (T22G), deferred by the user on 2026-10-28 (L16). Full analysis and plan: Engram topic `odd/backlog/d5-origen-en-avisos`.
+  - Verified blocker: `functions/src/transfers.js` `leg()` writes only `type, transferId, branchId (destination), productId, quantityScaled, spec, actorId, occurredAt`; the source branch exists only on `transfers/{idempotencyKey}`, which notices never read. The client model deliberately excludes "source-branch audit fields and costs" (`lib/transfers/transfer_notice.dart`).
+  - Proposed route: add `sourceBranchId` to the `transfer-in` leg only, publish it in `InventoryMovement`, carry it on `TransferNotice`, resolve the name with the existing branch map, and justify the boundary change in the model comment (branch name yes, costs never).
+  - Also required: a decision for old notices without the field (backfill from `transfers/{id}` or show "origen no registrado", never a raw id), `firestore.rules` check if instead reading `transfers/{id}`, a deploy with explicit approval, and tests (with origin, without origin, accessible semantics without UUID).
 - Shared warehouse concept (stock is per branch only). Source: odd/tasks/v1-0-ui.md L2 item 3.
 - Product image / richer product profile (needs Firebase Storage). Source: odd/tasks/v1-0-ui.md L2 item 4.
 - Editing a product's unit after creation (unit is copied into stock, movements and sales). Source: odd/tasks/v1-0-ui.md L2 item 7.
