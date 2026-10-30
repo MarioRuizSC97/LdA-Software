@@ -441,3 +441,13 @@ test('no written document carries cost fields and caller mutation cannot alter t
       `cost or price field written at ${path}`);
   }
 });
+
+test('a replacement over the 50-line limit is refused before any document read', async () => {
+  const lines = (count) => Array.from({ length: count }, (_, lineIndex) => ({ lineIndex, quantity: '1' }));
+  const over = fixture();
+  await rejectsUnchanged(over.firestore, over.service(request({ lines: lines(51) })), 'invalid-argument');
+  assert.deepEqual(over.firestore.traces, []);
+  const at = fixture();
+  await assert.rejects(at.service(request({ lines: lines(50) })));
+  assert.ok(at.firestore.traces.length > 0);
+});

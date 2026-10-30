@@ -606,3 +606,15 @@ test('a folio sale is corrected exactly like a legacy sale and a forged folio re
     (error) => error instanceof SaleError && error.code === 'failed-precondition');
   assert.deepEqual([...forged.records], before);
 });
+
+test('a return over the 50-line limit is refused before any document read', async () => {
+  const lines = (count) => Array.from({ length: count }, (_, lineIndex) => ({
+    lineIndex, quantity: '1', condition: 'good',
+  }));
+  const over = fixture();
+  await rejectsUnchanged(over.firestore, over.service(request({ lines: lines(51) })), 'invalid-argument');
+  assert.deepEqual(over.firestore.traces, []);
+  const at = fixture();
+  await assert.rejects(at.service(request({ lines: lines(50) })));
+  assert.ok(at.firestore.traces.length > 0);
+});

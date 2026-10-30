@@ -114,6 +114,7 @@ Checked read-only against the project, not assumed:
 | `firestore.rules` | Deployed; identical to this repository (includes the `appConfig/client` read) |
 | Cloud Functions | 16 callables deployed and ACTIVE (sales, corrections, transfers, catalog, pricing, intake, seller profiles), redeployed with the Hosting origins |
 | Auth accounts | Real accounts exist, each with its `role` and, for sellers, its `branchId` claim |
+| Auth sign-up | Public sign-up disabled (`client.permissions.disabledUserSignup`): accounts are created in the console or with the Admin SDK |
 | Hosting | Web app published at <https://lda-inventory-dev-mx.web.app> (also `lda-inventory-dev-mx.firebaseapp.com`) |
 | Callable CORS | `functions/src/index.js` `WEB_ORIGINS`: `localhost`/`127.0.0.1` plus exactly the two Hosting origins (https) |
 
@@ -171,6 +172,11 @@ The web app is served from Firebase Hosting (`hosting` in `firebase.json`):
 the `build/web` folder, every path rewritten to `index.html`, and every file
 sent with `Cache-Control: no-cache`, so a reload always revalidates against
 the published build instead of a copy kept by the browser.
+Every response also carries `X-Frame-Options: DENY` and
+`Content-Security-Policy: frame-ancestors 'none'` (no other site may frame the
+app), `X-Content-Type-Options: nosniff` and
+`Referrer-Policy: strict-origin-when-cross-origin`. There is deliberately no
+script-source CSP: the Flutter web build loads CanvasKit from Google's CDN.
 
 ```sh
 flutter build web --release --dart-define=LDA_FIREBASE_PRODUCTION=true

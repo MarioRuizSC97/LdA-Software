@@ -694,3 +694,18 @@ test('descending line indexes with mixed conditions keep request order and resto
   assert.ok(!sets.includes('branches/north/stock/p1'));
   assert.deepEqual(ledger(firestore).returned, { 0: 1, 1: 500 });
 });
+
+test('an exchange over the 50-line limit on either side is refused before any document read', async () => {
+  const returnLines = (count) => Array.from({ length: count }, (_, lineIndex) => ({
+    lineIndex, quantity: '1', condition: 'good',
+  }));
+  const newLines = (count) => Array.from({ length: count }, (_, i) => ({ productId: `n${i}`, quantity: '1' }));
+  for (const data of [{ returnLines: returnLines(51) }, { newLines: newLines(51) }]) {
+    const over = fixture();
+    await rejectsUnchanged(over.firestore, over.service(request(data)), 'invalid-argument');
+    assert.deepEqual(over.firestore.traces, []);
+  }
+  const at = fixture();
+  await assert.rejects(at.service(request({ returnLines: returnLines(50), newLines: newLines(50) })));
+  assert.ok(at.firestore.traces.length > 0);
+});

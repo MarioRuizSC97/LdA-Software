@@ -5,7 +5,9 @@ import {
 } from './correction-support.js';
 import { calculateReturnRefund, CorrectionError } from './corrections-calculation.js';
 import { addStockMovement } from './quantity.js';
-import { assertLocalSalesEmulator, SALE_ERROR_REASONS, SaleError } from './sales.js';
+import {
+  assertLocalSalesEmulator, SALE_ERROR_REASONS, SALE_LINE_LIMIT, SaleError,
+} from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'reason', 'lines'];
@@ -232,6 +234,7 @@ function returnPreviewInput(data) {
 export function returnLinesInput(value) {
   denseArray(value);
   if (value.length === 0) throw new TypeError('lines are required');
+  if (value.length > SALE_LINE_LIMIT) throw new TypeError('too many lines');
   const seen = new Set();
   return value.map((line) => {
     exactFields(line, LINE_FIELDS);

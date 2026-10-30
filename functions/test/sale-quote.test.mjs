@@ -246,3 +246,14 @@ test('shared line preparation keeps the sale error order: an earlier short line 
   await rejectsWith(quote(quoteRequest()), 'not-found', 'product does not exist');
   assert.deepEqual(firestore.writes, []);
 });
+
+test('a quote over the 50-line limit is refused before any document read', async () => {
+  const lines = (count) => Array.from({ length: count }, (_, i) => ({ productId: `p${i}`, quantity: '1' }));
+  const over = fixture();
+  await rejectsWith(over.quote(quoteRequest({ lines: lines(51) })), 'invalid-argument',
+    'quote request contains missing, invalid or unsupported fields');
+  assert.deepEqual(over.firestore.reads, []);
+  const at = fixture();
+  await assert.rejects(at.quote(quoteRequest({ lines: lines(50) })));
+  assert.ok(at.firestore.reads.length > 0);
+});
