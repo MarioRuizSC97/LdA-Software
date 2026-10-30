@@ -1151,22 +1151,14 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
           : null;
       final Widget page = AuthenticatedCatalogPage(
         qrScan: productQrScanSupported ? showProductQrScanner : null,
-        passwordSettings: passwordGateway != null
-            ? (BuildContext context) => ListTile(
-                key: const ValueKey<String>('shell-change-password'),
-                leading: const Icon(Icons.password_outlined),
-                title: const Text('Cambiar contraseña'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(this.context).push(
-                    MaterialPageRoute<void>(
-                      builder: (BuildContext context) =>
-                          ChangePasswordView(gateway: passwordGateway),
-                    ),
-                  );
-                },
-              )
-            : null,
+        onChangePassword: passwordGateway == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      ChangePasswordView(gateway: passwordGateway),
+                ),
+              ),
         key: ValueKey<String>(
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),
