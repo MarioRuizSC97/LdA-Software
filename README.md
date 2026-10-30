@@ -171,6 +171,11 @@ The web app is served from Firebase Hosting (`hosting` in `firebase.json`):
 the `build/web` folder, every path rewritten to `index.html`, and every file
 sent with `Cache-Control: no-cache`, so a reload always revalidates against
 the published build instead of a copy kept by the browser.
+Every response also carries `X-Frame-Options: DENY` and
+`Content-Security-Policy: frame-ancestors 'none'` (no other site may frame the
+app), `X-Content-Type-Options: nosniff` and
+`Referrer-Policy: strict-origin-when-cross-origin`. There is deliberately no
+script-source CSP: the Flutter web build loads CanvasKit from Google's CDN.
 
 ```sh
 flutter build web --release --dart-define=LDA_FIREBASE_PRODUCTION=true
