@@ -1,4 +1,5 @@
 import { after, before, beforeEach, describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -563,6 +564,89 @@ describe('seller profiles', () => {
         }),
       );
       await assertFails(deleteDoc(doc(firestore, 'sellerProfiles', 'seller-north')));
+    }
+  });
+});
+
+describe('client app configuration', () => {
+  async function seedAppConfig() {
+    await testEnvironment.withSecurityRulesDisabled(async (context) => {
+      const firestore = context.firestore();
+      await setDoc(doc(firestore, 'appConfig', 'client'), {
+        minimumVersion: '1.0.0',
+        androidUpdateUrl: 'https://play.example/lda',
+      });
+      await setDoc(doc(firestore, 'appConfig', 'internal'), {
+        note: 'not part of the client contract',
+      });
+    });
+  }
+
+  function everyClient() {
+    return [
+      testEnvironment.unauthenticatedContext().firestore(),
+      firestoreFor('seller-north', { role: 'seller', branchId: branchNorth }),
+      firestoreFor('admin', { role: 'administrator' }),
+    ];
+  }
+
+  test('anyone may get the client document, even before signing in', async () => {
+    await seedAppConfig();
+
+    for (const firestore of everyClient()) {
+      const snapshot = await assertSucceeds(
+        getDoc(doc(firestore, 'appConfig', 'client')),
+      );
+      assert.equal(snapshot.data().minimumVersion, '1.0.0');
+    }
+  });
+
+  test('a missing client document is still readable as absent', async () => {
+    const anonymous = testEnvironment.unauthenticatedContext().firestore();
+
+    const snapshot = await assertSucceeds(
+      getDoc(doc(anonymous, 'appConfig', 'client')),
+    );
+    assert.equal(snapshot.exists(), false);
+  });
+
+  test('denies listing the configuration collection', async () => {
+    await seedAppConfig();
+
+    for (const firestore of everyClient()) {
+      await assertFails(getDocs(collection(firestore, 'appConfig')));
+    }
+  });
+
+  test('keeps every other configuration document closed', async () => {
+    await seedAppConfig();
+
+    for (const firestore of everyClient()) {
+      await assertFails(getDoc(doc(firestore, 'appConfig', 'internal')));
+      await assertFails(
+        getDoc(doc(firestore, 'appConfig', 'client', 'nested', 'record')),
+      );
+    }
+  });
+
+  test('denies every client create, update and delete', async () => {
+    await seedAppConfig();
+
+    for (const firestore of everyClient()) {
+      await assertFails(
+        setDoc(doc(firestore, 'appConfig', 'client'), {
+          minimumVersion: '0.0.1',
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(firestore, 'appConfig', 'client'), {
+          minimumVersion: '0.0.1',
+        }),
+      );
+      await assertFails(deleteDoc(doc(firestore, 'appConfig', 'client')));
+      await assertFails(
+        setDoc(doc(firestore, 'appConfig', 'forged'), { minimumVersion: '9.0.0' }),
+      );
     }
   });
 });

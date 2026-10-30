@@ -17,6 +17,7 @@ import 'emulator_platform_stub.dart'
     as emulator_platform;
 import '../movements/administrator_movements.dart';
 import '../transfers/transfer_notice_controller.dart';
+import '../version/minimum_version.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_seller_profile_gateway.dart';
 import 'emulator_sale_gateway.dart';
@@ -713,6 +714,14 @@ class DemoEmulatorBootstrap {
     sessionChecker: sessionChecker,
     callable: callable,
   );
+
+  /// Pre-login reader of the minimum supported version. Shares the per-app
+  /// emulator connections, so Firestore is still connected only once.
+  static Future<MinimumVersionSource> initializeMinimumVersionSource() =>
+      _initializeLiveFirebase<MinimumVersionSource>(
+        (_, FirebaseFirestore firestore, _) =>
+            FirestoreMinimumVersionSource(firestore),
+      );
 
   static Future<T> _initializeLiveFunctionsGateway<T>(
     T Function(FirebaseAuth auth, FirebaseFunctions functions) create,

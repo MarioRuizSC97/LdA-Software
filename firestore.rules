@@ -261,6 +261,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Client app configuration read by the minimum-version gate before login,
+    // so it needs no auth. Only this single document is readable; listing,
+    // every other appConfig document and every client write stay closed.
+    // Operators edit it in the Firebase console.
+    match /appConfig/client {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
     // New paths remain closed until their access contract has tests.
     match /{document=**} {
       allow read, write: if false;

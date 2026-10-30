@@ -16,6 +16,9 @@ import 'firebase/emulator_correction_gateway.dart';
 import 'firebase/emulator_sale_gateway.dart';
 import 'firebase/production_bootstrap.dart';
 import 'movements/administrator_movements.dart';
+import 'app/app_info.dart';
+import 'version/minimum_version.dart';
+import 'version/version_gate.dart';
 
 const bool _demoCatalogEnabled = bool.fromEnvironment('LDA_DEMO_CATALOG');
 const bool _localEmulatorsEnabled = bool.fromEnvironment('LDA_LOCAL_EMULATORS');
@@ -47,6 +50,7 @@ class LdaInventoryBootstrap extends StatelessWidget {
     this.emulatorMovementsLoader,
     this.emulatorTransferLoader,
     this.emulatorTransferNoticeLoader,
+    this.minimumVersionLoader,
     super.key,
   });
 
@@ -73,6 +77,10 @@ class LdaInventoryBootstrap extends StatelessWidget {
   /// Seller transfer-notice backend loader; null uses the selected connected
   /// mode's bootstrap. Demo and disconnected modes never receive it.
   final TransferNoticeBackendSessionLoader? emulatorTransferNoticeLoader;
+
+  /// Pre-login minimum-version reader; null uses the selected connected
+  /// mode's bootstrap. Demo and disconnected modes never check a version.
+  final MinimumVersionSourceLoader? minimumVersionLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -115,6 +123,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         transferNoticeBackendLoader:
             emulatorTransferNoticeLoader ??
             DemoEmulatorBootstrap.initializeTransferNoticeBackend,
+        minimumVersionLoader:
+            minimumVersionLoader ??
+            DemoEmulatorBootstrap.initializeMinimumVersionSource,
       );
     }
     if (productionEnabled) {
@@ -149,6 +160,9 @@ class LdaInventoryBootstrap extends StatelessWidget {
         transferNoticeBackendLoader:
             emulatorTransferNoticeLoader ??
             ProductionFirebaseBootstrap.initializeTransferNoticeBackend,
+        minimumVersionLoader:
+            minimumVersionLoader ??
+            ProductionFirebaseBootstrap.initializeMinimumVersionSource,
       );
     }
     return const CatalogSetupApp();
@@ -172,6 +186,8 @@ class LocalEmulatorAuthApp extends StatefulWidget {
         DemoEmulatorBootstrap.initializeTransferGateway,
     this.transferNoticeBackendLoader =
         DemoEmulatorBootstrap.initializeTransferNoticeBackend,
+    this.minimumVersionLoader =
+        DemoEmulatorBootstrap.initializeMinimumVersionSource,
     this.environment = BackendEnvironment.localEmulator,
     super.key,
   });
@@ -195,6 +211,10 @@ class LocalEmulatorAuthApp extends StatefulWidget {
   /// sessions, so administrator/disconnected flows never invoke it.
   final TransferNoticeBackendSessionLoader transferNoticeBackendLoader;
 
+  /// Reads the minimum supported version before the login or a restored
+  /// session is shown.
+  final MinimumVersionSourceLoader minimumVersionLoader;
+
   @override
   State<LocalEmulatorAuthApp> createState() => _LocalEmulatorAuthAppState();
 }
@@ -206,6 +226,20 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
   void initState() {
     super.initState();
     _gateway = widget.loader();
+  }
+
+  /// Waits for the session start first, so the version read never races the
+  /// Firebase app initialization; a failed start still runs the check.
+  Future<VersionGateDecision> _checkVersion() async {
+    try {
+      await _gateway;
+    } on Object {
+      // The login shell reports session failures itself.
+    }
+    return checkMinimumVersion(
+      installedVersion: appVersion,
+      loadSource: widget.minimumVersionLoader,
+    );
   }
 
   Future<EmulatorSessionGateway> _retry() {
@@ -227,20 +261,24 @@ class _LocalEmulatorAuthAppState extends State<LocalEmulatorAuthApp> {
       theme: _theme(),
       darkTheme: buildDarkInventoryTheme(),
       themeMode: mode,
-      home: EmulatorLoginShell(
-        environment: widget.environment,
-        sessionGateway: _gateway,
-        retryLoader: _retry,
-        catalogLoader: widget.catalogLoader,
-        productCreationGatewayLoader: widget.productCreationGatewayLoader,
-        productPricingGatewayLoader: widget.productPricingGatewayLoader,
-        productRenameGatewayLoader: widget.productRenameGatewayLoader,
-        stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
-        saleGatewayLoader: widget.saleGatewayLoader,
-        correctionGatewayLoader: widget.correctionGatewayLoader,
-        administratorMovementsLoader: widget.administratorMovementsLoader,
-        transferGatewayLoader: widget.transferGatewayLoader,
-        transferNoticeBackendLoader: widget.transferNoticeBackendLoader,
+      home: VersionGate(
+        check: _checkVersion,
+        loadingLabel: widget.environment.connectingLabel,
+        builder: (BuildContext context) => EmulatorLoginShell(
+          environment: widget.environment,
+          sessionGateway: _gateway,
+          retryLoader: _retry,
+          catalogLoader: widget.catalogLoader,
+          productCreationGatewayLoader: widget.productCreationGatewayLoader,
+          productPricingGatewayLoader: widget.productPricingGatewayLoader,
+          productRenameGatewayLoader: widget.productRenameGatewayLoader,
+          stockIntakeGatewayLoader: widget.stockIntakeGatewayLoader,
+          saleGatewayLoader: widget.saleGatewayLoader,
+          correctionGatewayLoader: widget.correctionGatewayLoader,
+          administratorMovementsLoader: widget.administratorMovementsLoader,
+          transferGatewayLoader: widget.transferGatewayLoader,
+          transferNoticeBackendLoader: widget.transferNoticeBackendLoader,
+        ),
       ),
     ),
   );
