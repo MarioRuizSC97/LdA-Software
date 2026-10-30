@@ -1,0 +1,61 @@
+# v1.0 distribution: minimum-version gate and privacy notice
+
+Prepare LDA Inventory v1.0 for distribution outside the developer's Mac: a minimum-version gate that must ship in the
+first distributed build, and the privacy notice (aviso de privacidad) the stores and the public web URL require.
+Web camera scanning is evaluated only after the Hosting URL works.
+
+## Specs
+
+- S1. Minimum-version gate (user request: "Si por fa papurri añade el control y todo lo que involucre"). Agreed design
+  (assistant proposal accepted by the user): "En Firestore guardas un dato, por ejemplo `versión mínima = 1.0.0`. Al
+  arrancar, la app compara su versión con ese dato. Si está por debajo, se bloquea con un mensaje como «Hay una versión
+  nueva, actualiza para continuar» y un enlace a la tienda o una recarga en web. Cuando publicas algo incompatible,
+  subes ese número y todas las copias viejas se detienen solas."
+- S2. "todo lo que involucre": the gate includes its Firestore rules, tests, the operator procedure to raise the
+  minimum, and docs.
+- S3. Privacy notice: "para ver si me puedes ayudar tambien a hacer el aviso de privacidad tambien que de eso no tengo
+  ni idea con eso de que es la primera web que publico no sé que debería incluir dicho aviso".
+- S4. Web camera: "y ya una vez teniendo la URL en funcionamiento vemos si se puede habilitar el uso de camara desde la
+  web obvio usando un celular" — evaluate after Hosting works; not part of this batch.
+
+## Decisions
+
+- D1. The gate must ship in the first distributed build: an installed copy without it can never be forced to update.
+- D2. Publishing (Hosting, rules deploy, callables redeploy) stays a separate, explicitly approved step.
+- D3. The privacy notice is a draft for the owner; it is not legal advice and needs the owner's identity data.
+- D4. Gate data: Firestore document `appConfig/client` with `minimumVersion` (string `MAJOR.MINOR.PATCH`) and
+  optional `androidUpdateUrl`, `iosUpdateUrl`. The URL fields ship now because builds already installed can never
+  learn a new field later; while a URL is absent the screen shows text only. A missing document means no minimum.
+- D5. Rules: `appConfig/client` allows anonymous single-document `get` only (the gate runs before login); `list` and
+  every client write stay denied; every other `appConfig` path stays denied. Operators edit it in the Firebase console.
+- D6. Failure policy is fail-open: missing document, malformed version, read error or a read slower than a bounded
+  timeout let the app continue. The gate is a delivery nudge, not a security boundary, and a config outage must not
+  stop the stores from selling. The app's own version comes from `lib/app/app_info.dart` (pinned to pubspec).
+- D7. Blocking screen copy (Spanish): title «Actualización necesaria», body «Hay una versión nueva de LDA Inventory.
+  Actualiza la app para continuar.» Web action «Recargar» reloads the page; mobile action «Abrir la tienda» opens the
+  platform URL when present. The screen also shows the installed and the required version.
+- D8. The gate sits in front of the session gate in the connected modes (production and emulator), so both a restored
+  session and the login screen are blocked; demo and offline modes are untouched.
+
+## Tasks
+
+- V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · pending
+- V2 · S3 · privacy notice draft (Markdown + web page) · pending — waits for the owner's data
+- V3 · S4 · web camera evaluation · deferred until the Hosting URL works
+
+## Log
+
+- L1 (2026-10-30, user, verbatim): "Si por fa papurri añade el control y todo lo que involucre, para ver si me puedes
+  ayudar tambien a hacer el aviso de privacidad tambien que de eso no tengo ni idea con eso de que es la primera web que
+  publico no sé que debería incluir dicho aviso y ya una vez teniendo la URL en funcionamiento vemos si se puede
+  habilitar el uso de camara desde la web obvio usando un celular :)"
+- L2 (2026-10-30, parent): read-only exploration launched (gentle-ai-explore mvva5fqg-a-lw0i) for gate entry points and
+  the personal-data inventory.
+- L3 (2026-10-30, explore result): seam = connected MaterialApp `home` (`lib/main.dart:201-245`) wrapping
+  `EmulatorLoginShell`; production app `lda-production` (`lib/firebase/production_bootstrap.dart:28-96`); emulator
+  Firestore is connected only in `initializeCatalogRepository` (`lib/firebase/emulator_bootstrap.dart:346-392`); read
+  pattern `CatalogReadSource` (`lib/catalog/firestore_catalog_repository.dart:15-39`); no anonymous rule exists today,
+  unknown paths denied (`firestore.rules:276-279`); rules tests `firebase/tests/rules.test.mjs`. Privacy inventory: Auth
+  email/password, claims role/branchId, `sellerProfiles` displayName, actor UIDs on sales/corrections/transfers/intake
+  audits, notice readAt, free-text correction notes (only customer-data risk), no structured customer fields, local
+  theme + PIN salt/hash + transfer journal (owner UID), camera QR not stored, no analytics/crash SDKs, region us-south1.
