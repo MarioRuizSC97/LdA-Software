@@ -746,3 +746,15 @@ test('malformed folio replay snapshots fail closed', async () => {
   Object.assign(privateReplay(firestore).result, { branchCode: 'SUR', folio: 'SUR-3F2A-9C1B' });
   assert.equal((await service(request())).receipt.folio, 'SUR-3F2A-9C1B');
 });
+
+test('a sale over the 50-line limit is refused before any document read', async () => {
+  const lines = (count) => Array.from({ length: count }, (_, i) => ({ productId: `p${i}`, quantity: '1' }));
+  assert.equal(sales.SALE_LINE_LIMIT, 50);
+  const over = fixture();
+  await rejectsUnchanged(over.firestore, over.service, request({ lines: lines(51) }), 'invalid-argument');
+  assert.equal(over.firestore.traces.length, 0);
+  // Exactly 50 passes input validation and reaches the reads.
+  const at = fixture();
+  await assert.rejects(at.service(request({ lines: lines(50) })));
+  assert.ok(at.firestore.traces.length > 0);
+});

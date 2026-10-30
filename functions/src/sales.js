@@ -149,6 +149,10 @@ function safeNumber(value, label) {
 }
 
 const SALE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+
+// Bounds every untrusted sale or correction line array before any document is
+// read, matching the transfer limit; each line costs reads.
+export const SALE_LINE_LIMIT = 50;
 // Branch codes are 2-4 uppercase ASCII letters. Their uniqueness across
 // branches is a seeding invariant (provision-demo-identities rejects
 // duplicates); sales cannot cheaply prove it, so folio lookups must always be
@@ -477,6 +481,7 @@ function saleValidId(value) {
 function saleLinesInput(value) {
   saleDenseArray(value);
   if (value.length === 0) throw new TypeError('lines are required');
+  if (value.length > SALE_LINE_LIMIT) throw new TypeError('too many lines');
   const seen = new Set();
   return value.map((line) => {
     exactFields(line, ['productId', 'quantity'], 'request line');

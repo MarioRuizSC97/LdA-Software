@@ -9,7 +9,8 @@ import {
 import { addStockMovement } from './quantity.js';
 import { RETURN_REASONS, returnAmounts, returnLinesInput } from './sale-returns.js';
 import {
-  assertLocalSalesEmulator, calculateSale, SALE_ERROR_REASONS, SaleError, saleQuantity, saleStoredPricing,
+  assertLocalSalesEmulator, calculateSale, SALE_ERROR_REASONS, SALE_LINE_LIMIT, SaleError, saleQuantity,
+  saleStoredPricing,
 } from './sales.js';
 
 const PAYMENT_METHODS = ['cash', 'card', 'transfer'];
@@ -342,6 +343,7 @@ function exchangeLinesInput(data) {
   denseArray(data.newLines);
   const returnLines = returnLinesInput(data.returnLines);
   if (data.newLines.length === 0) throw new TypeError('new lines are required');
+  if (data.newLines.length > SALE_LINE_LIMIT) throw new TypeError('too many new lines');
   const seenProducts = new Set();
   const newLines = data.newLines.map((line) => {
     exactFields(line, NEW_LINE_FIELDS);

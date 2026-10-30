@@ -5,7 +5,9 @@ import {
 } from './correction-support.js';
 import { calculateRemainingReturnable } from './corrections-calculation.js';
 import { addStockMovement, formatQuantity, parseQuantity } from './quantity.js';
-import { assertLocalSalesEmulator, SALE_ERROR_REASONS, SaleError } from './sales.js';
+import {
+  assertLocalSalesEmulator, SALE_ERROR_REASONS, SALE_LINE_LIMIT, SaleError,
+} from './sales.js';
 
 const REQUEST_FIELDS = ['idempotencyKey', 'saleId', 'lines'];
 const LINE_FIELDS = ['lineIndex', 'quantity'];
@@ -154,6 +156,7 @@ function replacementInput(data) {
     const note = optionalNote(data);
     denseArray(data.lines);
     if (data.lines.length === 0) throw new TypeError('lines are required');
+    if (data.lines.length > SALE_LINE_LIMIT) throw new TypeError('too many lines');
     const seen = new Set();
     const lines = data.lines.map((line) => {
       exactFields(line, LINE_FIELDS);
