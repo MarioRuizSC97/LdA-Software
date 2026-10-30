@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -1454,24 +1456,57 @@ class _LoginViewState extends State<_LoginView> {
     final TextEditingController controller = TextEditingController(
       text: _email.text.trim(),
     );
-    final String? address = await showDialog<String>(
+    // Same framing as the cost PIN and intake confirmations: the page behind
+    // is blurred and dimmed, and a tap outside cancels.
+    final String? address = await showGeneralDialog<String>(
       context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('Restablecer contraseña'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(labelText: 'Correo electrónico'),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
+      barrierDismissible: true,
+      barrierLabel: 'Cancelar',
+      barrierColor: Colors.transparent,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
+      pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                child: ColoredBox(
+                  color: Theme.of(dialogContext).colorScheme.scrim
+                      .withValues(alpha: 0.32),
+                ),
+              ),
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Enviar enlace'),
+          SafeArea(
+            child: AlertDialog(
+              key: const ValueKey<String>('reset-password-dialog'),
+              title: const Text('Restablecer contraseña'),
+              content: SizedBox(
+                width: 420,
+                child: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Correo electrónico',
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  style: primaryActionStyle(dialogContext),
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(controller.text.trim()),
+                  child: const Text('Enviar enlace'),
+                ),
+              ],
+            ),
           ),
         ],
       ),

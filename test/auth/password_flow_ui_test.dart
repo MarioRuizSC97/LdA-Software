@@ -93,6 +93,46 @@ void main() {
     );
   });
 
+  testWidgets('the reset dialog is wide and blurs the dimmed background', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_login(_PasswordGateway()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('¿Olvidaste tu contraseña?'));
+    await tester.pumpAndSettle();
+
+    final Finder field = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    expect(tester.getSize(field).width, greaterThanOrEqualTo(400));
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    final Iterable<ColoredBox> scrims = tester.widgetList<ColoredBox>(
+      find.descendant(
+        of: find.byType(BackdropFilter),
+        matching: find.byType(ColoredBox),
+      ),
+    );
+    expect(scrims.single.color.a, closeTo(0.32, 0.01));
+  });
+
+  testWidgets('tapping outside the reset dialog sends nothing', (
+    WidgetTester tester,
+  ) async {
+    final _PasswordGateway gateway = _PasswordGateway();
+    await tester.pumpWidget(_login(gateway));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('¿Olvidaste tu contraseña?'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(4, 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Restablecer contraseña'), findsNothing);
+    expect(gateway.resets, isEmpty);
+  });
+
   testWidgets('cancelling sends nothing', (WidgetTester tester) async {
     final _PasswordGateway gateway = _PasswordGateway();
     await tester.pumpWidget(_login(gateway));

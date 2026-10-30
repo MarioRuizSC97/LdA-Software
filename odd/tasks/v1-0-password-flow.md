@@ -37,6 +37,7 @@ change a password has no path except asking an administrator.
 - P5 · verification (analyze, suite), PR · suite 1986 passed + 1 skipped, analyze clean · PR pending
 - P6 · S2 · reachable from the wide bar, not only the side panel · 9795b33 · done (user report)
 - P7 · S2 · two-column layout with a suggestions card on wide screens, like the login · done (user report)
+- P8 · S3 · wider reset dialog with a blurred, dimmed background · done (user report)
 
 ## Log
 
@@ -64,3 +65,8 @@ change a password has no path except asking an administrator.
   «Sugerencias», four notes); compact screens show the form alone because `PanelLayout` never mounts the rail there.
   Also verified: two different new passwords are refused without calling the gateway (UI test). Suite 1992 passed
   + 1 skipped, analyze clean.
+- L6 (2026-10-30, user): "más ancho por defecto el cuadro de texto ... de olvidaste tu contraseña ... el difuminar el
+  fondo manteniendo el hecho de que se oscurece". The reset dialog now reuses the cost PIN / intake confirmation framing
+  (showGeneralDialog, blur 6, scrim at 0.32, 150 ms or none with reduced motion, tap outside cancels) and a 420 field.
+  Tests: width >= 400, one BackdropFilter with a 0.32 scrim (RED before), tapping outside sends nothing. Suite 1994
+  passed + 1 skipped, analyze clean.
