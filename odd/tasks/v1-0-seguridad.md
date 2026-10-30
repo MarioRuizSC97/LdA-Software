@@ -30,10 +30,10 @@ headers. Budget alerts, App Check, password policy and MFA are reviewed with the
 
 ## Tasks
 
-- H1 · S1.3, D1 · line limits with tests · inline · pending
-- H2 · S1.4 · `npm audit fix` in functions, tests · inline · pending
-- H3 · S1.5, D3 · Hosting headers · inline · pending
-- H4 · S1.1, D2 · close public sign-up (production config) · inline · pending
+- H1 · S1.3, D1 · line limits with tests · inline · f595fa4 · done
+- H2 · S1.4 · `npm audit fix` in functions, tests · inline · 2b80f7c · done
+- H3 · S1.5, D3 · Hosting headers · inline · 23bdb80 · done (deploy in H5)
+- H4 · S1.1, D2 · close public sign-up (production config) · inline · done 2026-10-30
 - H5 · deploy functions + Hosting, live checks, PR · pending
 - H6 · S2 · walk the user through items 2, 6, 7 · pending
 
@@ -43,3 +43,12 @@ headers. Budget alerts, App Check, password policy and MFA are reviewed with the
 - L2 (2026-10-30, parent): baseline on main b76fc34: sales 63, sale-quote 9, sale-exchanges 25, sale-returns 23,
   sale-replacements 16, correction-support 5 pass; sales-callable, corrections-callable, sellerProfiles-callable fail on
   main already (not in `npm test`).
+- L3 (2026-10-30, parent): H1 RED one new failure per file (sales, sale-quote, sale-returns, sale-replacements,
+  sale-exchanges) → GREEN (64/10/24/17/26); `npm test` 170, runtime-identity 55. Those sale/correction files are not in
+  `npm test` (follow-up). The sale cart shows no 50-product notice (optional follow-up; transfers have one).
+- L4 (2026-10-30, parent): H2 `npm audit fix`: body-parser 2.3.0→2.4.0 (high), qs 6.16.0→6.17.1; 2 moderate uuid
+  advisories remain inside firebase-admin's gaxios, accepted (no direct uuid use). H3 headers checked on the local
+  Hosting emulator: all four present, JS/wasm content types intact, the app boots.
+- L5 (2026-10-30, parent): H4 no client code or script signs up (only Admin SDK emulator scripts). PATCH
+  `client.permissions.disabledUserSignup=true` (printed only that field; email sign-in still enabled). Live probe:
+  `accounts:signUp` with the browser key → ADMIN_ONLY_OPERATION; lookup of the probe email → 0 accounts.

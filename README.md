@@ -114,6 +114,7 @@ Checked read-only against the project, not assumed:
 | `firestore.rules` | Deployed; identical to this repository (includes the `appConfig/client` read) |
 | Cloud Functions | 16 callables deployed and ACTIVE (sales, corrections, transfers, catalog, pricing, intake, seller profiles), redeployed with the Hosting origins |
 | Auth accounts | Real accounts exist, each with its `role` and, for sellers, its `branchId` claim |
+| Auth sign-up | Public sign-up disabled (`client.permissions.disabledUserSignup`): accounts are created in the console or with the Admin SDK |
 | Hosting | Web app published at <https://lda-inventory-dev-mx.web.app> (also `lda-inventory-dev-mx.firebaseapp.com`) |
 | Callable CORS | `functions/src/index.js` `WEB_ORIGINS`: `localhost`/`127.0.0.1` plus exactly the two Hosting origins (https) |
 
