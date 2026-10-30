@@ -13,6 +13,7 @@ import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/firebase/production_bootstrap.dart';
 import 'package:lda_inventory/main.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
+import 'package:lda_inventory/version/minimum_version.dart';
 
 class _UnauthenticatedGateway implements EmulatorSessionGateway {
   @override
@@ -72,6 +73,20 @@ class _SessionGateway implements EmulatorSessionGateway {
   @override
   Future<void> logout() async {}
 }
+
+class _ConfigSource implements MinimumVersionSource {
+  _ConfigSource(this.config);
+
+  final Map<String, Object?>? config;
+
+  @override
+  Future<Map<String, Object?>?> readClientConfig() async => config;
+}
+
+Future<MinimumVersionSource> _requireNewerVersion() async =>
+    _ConfigSource(<String, Object?>{'minimumVersion': '99.0.0'});
+
+Future<MinimumVersionSource> _noVersionConfig() async => _ConfigSource(null);
 
 class _RecordingNoticeStreams implements TransferNoticeStreamSource {
   @override
@@ -501,5 +516,101 @@ void main() {
     } finally {
       semantics.dispose();
     }
+  });
+  group('minimum-version gate wiring (V1)', () {
+    testWidgets('an old production build is blocked before the login', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          productionEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+          minimumVersionLoader: _requireNewerVersion,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Actualización necesaria'), findsOneWidget);
+      expect(find.text('Versión requerida: 99.0.0'), findsOneWidget);
+      expect(find.byType(EmulatorLoginShell), findsNothing);
+    });
+
+    testWidgets('an old emulator build blocks a restored session', (
+      WidgetTester tester,
+    ) async {
+      int catalogLoads = 0;
+      await tester.pumpWidget(
+        LdaInventoryBootstrap(
+          demoEnabled: false,
+          localEmulatorsEnabled: true,
+          emulatorLoader: () async => _SessionGateway(
+            const EmulatorSession(
+              userId: 'seller-1',
+              email: 'seller@demo.invalid',
+              role: InventoryRole.seller,
+              branchId: 'branch-north',
+            ),
+          ),
+          emulatorCatalogLoader: (EmulatorSession session) async {
+            catalogLoads++;
+            throw StateError('the catalog must not load');
+          },
+          minimumVersionLoader: _requireNewerVersion,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Actualización necesaria'), findsOneWidget);
+      expect(find.byType(EmulatorLoginShell), findsNothing);
+      expect(catalogLoads, 0);
+    });
+
+    testWidgets('a missing configuration lets the login through', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          productionEnabled: true,
+          emulatorLoader: _loadUnauthenticatedGateway,
+          minimumVersionLoader: _noVersionConfig,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EmulatorLoginShell), findsOneWidget);
+      expect(find.text('Actualización necesaria'), findsNothing);
+    });
+
+    testWidgets('each connected mode defaults to its own version loader', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          productionEnabled: true,
+        ),
+      );
+      expect(
+        tester
+            .widget<LocalEmulatorAuthApp>(find.byType(LocalEmulatorAuthApp))
+            .minimumVersionLoader,
+        same(ProductionFirebaseBootstrap.initializeMinimumVersionSource),
+      );
+
+      await tester.pumpWidget(
+        const LdaInventoryBootstrap(
+          demoEnabled: false,
+          localEmulatorsEnabled: true,
+        ),
+      );
+      expect(
+        tester
+            .widget<LocalEmulatorAuthApp>(find.byType(LocalEmulatorAuthApp))
+            .minimumVersionLoader,
+        same(DemoEmulatorBootstrap.initializeMinimumVersionSource),
+      );
+    });
   });
 }

@@ -14,6 +14,7 @@ import '../catalog/product_rename.dart';
 import '../firebase_options.dart';
 import '../movements/administrator_movements.dart';
 import '../transfers/transfer_notice_controller.dart';
+import '../version/minimum_version.dart';
 import 'emulator_correction_gateway.dart';
 import 'emulator_sale_gateway.dart';
 import 'emulator_stock_intake_gateway.dart';
@@ -94,6 +95,12 @@ abstract final class ProductionFirebaseBootstrap {
 
   static Future<EmulatorSessionGateway> initialize() =>
       _live((FirebaseAuth auth, _, _) => LiveFirebaseGateways.session(auth));
+
+  /// Pre-login reader of the minimum supported version.
+  static Future<MinimumVersionSource> initializeMinimumVersionSource() => _live(
+    (_, FirebaseFirestore firestore, _) =>
+        FirestoreMinimumVersionSource(firestore),
+  );
 
   static Future<RoleScopedCatalogRepository> initializeCatalogRepository(
     EmulatorSession session,
