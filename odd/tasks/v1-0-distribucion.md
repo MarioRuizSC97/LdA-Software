@@ -39,7 +39,7 @@ Web camera scanning is evaluated only after the Hosting URL works.
 
 ## Tasks
 
-- V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · commits c578fee (rules), 54175fe (client), 6a400ae (docs) · implemented, verification pending
+- V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · commits c578fee (rules), 54175fe (client), 6a400ae (docs) · DONE
 - V2 · S3 · privacy notice draft (Markdown + web page) · pending — waits for the owner's data
 - V3 · S4 · web camera evaluation · deferred until the Hosting URL works
 
@@ -69,3 +69,7 @@ Web camera scanning is evaluated only after the Hosting URL works.
   Slice boundary: 1101 authored lines in 4 commits (client commit 894 lines, about 500 of them tests); delivered as one
   PR because the rules, client and docs form one behavior. Risk: item 2 (anonymous read rule) and item 5 (new
   dependency).
+- L5 (2026-10-30, independent verify mvvanoqm-b-hqu5): analyze clean, targeted tests 44/44, isolated rules 27/27,
+  git status clean. Its only flag was the emulator's debug logs (firestore/firebase/storage-debug.log); they are
+  gitignored, so no defect. url_launcher 6.3.3 points to the official flutter/packages repository (cached manifest).
+  Native assess: medium, reviewDue false (under budget), so no native review.
