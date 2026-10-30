@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'account_password.dart';
+
 enum InventoryRole { administrator, seller }
 
 extension InventoryRoleLabel on InventoryRole {
@@ -59,6 +61,16 @@ final class LoginConnectionFailure extends LoginFailure {
   const LoginConnectionFailure();
 }
 
+/// The current password typed for a change is not the account's password.
+final class WrongCurrentPasswordFailure extends LoginFailure {
+  const WrongCurrentPasswordFailure();
+}
+
+/// The session is too old to change a password; signing in again is required.
+final class ReauthenticationRequiredFailure extends LoginFailure {
+  const ReauthenticationRequiredFailure();
+}
+
 /// Maps a Firebase Auth error code to the failure the UI can explain.
 LoginFailure classifyLoginFailure(String code) => switch (code) {
   'password-login-requires-password-change' =>
@@ -77,6 +89,9 @@ String loginFailureText(LoginFailure failure) => switch (failure) {
     'Demasiados intentos. Espera unos minutos y vuelve a intentar.',
   WeakPasswordFailure() =>
     'La contraseña no cumple la política: usa al menos 10 caracteres.',
+  WrongCurrentPasswordFailure() => 'La contraseña actual no es correcta.',
+  ReauthenticationRequiredFailure() =>
+    'Por seguridad, vuelve a iniciar sesión y repite el cambio.',
   LoginConnectionFailure() =>
     'No se pudo iniciar sesión. Revisa los datos y vuelve a intentar.',
 };
@@ -162,10 +177,26 @@ class EmulatorSessionGuard {
   }
 }
 
-class FirebaseEmulatorSessionGateway implements EmulatorSessionGateway {
+class FirebaseEmulatorSessionGateway
+    implements EmulatorSessionGateway, AccountPasswordGateway {
   FirebaseEmulatorSessionGateway(this._auth);
 
   final FirebaseAuth _auth;
+
+  late final FirebaseAccountPasswordGateway _password =
+      FirebaseAccountPasswordGateway(_auth);
+
+  @override
+  Future<void> sendResetEmail(String email) => _password.sendResetEmail(email);
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) => _password.changePassword(
+    currentPassword: currentPassword,
+    newPassword: newPassword,
+  );
 
   @override
   Future<EmulatorSession?> restoreSession() async {

@@ -2227,10 +2227,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('resultado es incierto'), findsNothing);
-    expect(
-      find.text('Precio guardado'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     expect(gatewayLoads, 2);
   });
 
@@ -2434,10 +2431,7 @@ void main() {
       expect(attempts[1], same(original));
       expect(attempts[1].idempotencyKey, original.idempotencyKey);
       expect(attempts[1].productId, 'PRD-COFFEE-001');
-      expect(
-        find.text('Precio guardado'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
     },
   );
 
@@ -2501,10 +2495,7 @@ void main() {
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
-      expect(
-        find.text('Precio guardado'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
     },
   );
 

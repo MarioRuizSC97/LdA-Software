@@ -30,11 +30,11 @@ change a password has no path except asking an administrator.
 
 ## Tasks
 
-- P1 · S4, D3 · error mapping for the Auth policy codes in the session layer · pending
-- P2 · S2, D2 · change-password screen and its wiring · pending
-- P3 · S3, D4 · reset action on the login screen · pending
-- P4 · S5 · tests for P1-P3 · pending
-- P5 · verification (analyze, suite), PR · pending
+- P1 · S4, D3 · error mapping for the Auth policy codes · 75ab592 · done
+- P2 · S2, D2 · change-password screen and its wiring · done (ChangePasswordView + side-panel entry)
+- P3 · S3, D4 · reset action on the login screen · done («¿Olvidaste tu contraseña?»)
+- P4 · S5 · tests for P1-P3 · done (37 tests)
+- P5 · verification (analyze, suite), PR · suite 1986 passed + 1 skipped, analyze clean · PR pending
 
 ## Log
 
@@ -43,3 +43,9 @@ change a password has no path except asking an administrator.
   passwords only (`forceUpgradeOnSignin` off) because the app has no change or reset path and maps unknown Auth errors
   to «No se pudo iniciar sesión. Revisa los datos» (`lib/auth/emulator_session.dart:170-178`,
   `lib/auth/emulator_login.dart:1128`). MFA stays off for the same reason (no `multiFactor` support in `lib/`).
+- L3 (2026-10-30, parent): implementation notes. Engine errors are classified by `classifyLoginFailure` (login) and
+  `classifyPasswordChangeFailure` (change); the gateway only converts the codes that have a remedy, so every other
+  failure keeps today's behaviour. The side-panel entry appears only when the session gateway also implements
+  `AccountPasswordGateway`; the real Firebase gateway does, fakes do not, so existing tests are untouched. The reset
+  action answers the same notice for success, unknown address and failure (anti-enumeration).
+  Suite 1986 passed + 1 skipped (was 1957 + 1); analyze clean.

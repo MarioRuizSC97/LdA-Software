@@ -233,10 +233,15 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createTransferId,
     this.transferNotices,
     this.qrScan,
+    this.passwordSettings,
     super.key,
   });
 
   final EmulatorSession session;
+
+  /// Extra account entry for the side panel, such as changing the password;
+  /// absent when the backend has no password gateway.
+  final WidgetBuilder? passwordSettings;
 
   /// Which backend the session banner names.
   final BackendEnvironment environment;
@@ -1331,8 +1336,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     if (menuActions)
                       AppMenuButton(
                         key: const ValueKey<String>('shell-more'),
-                        settings: (BuildContext context) =>
+                        settings: (BuildContext context) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
                             const ThemeModeSwitch(showLabel: true),
+                            if (widget.passwordSettings != null)
+                              widget.passwordSettings!(context),
+                          ],
+                        ),
                         // A wide web/desktop bar keeps its own notices icon and badge,
                         // so the menu icon carries the badge only where the notices
                         // entry lives in the panel alone.
