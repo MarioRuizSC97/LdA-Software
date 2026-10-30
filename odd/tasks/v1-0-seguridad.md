@@ -34,8 +34,8 @@ headers. Budget alerts, App Check, password policy and MFA are reviewed with the
 - H2 · S1.4 · `npm audit fix` in functions, tests · inline · 2b80f7c · done
 - H3 · S1.5, D3 · Hosting headers · inline · 23bdb80 · done (deploy in H5)
 - H4 · S1.1, D2 · close public sign-up (production config) · inline · done 2026-10-30
-- H5 · deploy functions + Hosting, live checks, PR · pending
-- H6 · S2 · walk the user through items 2, 6, 7 · pending
+- H5 · deploy functions + Hosting, live checks, PR · cfacada · done
+- H6 · S2 · items 2, 6, 7 with the user · budget done (user), passwords done, MFA and App Check deferred with reasons · done
 
 ## Log
 
@@ -52,3 +52,15 @@ headers. Budget alerts, App Check, password policy and MFA are reviewed with the
 - L5 (2026-10-30, parent): H4 no client code or script signs up (only Admin SDK emulator scripts). PATCH
   `client.permissions.disabledUserSignup=true` (printed only that field; email sign-in still enabled). Live probe:
   `accounts:signUp` with the browser key → ADMIN_ONLY_OPERATION; lookup of the probe email → 0 accounts.
+- L6 (2026-10-30, H6 with the user): budget `LDA Inventory mensual` created by the user: monthly, project
+  `lda-inventory-dev-mx`, alerts at 50/90/100 %, alerts only (no spend cap), amount shown in USD ($100; the console's
+  budget currency is USD).
+- L7 (2026-10-30): password policy. Finding first: the app has no change-password or reset flow and maps an unknown Auth
+  error to a connection error, so `forceUpgradeOnSignin` would lock out every short password with a misleading message.
+  User chose to enforce without forcing. Applied via Identity Toolkit config: `passwordPolicyEnforcementState=ENFORCE`,
+  `minPasswordLength=10`, `forceUpgradeOnSignin=false` (the field is `minPasswordLength`: `minLength` is rejected).
+  MFA deferred: the app has no `multiFactor` support, so enabling it would break sign-in the same way.
+- L8 (2026-10-30): App Check deferred. Huawei HBP-LX9 has Play Store but Google Play services is `0.3.17.252432-hw`,
+  a vendor build, so Play Integrity is not guaranteed. Doing it properly needs the App Check SDK in the app, provider
+  registration, a monitoring phase and only then enforcement. Current mitigations (closed sign-up, line limits, CORS,
+  rule-scoped reads) already cover scripted abuse; revisit App Check as its own task if it is wanted.
