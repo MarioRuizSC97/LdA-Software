@@ -54,7 +54,7 @@ Web camera scanning is evaluated only after the Hosting URL works.
 - V2 · S3 · privacy notice draft (Markdown + web page) · pending — waits for the owner's data
 - V3 · S4 · web camera evaluation · deferred until the Hosting URL works
 - V4 · S5, D9, D10 · web publish: callable CORS for the Hosting origins, `hosting` in firebase.json, deploy callables
-  then Hosting, verify the URL · branch `feat/v1-0-web-hosting` · in progress
+  then Hosting, verify the URL · branch `feat/v1-0-web-hosting` · commits a2573c5 (CORS), a8450a2 (hosting) · deployed, user check pending
 
 ## Log
 
@@ -96,3 +96,10 @@ Web camera scanning is evaluated only after the Hosting URL works.
   d1df9e32 → f7c349c1 == repo; live anonymous get appConfig/client 404, products 403, list appConfig 403). Production
   web and APK rebuilt from main caaa0cb with the gate; the Huawei opens normally (no appConfig/client yet).
 - L8 (2026-10-30, user, verbatim): "Dale papurri empecemos con la URL :)" → S5, V4, D10.
+- L9 (2026-10-30, parent): CORS RED with main's index.js (3 fail) → GREEN; functions `npm test` 170/170 (was 169),
+  runtime-identity 55/55. Pre-existing, not caused here: sales/corrections/sellerProfiles-callable tests fail on main
+  too (not in `npm test`). Deployed from a8450a2: 16 callables (live preflight: web.app, firebaseapp.com, localhost
+  allowed; …web.app.evil.com, http://…web.app, example.com rejected) and Hosting (both domains 200; `/`,
+  `main.dart.js`, `flutter_bootstrap.js` and any path send `Cache-Control: no-cache`; the app boots to «Conectando con
+  el servidor»). A conditional request with the ETag still returned 200 in curl, so the 304 saving is unobserved;
+  correctness (always the published build) holds. Hosted build = production build of main caaa0cb (no lib/ change).

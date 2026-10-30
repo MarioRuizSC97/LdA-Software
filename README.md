@@ -104,26 +104,27 @@ Every callable accepts exactly two runtimes: the `demo-lda-inventory`
 emulator and the deployed `lda-inventory-dev-mx` runtime with no emulator
 variables (`functions/src/runtime-project.js`); any other project is refused.
 
-### Deployed backend (status 2026-10-27)
+### Deployed backend (status 2026-10-30)
 
 Checked read-only against the project, not assumed:
 
 | Piece | State |
 | --- | --- |
 | Billing plan | Blaze, so Cloud Functions can run in the project |
-| `firestore.rules` | Deployed; identical to this repository (269 lines, same SHA-256) |
-| Cloud Functions | 16 callables deployed and ACTIVE (sales, corrections, transfers, catalog, pricing, intake, seller profiles) |
+| `firestore.rules` | Deployed; identical to this repository (includes the `appConfig/client` read) |
+| Cloud Functions | 16 callables deployed and ACTIVE (sales, corrections, transfers, catalog, pricing, intake, seller profiles), redeployed with the Hosting origins |
 | Auth accounts | Real accounts exist, each with its `role` and, for sellers, its `branchId` claim |
-| Hosting | Site `lda-inventory-dev-mx` exists with **no release**: the web app is not published |
-| Callable CORS | `functions/src/index.js` `LOCAL_WEB_ORIGINS` allows `localhost`/`127.0.0.1` only |
+| Hosting | Web app published at <https://lda-inventory-dev-mx.web.app> (also `lda-inventory-dev-mx.firebaseapp.com`) |
+| Callable CORS | `functions/src/index.js` `WEB_ORIGINS`: `localhost`/`127.0.0.1` plus exactly the two Hosting origins (https) |
 
 Consequences:
 
 - Android and iOS builds in production mode work end to end; they are not
   subject to CORS.
-- Publishing the web app requires adding the hosting domain to
-  `LOCAL_WEB_ORIGINS` and redeploying the callables first, otherwise every
-  write is rejected by CORS.
+- The web app calls the callables from the Hosting origins. A new domain
+  (for example a custom one) must be added to `HOSTING_WEB_ORIGINS` and the
+  callables redeployed before it is used, otherwise every write is rejected
+  by CORS. Firebase Auth must also list it as an authorized domain.
 - Redeploying rules is only needed when `firestore.rules` changes; compare
   before deploying instead of assuming drift.
 
@@ -163,6 +164,22 @@ apply with nothing written. Emails are compared case-insensitively, as
 Firebase Auth does. Re-running the same plan is a no-op. Any other
 project, and `--apply` while a Firebase emulator variable is set, are
 refused.
+
+### Publishing the web app
+
+The web app is served from Firebase Hosting (`hosting` in `firebase.json`):
+the `build/web` folder, every path rewritten to `index.html`, and every file
+sent with `Cache-Control: no-cache`, so a reload always revalidates against
+the published build instead of a copy kept by the browser.
+
+```sh
+flutter build web --release --dart-define=LDA_FIREBASE_PRODUCTION=true
+firebase deploy --only hosting --project lda-inventory-dev-mx
+```
+
+Build with the production define every time: a build without it opens the
+offline screen. The web build cannot scan QR codes; search by name or code
+works.
 
 ### Minimum-version gate
 
