@@ -233,10 +233,15 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     this.createTransferId,
     this.transferNotices,
     this.qrScan,
+    this.onChangePassword,
     super.key,
   });
 
   final EmulatorSession session;
+
+  /// Opens the password screen. It is offered in the wide bar and in the side
+  /// panel, and absent when the backend cannot change passwords.
+  final VoidCallback? onChangePassword;
 
   /// Which backend the session banner names.
   final BackendEnvironment environment;
@@ -1328,11 +1333,34 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     // Reduced screens retain the full panel and its badge/semantics.
                     // Wide screens put the theme cycle in the menu's former slot.
                     if (!menuActions) const ThemeModeSwitch(compact: true),
+                    if (widget.onChangePassword != null && !menuActions)
+                      IconButton(
+                        key: const ValueKey<String>('change-password-open'),
+                        tooltip: 'Cambiar contraseña',
+                        onPressed: widget.onChangePassword,
+                        icon: const Icon(Icons.password_outlined),
+                      ),
                     if (menuActions)
                       AppMenuButton(
                         key: const ValueKey<String>('shell-more'),
-                        settings: (BuildContext context) =>
+                        settings: (BuildContext context) => Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
                             const ThemeModeSwitch(showLabel: true),
+                            if (widget.onChangePassword != null)
+                              ListTile(
+                                key: const ValueKey<String>(
+                                  'shell-change-password',
+                                ),
+                                leading: const Icon(Icons.password_outlined),
+                                title: const Text('Cambiar contraseña'),
+                                onTap: () {
+                                  Navigator.of(context).pop();
+                                  widget.onChangePassword!();
+                                },
+                              ),
+                          ],
+                        ),
                         // A wide web/desktop bar keeps its own notices icon and badge,
                         // so the menu icon carries the badge only where the notices
                         // entry lives in the panel alone.

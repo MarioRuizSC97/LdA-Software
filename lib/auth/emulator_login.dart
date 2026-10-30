@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -17,6 +19,8 @@ import '../corrections/correction_draft.dart';
 import '../corrections/correction_receipt.dart';
 import '../corrections/correction_sale.dart';
 import '../corrections/sale_corrections.dart';
+import 'account_password.dart';
+import 'change_password_view.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../firebase/emulator_stock_intake_gateway.dart';
@@ -1143,8 +1147,20 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
       final TransferJournalStatus? transferJournal = _transferJournalFor(
         session,
       );
+      final AccountPasswordGateway? passwordGateway =
+          _gateway is AccountPasswordGateway
+          ? _gateway! as AccountPasswordGateway
+          : null;
       final Widget page = AuthenticatedCatalogPage(
         qrScan: productQrScanSupported ? showProductQrScanner : null,
+        onChangePassword: passwordGateway == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      ChangePasswordView(gateway: passwordGateway),
+                ),
+              ),
         key: ValueKey<String>(
           '${session.userId}|${session.role.name}|${session.branchId ?? ''}',
         ),
@@ -1225,6 +1241,9 @@ class EmulatorLoginShellState extends State<EmulatorLoginShell> {
     }
     return _LoginView(
       gateway: _gateway!,
+      passwordGateway: _gateway is AccountPasswordGateway
+          ? _gateway! as AccountPasswordGateway
+          : null,
       authGeneration: _authGeneration,
       onLoginStarted: _startLoginAttempt,
       onAuthenticated: _completeLoginAttempt,
@@ -1379,6 +1398,7 @@ class _SessionErrorView extends StatelessWidget {
 class _LoginView extends StatefulWidget {
   const _LoginView({
     required this.gateway,
+    this.passwordGateway,
     required this.authGeneration,
     required this.onLoginStarted,
     required this.onAuthenticated,
@@ -1388,6 +1408,9 @@ class _LoginView extends StatefulWidget {
 
   final BackendEnvironment environment;
   final EmulatorSessionGateway gateway;
+
+  /// Enables «¿Olvidaste tu contraseña?»; null hides the action.
+  final AccountPasswordGateway? passwordGateway;
   final int authGeneration;
   final int Function() onLoginStarted;
   final bool Function(int generation, EmulatorSession session) onAuthenticated;
@@ -1403,6 +1426,7 @@ class _LoginViewState extends State<_LoginView> {
   bool _submitting = false;
   String? _error;
   int? _errorAttempt;
+  String? _notice;
 
   @override
   void didUpdateWidget(_LoginView oldWidget) {
@@ -1424,6 +1448,85 @@ class _LoginViewState extends State<_LoginView> {
     super.dispose();
   }
 
+  /// Sends the reset email. The answer never reveals whether the address has
+  /// an account, so the same notice covers every case.
+  Future<void> _sendReset() async {
+    final AccountPasswordGateway? gateway = widget.passwordGateway;
+    if (gateway == null) return;
+    final TextEditingController controller = TextEditingController(
+      text: _email.text.trim(),
+    );
+    // Same framing as the cost PIN and intake confirmations: the page behind
+    // is blurred and dimmed, and a tap outside cancels.
+    final String? address = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Cancelar',
+      barrierColor: Colors.transparent,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
+      pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                child: ColoredBox(
+                  color: Theme.of(dialogContext).colorScheme.scrim
+                      .withValues(alpha: 0.32),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: AlertDialog(
+              key: const ValueKey<String>('reset-password-dialog'),
+              title: const Text('Restablecer contraseña'),
+              content: SizedBox(
+                width: 420,
+                child: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Correo electrónico',
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  style: primaryActionStyle(dialogContext),
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop(controller.text.trim()),
+                  child: const Text('Enviar enlace'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (address == null || address.isEmpty) return;
+    try {
+      await gateway.sendResetEmail(address);
+    } on Object {
+      // The same notice answers success and failure on purpose.
+    }
+    if (!mounted) return;
+    setState(() {
+      _notice =
+          'Si el correo existe, enviamos un enlace para restablecer '
+          'la contraseña.';
+      _error = null;
+      _errorAttempt = null;
+    });
+  }
+
   Future<void> _submit() async {
     // Session-generation changes release this guard in didUpdateWidget.
     if (_submitting) return;
@@ -1441,6 +1544,7 @@ class _LoginViewState extends State<_LoginView> {
     setState(() {
       _submitting = true;
       _error = null;
+      _notice = null;
       _errorAttempt = null;
     });
     try {
@@ -1449,12 +1553,14 @@ class _LoginViewState extends State<_LoginView> {
         password: password,
       );
       if (mounted) widget.onAuthenticated(generation, session);
-    } catch (_) {
+    } catch (error) {
       if (!mounted || !widget.mayShowLoginFailure(generation)) return;
       setState(() {
         _submitting = false;
         _errorAttempt = generation;
-        _error = widget.environment.loginFailure;
+        _error = error is LoginFailure
+            ? loginFailureText(error)
+            : widget.environment.loginFailure;
       });
     }
   }
@@ -1563,6 +1669,18 @@ class _LoginViewState extends State<_LoginView> {
                           const SizedBox(height: 12),
                           Semantics(liveRegion: true, child: Text(error)),
                         ],
+                        if (_notice case final String notice) ...<Widget>[
+                          const SizedBox(height: 12),
+                          Semantics(
+                            liveRegion: true,
+                            child: Text(
+                              notice,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 20),
                         FilledButton(
                           style: primaryActionStyle(context),
@@ -1576,6 +1694,16 @@ class _LoginViewState extends State<_LoginView> {
                                 )
                               : const Text('Iniciar sesión'),
                         ),
+                        if (widget.passwordGateway != null) ...<Widget>[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            key: const ValueKey<String>(
+                              'login-forgot-password',
+                            ),
+                            onPressed: _submitting ? null : _sendReset,
+                            child: const Text('¿Olvidaste tu contraseña?'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
