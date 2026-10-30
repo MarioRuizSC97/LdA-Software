@@ -39,7 +39,7 @@ Web camera scanning is evaluated only after the Hosting URL works.
 
 ## Tasks
 
-- V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · pending
+- V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · commits c578fee (rules), 54175fe (client), 6a400ae (docs) · implemented, verification pending
 - V2 · S3 · privacy notice draft (Markdown + web page) · pending — waits for the owner's data
 - V3 · S4 · web camera evaluation · deferred until the Hosting URL works
 
@@ -59,3 +59,13 @@ Web camera scanning is evaluated only after the Hosting URL works.
   email/password, claims role/branchId, `sellerProfiles` displayName, actor UIDs on sales/corrections/transfers/intake
   audits, notice readAt, free-text correction notes (only customer-data risk), no structured customer fields, local
   theme + PIN salt/hash + transfer journal (owner UID), camera QR not stored, no analytics/crash SDKs, region us-south1.
+- L4 (2026-10-30, parent): V1 implemented inline (the worker could not bootstrap: "Writer bootstrap requires the original
+  safe project root"). Test-first, RED observed for each part: pure logic (16 tests), gate widget (8), bootstrap wiring
+  incl. blocked login and blocked restored session (4), rules (5; RED = the 2 read tests). Full suite 1957 passed + 1
+  skipped (was 1929), `flutter analyze` clean, rules 27/27. Rules ran on an isolated emulator (firestore 8281, auth
+  9699, storage 9399) because the user's own emulator holds 8080/9099/9299 and the suite clears Firestore. Emulator
+  mode reads through the shared `_initializeLiveFirebase` registry, so Firestore is still connected once; the check
+  waits for the session start first to avoid racing app initialization. New dependency `url_launcher` ^6.3.3.
+  Slice boundary: 1101 authored lines in 4 commits (client commit 894 lines, about 500 of them tests); delivered as one
+  PR because the rules, client and docs form one behavior. Risk: item 2 (anonymous read rule) and item 5 (new
+  dependency).
