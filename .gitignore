@@ -20,6 +20,8 @@ flutter_*.log
 flutter_*.png
 
 # Firebase emulator and rules-test state
+# Firebase Hosting deploy cache.
+.firebase/
 firebase-debug.log
 firestore-debug.log
 storage-debug.log

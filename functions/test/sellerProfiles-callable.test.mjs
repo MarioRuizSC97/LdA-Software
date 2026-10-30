@@ -159,7 +159,7 @@ const request = (data = { uid: SELLER_UID, displayName: 'Ada Ruiz' }, authContex
 test('profile registration uses the existing region and local-only origins', () => {
   assert.ok(entry.setSellerProfile, 'setSellerProfile must be registered');
   assert.equal(entry.setSellerProfile.options.region, 'us-south1');
-  assert.equal(entry.setSellerProfile.options.cors, entry.LOCAL_WEB_ORIGINS);
+  assert.equal(entry.setSellerProfile.options.cors, entry.WEB_ORIGINS);
   for (const origin of ['http://localhost:5173', 'https://127.0.0.1:443']) {
     assert.ok(entry.setSellerProfile.options.cors.some((pattern) => pattern.test(origin)));
   }
