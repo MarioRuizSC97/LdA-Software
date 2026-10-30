@@ -164,6 +164,45 @@ Firebase Auth does. Re-running the same plan is a no-op. Any other
 project, and `--apply` while a Firebase emulator variable is set, are
 refused.
 
+### Minimum-version gate
+
+Before the login screen or a restored session, the connected modes
+(production and local emulators) read the Firestore document
+`appConfig/client` and compare its minimum with the app's own version
+(`lib/app/app_info.dart`, pinned to `pubspec.yaml`). An older build shows
+"Actualización necesaria" with the installed and required versions and
+cannot continue. Demo and offline modes never check.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `minimumVersion` | string `MAJOR.MINOR.PATCH` | Oldest build allowed to run |
+| `androidUpdateUrl` | string, optional | `http(s)` page opened by "Abrir la tienda" on Android |
+| `iosUpdateUrl` | string, optional | `http(s)` page opened by "Abrir la tienda" on iOS |
+
+On the web the button is "Recargar", which reloads the page and so fetches
+the published build. On a phone without a URL for its platform the screen
+shows no button.
+
+The gate fails open: a missing document, a malformed version, a read error or
+a read slower than 5 seconds let the app continue. It nudges delivery; it is
+not a security boundary, and a configuration outage must not stop sales.
+
+Rules allow anyone, signed in or not, to `get` exactly `appConfig/client`;
+listing, every other `appConfig` document and every client write are denied
+(`firebase/tests/rules.test.mjs`, "client app configuration").
+
+To require an update, after the new build is available on every channel:
+
+1. Open the Firebase console, project `lda-inventory-dev-mx`, Firestore.
+2. Create or edit the collection `appConfig`, document `client`.
+3. Set `minimumVersion` to the new version, for example `1.1.0`, and the
+   store URLs once they exist.
+
+Raise the minimum only when the old build must stop, for example when a
+callable changes incompatibly; a normal release does not need it. The gate
+has to ship in the first distributed build: a copy installed without it can
+never be forced to update.
+
 ## Running against the local emulators
 
 Start the demo emulators first, then build with
