@@ -36,6 +36,7 @@ change a password has no path except asking an administrator.
 - P4 · S5 · tests for P1-P3 · done (37 tests)
 - P5 · verification (analyze, suite), PR · suite 1986 passed + 1 skipped, analyze clean · PR pending
 - P6 · S2 · reachable from the wide bar, not only the side panel · 9795b33 · done (user report)
+- P7 · S2 · two-column layout with a suggestions card on wide screens, like the login · done (user report)
 
 ## Log
 
@@ -57,3 +58,9 @@ change a password has no path except asking an administrator.
   the absence of both without a gateway. Native tests report Android by default, so the wide case sets
   `debugDefaultTargetPlatformOverride` and resets it inside the test body (the framework checks it before tear-downs).
   Suite 1989 passed + 1 skipped, analyze clean.
+- L5 (2026-10-30, user, with a screenshot of the login): "que aparezcan estas notas como sugerencias ... que salga o
+  se presente en 2 columnas como habiamos quedado". The pattern is the wide-screen context rail (`PanelLayout` +
+  context card, T15). The password screen now uses it with the login's card style (`Card.filled`, heading
+  «Sugerencias», four notes); compact screens show the form alone because `PanelLayout` never mounts the rail there.
+  Also verified: two different new passwords are refused without calling the gateway (UI test). Suite 1992 passed
+  + 1 skipped, analyze clean.

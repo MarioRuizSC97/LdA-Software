@@ -97,7 +97,7 @@ void main() {
     },
   );
 
-  testWidgets('on a wide screen the form keeps the app column width', (
+  testWidgets('on a wide screen the suggestions sit beside the form', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(1440, 900);
@@ -107,17 +107,49 @@ void main() {
     await tester.pumpWidget(_app(_RecordingGateway()));
     await tester.pumpAndSettle();
 
-    final Finder column = find
-        .descendant(
-          of: find.byType(SingleChildScrollView),
-          matching: find.byType(ConstrainedBox),
-        )
-        .first;
-    final BoxConstraints constraints = tester
-        .widget<ConstrainedBox>(column)
-        .constraints;
-    expect(constraints.maxWidth, 560);
-    expect(find.text('Cambiar contraseña'), findsOneWidget);
+    final Finder card = find.byKey(
+      const ValueKey<String>('change-password-context'),
+    );
+    expect(card, findsOneWidget);
+    for (final String note in <String>[
+      'Sugerencias',
+      'Usa al menos 10 caracteres.',
+      'Una frase de varias palabras es fácil de recordar y difícil de adivinar.',
+      'No uses la misma contraseña que en otros servicios.',
+      'Si la olvidas, usa «¿Olvidaste tu contraseña?» al iniciar sesión.',
+    ]) {
+      expect(
+        find.descendant(of: card, matching: find.text(note)),
+        findsOneWidget,
+        reason: note,
+      );
+    }
+    final Finder form = find.widgetWithText(TextField, 'Contraseña actual');
+    expect(
+      tester.getTopLeft(card).dx,
+      greaterThan(tester.getTopRight(form).dx),
+    );
+  });
+
+  testWidgets('on a compact screen only the form is shown', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(_RecordingGateway()));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('change-password-context')),
+      findsNothing,
+    );
+    expect(
+      find.text('Elige una contraseña de al menos 10 caracteres.'),
+      findsOneWidget,
+    );
+    expect(find.text('Guardar contraseña'), findsOneWidget);
   });
 
   testWidgets('sends the change and confirms it', (WidgetTester tester) async {
