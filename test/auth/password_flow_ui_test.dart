@@ -4,7 +4,6 @@ import 'package:lda_inventory/app/backend_environment.dart';
 import 'package:lda_inventory/auth/account_password.dart';
 import 'package:lda_inventory/auth/emulator_login.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
-import 'package:lda_inventory/catalog/catalog_page.dart';
 
 class _SignedOutGateway implements EmulatorSessionGateway {
   @override

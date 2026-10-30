@@ -92,14 +92,15 @@ class _ChangePasswordViewState extends State<ChangePasswordView> {
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
+          constraints: const BoxConstraints(maxWidth: 560),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const Text(
+              Text(
                 'Elige una contraseña de al menos '
                 '$minimumPasswordLength caracteres.',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 16),
               TextField(
@@ -136,12 +137,44 @@ class _ChangePasswordViewState extends State<ChangePasswordView> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
-              if (_success != null) ...<Widget>[
+              if (_success case final String success) ...<Widget>[
                 const SizedBox(height: 12),
-                Text(
-                  _success!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
+                Semantics(
+                  container: true,
+                  liveRegion: true,
+                  label: success,
+                  child: ExcludeSemantics(
+                    child: ColoredBox(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            Icon(
+                              Icons.check_circle_outline,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                success,
+                                style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
