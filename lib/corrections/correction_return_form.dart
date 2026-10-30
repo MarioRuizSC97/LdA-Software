@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../sales/sale_format.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_labels.dart';
 import 'correction_receipt.dart';
@@ -74,7 +77,7 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
     final CorrectionReturnController form = _controller;
     final String? folio = widget.sale.folio;
     final String? message = form.message;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('return-form'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -153,12 +156,14 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
               const SizedBox(height: 16),
               if (form.isLocked)
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('return-retry'),
                   onPressed: form.isSubmitting ? null : form.retrySubmit,
                   child: _label(form.isSubmitting, 'Reintentar'),
                 )
               else
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('return-confirm'),
                   onPressed: form.canConfirm ? form.confirm : null,
                   child: _label(form.isSubmitting, 'Confirmar devolución'),
@@ -166,6 +171,13 @@ class _CorrectionReturnFormState extends State<CorrectionReturnForm> {
             ],
           ),
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: widget.sale,
+        productNames: widget.productNames,
       ),
     );
   }
@@ -216,6 +228,7 @@ class _LineEditor extends StatelessWidget {
               Row(
                 children: <Widget>[
                   Checkbox(
+                    semanticLabel: 'Seleccionar $name',
                     key: ValueKey<String>('return-line-select-$index'),
                     value: entry.selected,
                     onChanged: editable

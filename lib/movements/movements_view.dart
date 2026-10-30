@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_stock.dart';
 import '../sales/sale_format.dart';
 import 'administrator_movements.dart';
@@ -8,6 +10,11 @@ import 'seller_profiles.dart';
 
 /// Rows stop growing past this width so they stay readable on wide screens.
 const double _maxContentWidth = 920;
+
+/// On wide screens the list yields width to the summary rail: 760 keeps rows
+/// readable and still fits beside the rail at ~1200 px.
+const double _widePrimaryWidth = 760;
+const double _wideContextWidth = 320;
 
 /// Below this row width (in unscaled text units) the name action moves
 /// under the row details.
@@ -21,7 +28,6 @@ class MovementsView extends StatefulWidget {
     required this.movements,
     required this.productNames,
     required this.branchChoices,
-    required this.onClose,
     super.key,
   });
 
@@ -32,13 +38,77 @@ class MovementsView extends StatefulWidget {
 
   /// Branches from the administrator catalog snapshot.
   final List<CatalogBranchChoice> branchChoices;
-  final VoidCallback onClose;
 
   @override
   State<MovementsView> createState() => _MovementsViewState();
 }
 
+typedef _BranchFilterChoice = ({String? id, String label});
+
 class _MovementsViewState extends State<MovementsView> {
+  final GlobalKey _branchFilterFieldKey = GlobalKey();
+
+  List<_BranchFilterChoice> get _branchFilterChoices => [
+    (id: null, label: 'Todas'),
+    for (final choice in widget.branchChoices)
+      (id: choice.branchId, label: choice.branchName),
+  ];
+
+  Future<void> _openBranchMenu() async {
+    final field =
+        _branchFilterFieldKey.currentContext!.findRenderObject()! as RenderBox;
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final rect =
+        field.localToGlobal(Offset.zero, ancestor: overlay) & field.size;
+    final theme = Theme.of(context);
+    final selected = await showMenu<_BranchFilterChoice>(
+      context: context,
+      // Do not pass initialValue: that centers the selected row over the field
+      // instead of opening a predictable list below it.
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(rect.left, rect.bottom + 4, rect.width, 0),
+        Offset.zero & overlay.size,
+      ),
+      constraints: BoxConstraints.tightFor(width: rect.width),
+      color: theme.colorScheme.surfaceContainer,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        for (final choice in _branchFilterChoices)
+          PopupMenuItem<_BranchFilterChoice>(
+            value: choice,
+            height: 48,
+            labelTextStyle: WidgetStatePropertyAll(
+              theme.textTheme.bodyLarge!.copyWith(
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            child: Semantics(
+              selected: choice.id == _branchId,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: choice.id == _branchId
+                        ? Icon(
+                            Icons.check,
+                            size: 20,
+                            color: theme.colorScheme.onSurface,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(choice.label)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+    if (mounted && selected != null) _selectBranch(selected.id);
+  }
+
   final Map<String, SellerProfileLookup> _names =
       <String, SellerProfileLookup>{};
   final Set<String> _resolving = <String>{};
@@ -154,11 +224,20 @@ class _MovementsViewState extends State<MovementsView> {
     for (final CatalogBranchChoice choice in widget.branchChoices) {
       if (choice.branchId == branchId) return choice.branchName;
     }
-    return branchId;
+    return 'Sucursal no disponible';
   }
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final InputBorder themedBorder =
+        theme.inputDecorationTheme.border ?? const UnderlineInputBorder();
+    final InputBorder filterBorder = themedBorder.copyWith(
+      borderSide: switch (theme.cardTheme.shape) {
+        final OutlinedBorder shape => shape.side,
+        _ => BorderSide.none,
+      },
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -169,33 +248,62 @@ class _MovementsViewState extends State<MovementsView> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
-              TextButton.icon(
-                onPressed: widget.onClose,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Volver'),
-              ),
               Text(
                 'Movimientos',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Semantics(
                 label: 'Filtrar por sucursal',
-                child: DropdownButton<String?>(
-                  key: const ValueKey<String>('movements-branch-filter'),
-                  value: _branchId,
-                  onChanged: _selectBranch,
-                  items: <DropdownMenuItem<String?>>[
-                    const DropdownMenuItem<String?>(child: Text('Todas')),
-                    for (final CatalogBranchChoice choice
-                        in widget.branchChoices)
-                      DropdownMenuItem<String?>(
-                        value: choice.branchId,
-                        child: Text(choice.branchName),
+                child: IntrinsicWidth(
+                  child: InputDecorator(
+                    key: _branchFilterFieldKey,
+                    // A filter belongs to the ledger surface, not the form's
+                    // accent-focused state. Keep the theme's pill geometry.
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: theme.cardTheme.color != null,
+                      fillColor:
+                          theme.cardTheme.color ??
+                          theme.colorScheme.surfaceContainerLow,
+                      hoverColor: Colors.transparent,
+                      border: filterBorder,
+                      enabledBorder: filterBorder,
+                      focusedBorder: filterBorder,
+                    ).applyDefaults(theme.inputDecorationTheme),
+                    child: InkWell(
+                      key: const ValueKey<String>('movements-branch-filter'),
+                      onTap: _openBranchMenu,
+                      focusColor: Colors.transparent,
+                      borderRadius: switch (filterBorder) {
+                        final OutlineInputBorder border => border.borderRadius,
+                        _ => null,
+                      },
+                      child: SizedBox(
+                        height: 48,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: IndexedStack(
+                                alignment: AlignmentDirectional.centerStart,
+                                index: _branchFilterChoices.indexWhere(
+                                  (choice) => choice.id == _branchId,
+                                ),
+                                children: [
+                                  for (final choice in _branchFilterChoices)
+                                    Text(choice.label),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.arrow_drop_down),
+                          ],
+                        ),
                       ),
-                  ],
+                    ),
+                  ),
                 ),
               ),
-              OutlinedButton.icon(
+              FilledButton.tonalIcon(
                 onPressed: _loading ? null : _refresh,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Actualizar'),
@@ -204,15 +312,65 @@ class _MovementsViewState extends State<MovementsView> {
           ),
         ),
         Expanded(
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: _maxContentWidth),
-              child: _body(),
+          child: PanelLayout(
+            maxPrimaryWidth: _widePrimaryWidth,
+            maxContextWidth: _wideContextWidth,
+            primary: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+                child: _body(),
+              ),
             ),
+            context: _summary(context),
           ),
         ),
       ],
+    );
+  }
+
+  /// Wide-only rail: the active filter and the counts of the loaded set.
+  Widget _summary(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool ready = !_loading && _failure == null;
+    final Map<MovementType, int> byType = <MovementType, int>{};
+    int unreadable = 0;
+    for (final MovementEntry entry in _entries) {
+      switch (entry) {
+        case InventoryMovement(:final MovementType type):
+          byType[type] = (byType[type] ?? 0) + 1;
+        case UnreadableMovement():
+          unreadable += 1;
+      }
+    }
+    return Card(
+      key: const ValueKey<String>('movements-context'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Resumen', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Filtro: ${_branchId == null ? 'Todas' : _branchLabel(_branchId!)}',
+            ),
+            const SizedBox(height: 8),
+            if (!ready)
+              const Text('Resumen no disponible')
+            else ...<Widget>[
+              Text(
+                'Movimientos: ${_entries.length}',
+                style: theme.textTheme.titleSmall,
+              ),
+              for (final MovementType type in MovementType.values)
+                if (byType[type] case final int count)
+                  Text('${type.label}: $count'),
+              if (unreadable > 0) Text('Ilegibles: $unreadable'),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -231,7 +389,11 @@ class _MovementsViewState extends State<MovementsView> {
           children: <Widget>[
             Text(failure, textAlign: TextAlign.center),
             const SizedBox(height: 12),
-            FilledButton(onPressed: _load, child: const Text('Reintentar')),
+            FilledButton(
+              style: primaryActionStyle(context),
+              onPressed: _load,
+              child: const Text('Reintentar'),
+            ),
           ],
         ),
       );
@@ -259,7 +421,7 @@ class _MovementsViewState extends State<MovementsView> {
 
   Widget _movementRow(InventoryMovement movement) {
     final String product =
-        widget.productNames[movement.productId] ?? movement.productId;
+        widget.productNames[movement.productId] ?? 'Producto no disponible';
     final String quantity = formatSignedQuantity(
       movement.quantityScaled,
       movement.precision,
@@ -268,7 +430,7 @@ class _MovementsViewState extends State<MovementsView> {
     final (String actor, String? action) = _actor(movement);
     final Widget? actionButton = action == null
         ? null
-        : TextButton(
+        : FilledButton.tonal(
             onPressed: () => _editName(movement.actorId),
             child: Text(action),
           );
@@ -286,7 +448,25 @@ class _MovementsViewState extends State<MovementsView> {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('$product · $quantity'),
+                Text.rich(
+                  TextSpan(
+                    children: <TextSpan>[
+                      TextSpan(text: '$product · '),
+                      TextSpan(
+                        text: quantity,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!widget.productNames.containsKey(movement.productId))
+                  Text(
+                    'código ${movement.productId}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 Text(
                   '${_branchLabel(movement.branchId)} · '
                   '${formatSaleDateTime(movement.occurredAt)}',
@@ -351,6 +531,7 @@ class _SellerNameDialogState extends State<_SellerNameDialog> {
   }
 
   Future<void> _save() async {
+    if (_pending) return;
     // After an uncertain outcome only the identical name may be retried.
     final String? name = _lockedName ?? normalizeSellerDisplayName(_name.text);
     if (name == null) {
@@ -422,6 +603,7 @@ class _SellerNameDialogState extends State<_SellerNameDialog> {
           child: const Text('Cancelar'),
         ),
         FilledButton(
+          style: primaryActionStyle(context),
           onPressed: _pending ? null : _save,
           child: Text(uncertain ? 'Reintentar' : 'Guardar'),
         ),

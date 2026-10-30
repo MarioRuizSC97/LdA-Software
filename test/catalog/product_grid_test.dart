@@ -3,6 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
+
+import 'cost_pin_test_helper.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/auth/emulator_session.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
@@ -152,6 +155,7 @@ void _usePlatform(TargetPlatform platform) {
 }
 
 void main() {
+  setUpCostPin();
   testWidgets('android and iOS show two products per row', (
     WidgetTester tester,
   ) async {
@@ -348,10 +352,12 @@ void main() {
 
     await _openSheet(tester, _coffee.internalCode);
     expect(find.text('PRD-COFFEE-001'), findsOneWidget);
-    expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
+    expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
     expect(find.text('Modo de precio: IVA incluido'), findsOneWidget);
     expect(find.text('Tratamiento de IVA: Gravado'), findsOneWidget);
     expect(find.text('Tasa de IVA: 16%'), findsOneWidget);
+    expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
+    await revealCost(tester);
     expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
     // Per-branch stock shows on both the card and the sheet.
     expect(find.text('North Demo Branch: 1.00 kg'), findsWidgets);
@@ -388,7 +394,7 @@ void main() {
       find.byKey(const ValueKey<String>('pricing-listed-price')),
       findsOneWidget,
     );
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+    await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
     await tester.pumpAndSettle();
 
     // Intake: same handoff through the sheet.
@@ -399,7 +405,7 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
     );
-    await tester.pumpAndSettle();
+    await unlockCostPin(tester);
     expect(_sheet(_coffee.internalCode), findsNothing);
     expect(find.byKey(const ValueKey<String>('intake-branch')), findsOneWidget);
   });

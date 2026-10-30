@@ -41,7 +41,7 @@ class StockIntakeQuantitySpec {
     }
     if (precision < 0 || precision > _maxDecimalPrecision) {
       throw const StockIntakeValidationException(
-        'La precisión de cantidad debe ser un entero del 0 al 6.',
+        'Los decimales de cantidad deben ser un entero del 0 al 6.',
       );
     }
   }
@@ -145,8 +145,8 @@ class StockIntakeDraft {
     final String fraction = parts.length == 1 ? '' : parts[1];
     if (fraction.length > quantitySpec.precision) {
       throw StockIntakeValidationException(
-        'La cantidad excede la precisión del producto de '
-        '${quantitySpec.precision} decimales; los dígitos de más se '
+        'La cantidad excede los decimales del producto ('
+        '${quantitySpec.precision}); los dígitos de más se '
         'rechazan aunque sean ceros.',
       );
     }

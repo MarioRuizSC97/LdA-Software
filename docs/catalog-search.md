@@ -27,6 +27,46 @@ Only the characters a Spanish catalog uses are folded (`á à ä â ã`, `é è 
 `í ì ï î`, `ó ò ö ô õ`, `ú ù ü û`, `ñ`, `ç`). A query with no matching product
 shows a "Sin resultados" panel with a clear action instead of an empty list.
 
+## Focus mode (T9F / S12)
+
+Focusing the field dims the whole screen, including the app bar and cart bar,
+with a 200 ms
+`easeOutCubic` scrim and lifts the original field above it. The entire scrim
+has sigma-5 backdrop blur from the moment focus begins, even before typing.
+The field scales to 104% around its center over 200 ms (`easeOutCubic`), without
+changing layout or replacing the editable field; its clear cutout follows the
+painted scale. A non-empty trimmed query opens a scrollable results card below
+the field with rounded 24 px corners and theme colors. Its width and both edges
+match the field's **resting** bounds exactly, including on desktop. Neither the
+field nor the results are blurred. Its height is bounded
+by the screen and the keyboard's visible area.
+
+Results reuse the **full catalog cards** and the same `filterCatalogItems`
+matcher: name, stock, price, tonal Agregar / quantity stepper, Detalles and
+long-press details. No match keeps the existing Sin resultados and Limpiar
+búsqueda action. Clearing or whitespace-only input closes results, not focus
+mode. Desktop mouse actions belong to the field's tap region, so selling does
+not accidentally dismiss results. If web blurs its hidden text input during a
+results press, focus mode stays active until the gesture ends: the overlay,
+blur, zoom and silenced chrome survive so Agregar/stepper taps can land.
+Releasing restores field focus; cancellation does not. If the field cannot
+regain focus, the normal dismissal path restores the surrounding chrome.
+
+Tap the scrim, press Escape or use system back to unfocus **without clearing**
+the query, even when tapping over the app bar or cart bar. Those taps never
+activate the covered controls. The grid remains filtered afterward. Reduced motion
+(`MediaQuery.disableAnimations`) makes the scrim show/hide instantly and
+keeps the field at scale 1 (no zoom). The
+underlying grid, app bar and cart bar are excluded from pointers, live semantics
+and keyboard focus during focus mode; only the field and results can be used
+or announced. The original
+search field stays mounted in its original scroll view, never duplicated.
+
+`test/catalog/catalog_search_focus_test.dart` covers focus/dismissal, results,
+selling and details, live semantics, reduced motion, and Android/iOS layouts
+at 360 px / text scale 2 with a keyboard inset. Widget platform overrides and
+desktop mouse tests are not device or browser visual proof.
+
 ## Behaviour on reload
 
 Reloading the catalog keeps the list already on screen while the new snapshot
@@ -42,8 +82,11 @@ using these keys, declared in `lib/catalog/catalog_search.dart`:
 
 - `catalogSearchFieldKey` — `catalog-search`
 - `catalogSearchClearKey` — `catalog-search-clear`
-- `catalogSearchLabel` — `Buscar por nombre o código`, the visible label and the
-  announced semantics label.
+
+The pill-shaped search field has no visible or announced label. Its hint,
+`Nombre o código`, provides its accessible name. The dense layout, search icon
+and theme colors are unchanged. `test/catalog/catalog_search_shape_test.dart`
+covers the rounded outline and hint semantics in light and dark themes.
 
 ## Scanning the product QR with the camera
 

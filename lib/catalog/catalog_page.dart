@@ -1,10 +1,22 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/services.dart' show HapticFeedback, SystemNavigator;
 
+import '../app/app_bar_surface.dart';
+import '../app/app_info.dart';
+import '../app/app_side_panel.dart';
 import '../app/backend_environment.dart';
+import '../app/cost_pin_dialog.dart';
+import '../app/cost_pin_store.dart';
+import '../app/privacy_curtain.dart';
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
+import '../app/panel_transition.dart';
+import '../app/smooth_scroll.dart';
+import '../app/theme_mode_switch.dart';
 import '../auth/emulator_session.dart';
 import '../corrections/correction_lookup_view.dart';
 import '../corrections/sale_corrections.dart';
@@ -22,7 +34,9 @@ import '../transfers/transfer_notice_controller.dart';
 import '../transfers/transfer_notices_view.dart';
 import 'catalog_product.dart';
 import 'catalog_repository.dart';
+import 'catalog_scroll_fade.dart';
 import 'catalog_search.dart';
+import 'catalog_search_focus.dart';
 import 'product_qr_scan.dart';
 import 'product_creation.dart';
 import 'product_pricing.dart';
@@ -48,6 +62,43 @@ typedef StockIntakeDraftLookup = StockIntakeDraft? Function(
   String productId,
   String branchId,
 );
+
+// Ephemeral navigation state, never a submitted/persisted intake draft or
+// authorization. No widgets/controllers from the intake survive underneath.
+typedef _IntakeReturn = ({
+  CatalogProduct product,
+  String? branch,
+  String quantity,
+  String cost,
+});
+
+class _CatalogBackEdge extends StatefulWidget {
+  const _CatalogBackEdge({required this.onBack});
+  final VoidCallback onBack;
+
+  @override
+  State<_CatalogBackEdge> createState() => _CatalogBackEdgeState();
+}
+
+class _CatalogBackEdgeState extends State<_CatalogBackEdge> {
+  double _distance = 0;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.translucent,
+    excludeFromSemantics: true,
+    onHorizontalDragStart: (_) => _distance = 0,
+    onHorizontalDragUpdate: (details) => _distance += details.primaryDelta ?? 0,
+    onHorizontalDragEnd: (details) {
+      if (_distance >= 64 ||
+          (_distance >= 20 && (details.primaryVelocity ?? 0) >= 700)) {
+        widget.onBack();
+      }
+      _distance = 0;
+    },
+    onHorizontalDragCancel: () => _distance = 0,
+  );
+}
 
 class CatalogPage extends StatefulWidget {
   const CatalogPage({
@@ -107,8 +158,10 @@ class _CatalogPageState extends State<CatalogPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('LDA Inventory')),
+    final scaffold = Scaffold(
+      appBar: CatalogSearchChrome(
+        child: AppBar(title: const Text('LDA Inventory')),
+      ),
       body: SafeArea(
         child: Column(
           children: <Widget>[
@@ -148,6 +201,7 @@ class _CatalogPageState extends State<CatalogPage> {
         ),
       ),
     );
+    return CatalogSearchChromeScope(child: scaffold);
   }
 }
 
@@ -156,6 +210,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
     required this.session,
     required this.catalogLoader,
     required this.onLogout,
+    this.costPinStore,
     this.environment = BackendEnvironment.localEmulator,
     this.createProduct,
     this.createDraftId,
@@ -187,6 +242,7 @@ class AuthenticatedCatalogPage extends StatefulWidget {
   final BackendEnvironment environment;
   final CatalogSnapshotLoader catalogLoader;
   final Future<void> Function() onLogout;
+  final CostPinStore? costPinStore;
   final ProductCreationSubmit? createProduct;
   final ProductDraftIdFactory? createDraftId;
   final ProductCreationDraft? unresolvedProductDraft;
@@ -243,7 +299,33 @@ class AuthenticatedCatalogPage extends StatefulWidget {
       _AuthenticatedCatalogPageState();
 }
 
+// Only exact classified codes select copy; backend text never reaches the UI.
+String _productRejectionMessage(String code, {required bool creation}) {
+  final summary = creation
+      ? 'Se rechazó la creación del producto.'
+      : 'Se rechazó el precio del producto.';
+  final detail = switch (code) {
+    'permission-denied' =>
+      creation
+          ? 'No tienes permiso para crear productos.'
+          : 'No tienes permiso para cambiar el precio del producto.',
+    'unauthenticated' => 'Tu sesión expiró. Inicia sesión para continuar.',
+    'failed-precondition' =>
+      creation
+          ? 'No se cumplen las condiciones para crear el producto. Revisa los datos.'
+          : 'El producto cambió mientras lo editabas; vuelve a abrirlo.',
+    'invalid-argument' =>
+      'Revisa los datos del producto antes de volver a intentar.',
+    'already-exists' => 'Ya existe un producto con esos datos.',
+    'not-found' =>
+      'El producto ya no está disponible; vuelve a abrir el catálogo.',
+    _ => 'No se pudo guardar el producto. Intenta de nuevo.',
+  };
+  return '$summary $detail';
+}
+
 class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
+  final PrivacyCurtain _privacy = PrivacyCurtain();
   final TextEditingController _name = TextEditingController();
   final TextEditingController _unit = TextEditingController();
   final TextEditingController _listedPrice = TextEditingController();
@@ -255,6 +337,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   ProductCreationCoordinator? _creationCoordinator;
   final Map<String, Timer> _successTimers = <String, Timer>{};
   ProductCreationResult? _creationSuccess;
+  bool _creationNoticeExpired = false;
   ProductCreationDraft? _successfulCreationDraft;
   String? _creationError;
   String? _creationNameError;
@@ -267,6 +350,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   CatalogProduct? _pricingProduct;
   ProductPricingDraft? _lockedPricingDraft;
   ProductPricingResult? _pricingSuccess;
+  bool _pricingNoticeExpired = false;
   String? _pricingError;
   String? _listedPriceError;
   String? _priceModeError;
@@ -284,14 +368,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _renameUncertain = false;
   int _renameGeneration = 0;
   CatalogProduct? _intakeProduct;
+  _IntakeReturn? _intakeReturn;
   StockIntakeDraft? _lockedIntakeDraft;
   StockIntakeResult? _intakeSuccess;
+  bool _intakeNoticeExpired = false;
   String? _intakeError;
   String? _intakeBranchError;
   String? _intakeQuantityError;
   String? _intakeCostError;
   String? _intakeBranch;
   bool _intakePending = false;
+  bool _intakeConfirming = false;
   bool _intakeUncertain = false;
   bool _loading = true;
   bool _failed = false;
@@ -308,6 +395,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   bool _correctionsVisible = false;
   bool _movementsVisible = false;
   bool _transferVisible = false;
+  bool _transferFromMovements = false;
   bool _transferPending = false;
   bool _noticesVisible = false;
   TransferNoticeController? _noticeController;
@@ -323,6 +411,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   @override
   void initState() {
     super.initState();
+    _privacy.bind(_sessionIdentity(widget.session));
     _configureCreation();
     _configureSale();
     _configureNotices();
@@ -334,6 +423,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     super.didUpdateWidget(oldWidget);
     final bool sessionChanged =
         _sessionIdentity(oldWidget.session) != _sessionIdentity(widget.session);
+    if (sessionChanged) {
+      _presentationRevision += 1;
+      // A replaced session never inherits an intake presentation the previous
+      // session's PIN authorized; the shell header is its only exit.
+      _intakeGeneration += 1;
+      _clearIntakePresentation();
+      _privacy.bind(_sessionIdentity(widget.session));
+    }
     final ProductCreationCoordinator? coordinator = _creationCoordinator;
     // The shell freezes our request before token refresh can rebuild this
     // page. That matching pending echo is not an uncertain restored request.
@@ -382,6 +479,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
     if (sessionChanged ||
         oldWidget.submitStockIntake != widget.submitStockIntake) {
+      _intakeReturn = null;
       _intakeGeneration += 1;
       _clearIntakePresentation();
     }
@@ -403,6 +501,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         (widget.administratorMovements == null) !=
             (oldWidget.administratorMovements == null)) {
       _movementsVisible = false;
+      _transferFromMovements = false;
     }
     // A replaced session or a removed seam cannot keep an open transfer view:
     // the retained draft belongs to the shell, not to this presentation.
@@ -412,6 +511,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
             (oldWidget.unresolvedTransferDraft == null)) {
       _transferGeneration += 1;
       _transferVisible = false;
+      _transferFromMovements = false;
       _transferSnapshot = null;
     }
     if (sessionChanged ||
@@ -430,7 +530,36 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       ? widget.saleCorrections
       : null;
 
+  void _leaveIntakeForPanel({bool rememberIntake = false}) {
+    _privacy.invalidate();
+    if (!rememberIntake) _intakeReturn = null;
+    final product = _intakeProduct;
+    if (product == null) return;
+    if (rememberIntake) {
+      _intakeReturn = (
+        product: product,
+        branch: _intakeBranch,
+        quantity: _intakeQuantity.text,
+        cost: _intakeCost.text,
+      );
+    }
+    _intakeGeneration += 1;
+    _clearIntakePresentation();
+  }
+
+  Future<void> _logoutWithPrivacy() async {
+    _intakeReturn = null;
+    _privacy.invalidate();
+    _presentationRevision += 1;
+    setState(() {
+      _intakeGeneration += 1;
+      _clearIntakePresentation();
+    });
+    await widget.onLogout();
+  }
+
   void _showCorrections() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() {
       _cartVisible = false;
@@ -445,6 +574,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showMovements() {
+    _leaveIntakeForPanel(rememberIntake: true);
     _presentationRevision += 1;
     setState(() => _movementsVisible = true);
   }
@@ -465,9 +595,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       : null;
 
   void _showTransfer() {
+    _leaveIntakeForPanel(rememberIntake: true);
     _presentationRevision += 1;
     setState(() {
       _transferSnapshot = _snapshot;
+      _transferFromMovements = _movementsVisible;
       // The transfer form takes over the whole body, so any other open admin
       // view must close here or the body priority would keep it on screen and
       // the entry would look like a dead end. Nothing else is reset.
@@ -477,9 +609,17 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     });
   }
 
-  void _closeTransfer() {
+  void _closeTransfer({bool restorePreviousPanel = false}) {
+    // Only header Volver preserves the back chain; Cerrar ends it.
+    if (!restorePreviousPanel) _intakeReturn = null;
     _presentationRevision += 1;
     setState(() {
+      if (restorePreviousPanel &&
+          _transferFromMovements &&
+          _movements != null) {
+        _movementsVisible = true;
+      }
+      _transferFromMovements = false;
       _transferVisible = false;
       _transferSnapshot = null;
     });
@@ -490,12 +630,13 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// The open body panels, topmost first, each closed by the same action as
   /// its own "Cerrar". A sale receipt covers the panels below it, so while one
   /// is shown only the panels drawn above it are listed.
-  List<VoidCallback> _openPanelClosers() {
+  List<VoidCallback> _openPanelClosers({bool restoreTransferPanel = false}) {
     final bool receiptShown = _sale?.lastReceipt != null;
     return <VoidCallback>[
       if (_movements != null && _movementsVisible) _closeMovements,
       if (_corrections != null && _correctionsVisible) _closeCorrections,
-      if (_transfer != null && _transferVisible) _closeTransfer,
+      if (_transfer != null && _transferVisible)
+        () => _closeTransfer(restorePreviousPanel: restoreTransferPanel),
       if (widget.session.role == InventoryRole.seller &&
           _noticeController != null &&
           _noticesVisible)
@@ -522,14 +663,91 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// "Volver": closes the topmost panel and reveals the one below it.
   void _goBack() {
     if (_navigationBlocked) return;
-    final List<VoidCallback> closers = _openPanelClosers();
-    if (closers.isNotEmpty) closers.first();
+    final List<VoidCallback> closers = _openPanelClosers(
+      restoreTransferPanel: true,
+    );
+    if (closers.isEmpty) return;
+    final returningFromPanel = _movementsVisible || _transferVisible;
+    closers.first();
+    if (returningFromPanel && !_movementsVisible && !_transferVisible) {
+      final remembered = _intakeReturn;
+      _intakeReturn = null;
+      if (remembered != null) {
+        unawaited(_showIntake(remembered.product, restore: remembered));
+      }
+    }
   }
+
+  Timer? _exitConfirmation;
+
+  void _systemBack({required bool searchActive}) {
+    // Search owns its own PopScope. Use the build-time focus state: its
+    // callback may already have unfocused the field during this same pop.
+    if (searchActive || _navigationBlocked) return;
+    if (_openPanelClosers().isNotEmpty || _intakeReturn != null) {
+      _exitConfirmation?.cancel();
+      _goBack();
+      return;
+    }
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    if (_exitConfirmation?.isActive ?? false) {
+      _exitConfirmation?.cancel();
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+    _exitConfirmation = Timer(const Duration(seconds: 2), () {});
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Desliza otra vez para salir'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+  }
+
+  Widget _backNavigation(Widget child) => Builder(
+    builder: (context) {
+      final searchActive =
+          CatalogSearchChromeScope.maybeOf(context)?.value ?? false;
+      final panelOpen = _openPanelClosers().isNotEmpty;
+      if (panelOpen) _exitConfirmation?.cancel();
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _systemBack(searchActive: searchActive);
+        },
+        child:
+            !kIsWeb &&
+                defaultTargetPlatform == TargetPlatform.iOS &&
+                panelOpen &&
+                !searchActive
+            ? Stack(
+                children: [
+                  child,
+                  // Only this edge strip enters the gesture arena; horizontal
+                  // controls and selection away from it keep their own drags.
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    width: 24,
+                    child: _CatalogBackEdge(onBack: _goBack),
+                  ),
+                ],
+              )
+            : child,
+      );
+    },
+  );
 
   /// "Inicio": closes every open panel and returns to the catalog. Retained
   /// uncertain drafts stay stored and are offered again when reopened.
   void _goHome() {
     if (_navigationBlocked) return;
+    _intakeReturn = null;
+    _privacy.invalidate();
+    _presentationRevision += 1;
     for (final VoidCallback close in _openPanelClosers()) {
       close();
     }
@@ -561,6 +779,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         for (final CatalogItem item in source?.items ?? const <CatalogItem>[])
           item.product,
       ],
+      holdingsByProduct: source == null
+          ? null
+          : <String, List<CatalogHolding>>{
+              for (final CatalogItem item in source.items)
+                item.product.internalCode: item.holdings,
+            },
       submitTransfer: (TransferDraft draft) async {
         setState(() => _transferPending = true);
         try {
@@ -605,6 +829,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   }
 
   void _showNotices() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() {
       _cartVisible = false;
@@ -697,6 +922,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   /// Opens the cart, unless a committed sale awaits acknowledgement: then
   /// its receipt is shown instead.
   void _openCart(SaleCartController sale) {
+    _leaveIntakeForPanel();
     final bool receiptPending = sale.reconcileOnOpen();
     setState(() => _cartVisible = !receiptPending);
   }
@@ -733,6 +959,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   @override
   void dispose() {
+    _exitConfirmation?.cancel();
+    _privacy.invalidate();
     for (final Timer timer in _successTimers.values) {
       timer.cancel();
     }
@@ -974,8 +1202,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final bool mobilePlatform =
         !kIsWeb &&
         (platform == TargetPlatform.android || platform == TargetPlatform.iOS);
-    // On mobile the overflow menu always exists so Reload stays reachable at
-    // every window width; on web/desktop it appears only when compact.
+    // Only reduced screens use the side panel (T11 S2). Wide web/desktop
+    // keeps the actions inline, including its own notices icon.
     final bool menuActions = mobilePlatform || compactBar;
     final VoidCallback? openCorrections = showCorrections || showTransfer
         ? null
@@ -983,199 +1211,312 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     final VoidCallback? openMovements = showMovements || showTransfer
         ? null
         : _showMovements;
-    return Scaffold(
-      bottomNavigationBar:
+    final scaffold = Scaffold(
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton:
           sale != null &&
               receipt == null &&
               !_cartVisible &&
               !showCorrections &&
               !showNotices
-          ? SaleCartButton(controller: sale, onPressed: () => _openCart(sale))
+          ? CatalogSearchChrome(
+              child: SaleCartButton(
+                controller: sale,
+                onPressed: () => _openCart(sale),
+              ),
+            )
           : null,
-      appBar: AppBar(
-        // The title centers on Android and iOS only (S2); desktop and web
-        // keep Flutter's platform default at every window width.
-        centerTitle: mobilePlatform ? true : null,
-        // Navigation lives in the leading slot: it has its own width, so it
-        // never crowds the action row or adds height above a form on a
-        // narrow phone. "Volver" (left) appears only while a panel is open;
-        // "Inicio" sits to its right — on mobile only while a panel is open,
-        // because at the main panel the home icon is redundant (S2).
-        leadingWidth: _openPanelClosers().isEmpty ? null : 104,
-        leading: ListenableBuilder(
-          listenable: Listenable.merge(<Listenable>[?sale]),
-          builder: (BuildContext context, Widget? child) {
-            final bool panelOpen = _openPanelClosers().isNotEmpty;
-            final bool enabled = panelOpen && !_navigationBlocked;
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (panelOpen)
-                  IconButton(
-                    key: const ValueKey<String>('panel-back'),
-                    tooltip: 'Volver',
-                    onPressed: enabled ? _goBack : null,
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                // "Inicio" appears only while a panel is open, on every
-                // platform: at the main panel the home icon is redundant
-                // (S2, extended to web/desktop by S9).
-                if (panelOpen)
-                  IconButton(
-                    key: const ValueKey<String>('shell-home'),
-                    tooltip: 'Inicio',
-                    onPressed: enabled ? _goHome : null,
-                    icon: const Icon(Icons.home_outlined),
-                  ),
-              ],
-            );
-          },
-        ),
-        title: _ShellTitle(
-          session: widget.session,
-          environment: widget.environment,
-          centered: mobilePlatform,
-        ),
-        actions: <Widget>[
-          if (corrections != null && !compactBar)
-            TextButton.icon(
-              key: const ValueKey<String>('corrections-open'),
-              onPressed: openCorrections,
-              icon: const Icon(Icons.assignment_return_outlined),
-              label: const Text('Correcciones'),
-            ),
-          // Transfer notices (S10) live in the overflow menu wherever that
-          // menu exists — always on Android/iOS, on web/desktop when the bar
-          // is compact — as its first entry. The wide web/desktop bar keeps
-          // its own icon.
-          if (noticeController != null && !menuActions)
-            IconButton(
-              key: const ValueKey<String>('notices-open'),
-              tooltip: 'Avisos de traslados',
-              onPressed: showNotices ? null : _showNotices,
-              icon: _noticeBadge(context, unreadNotices),
-            ),
-          if (movements != null && !compactBar)
-            TextButton.icon(
-              key: const ValueKey<String>('movements-open'),
-              onPressed: openMovements,
-              icon: const Icon(Icons.swap_vert),
-              label: const Text('Movimientos'),
-            ),
-          // On mobile the refresh button leaves the bar (S2): Reload lives
-          // in the overflow menu below, so the bar spends no space on it.
-          // Desktop and web keep the bar button at every window width.
-          if (!mobilePlatform)
-            IconButton(
-              tooltip: 'Actualizar catálogo',
-              onPressed: _loading ? null : _requestCatalog,
-              icon: const Icon(Icons.refresh),
-            ),
-          if (menuActions)
-            PopupMenuButton<VoidCallback>(
-              key: const ValueKey<String>('shell-more'),
-              // Three bars on mobile (S2); web/desktop keeps the three dots.
-              // The unread-notice badge rides on the menu icon itself, and
-              // screen readers hear the unread notices named on the button.
-              // Only a session with transfer notices can have an unread
-              // badge; administrators have none.
-              icon: Semantics(
-                label: noticeController == null
-                    ? null
-                    : unreadNotices == null
-                    ? 'sin confirmar'
-                    : unreadNotices > 0
-                    ? 'Avisos de traslados: $unreadNotices sin leer'
-                    : null,
-                child: ExcludeSemantics(
-                  child: Badge(
-                    isLabelVisible:
-                        noticeController != null &&
-                        (unreadNotices == null || unreadNotices > 0),
-                    label: Text(unreadNotices == null ? '!' : '$unreadNotices'),
-                    backgroundColor: unreadNotices == null
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    child: Icon(mobilePlatform ? Icons.menu : Icons.more_vert),
-                  ),
+      appBar: CatalogSearchChrome(
+        scrollSurface: true,
+        child: AppBar(
+          // The title centers on Android and iOS only (S2); desktop and web
+          // keep Flutter's platform default at every window width.
+          centerTitle: mobilePlatform ? true : null,
+          // Navigation lives in the leading slot: it has its own width, so it
+          // never crowds the action row or adds height above a form on a
+          // narrow phone. "Volver" (left) appears only while a panel is open;
+          // "Inicio" sits to its right — on mobile only while a panel is open,
+          // because at the main panel the home icon is redundant (S2).
+          leadingWidth: _openPanelClosers().isEmpty ? null : 104,
+          leading: ListenableBuilder(
+            listenable: Listenable.merge(<Listenable>[?sale]),
+            builder: (BuildContext context, Widget? child) {
+              final bool panelOpen = _openPanelClosers().isNotEmpty;
+              final bool enabled = panelOpen && !_navigationBlocked;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (panelOpen)
+                    IconButton(
+                      key: const ValueKey<String>('panel-back'),
+                      tooltip: 'Volver',
+                      onPressed: enabled ? _goBack : null,
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                  // "Inicio" appears only while a panel is open, on every
+                  // platform: at the main panel the home icon is redundant
+                  // (S2, extended to web/desktop by S9).
+                  if (panelOpen)
+                    IconButton(
+                      key: const ValueKey<String>('shell-home'),
+                      tooltip: 'Inicio',
+                      onPressed: enabled ? _goHome : null,
+                      icon: const Icon(Icons.home_outlined),
+                    ),
+                ],
+              );
+            },
+          ),
+          title: _ShellTitle(
+            session: widget.session,
+            environment: widget.environment,
+            centered: mobilePlatform,
+            showVersion: !menuActions,
+          ),
+          actions: <Widget>[
+            // Reserve a readable title/version slot even at the first wide
+            // width or when Back/Home appears. Only the wide row scales down;
+            // compact/mobile controls retain their existing sizes.
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: menuActions
+                    ? double.infinity
+                    : MediaQuery.sizeOf(context).width -
+                          (_openPanelClosers().isEmpty ? 56 : 104) -
+                          32 -
+                          MediaQuery.sizeOf(context).width * .32,
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (corrections != null && !compactBar)
+                      TextButton.icon(
+                        key: const ValueKey<String>('corrections-open'),
+                        onPressed: openCorrections,
+                        icon: const Icon(Icons.assignment_return_outlined),
+                        label: const Text('Correcciones'),
+                      ),
+                    // Transfer notices (S10) live in the overflow menu wherever that
+                    // menu exists — always on Android/iOS, on web/desktop when the bar
+                    // is compact — as its first entry. The wide web/desktop bar keeps
+                    // its own icon.
+                    if (noticeController != null && !menuActions)
+                      IconButton(
+                        key: const ValueKey<String>('notices-open'),
+                        tooltip: 'Avisos de traslados',
+                        onPressed: showNotices ? null : _showNotices,
+                        icon: _noticeBadge(context, unreadNotices),
+                      ),
+                    if (movements != null && !compactBar)
+                      TextButton.icon(
+                        key: const ValueKey<String>('movements-open'),
+                        onPressed: openMovements,
+                        icon: const Icon(Icons.swap_vert),
+                        label: const Text('Movimientos'),
+                      ),
+                    // On mobile the refresh button leaves the bar (S2): Reload lives
+                    // in the overflow menu below, so the bar spends no space on it.
+                    // Desktop and web keep the bar button at every window width.
+                    if (!mobilePlatform)
+                      IconButton(
+                        tooltip: 'Actualizar catálogo',
+                        onPressed: _loading ? null : _requestCatalog,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    // Reduced screens retain the full panel and its badge/semantics.
+                    // Wide screens put the theme cycle in the menu's former slot.
+                    if (!menuActions) const ThemeModeSwitch(compact: true),
+                    if (menuActions)
+                      AppMenuButton(
+                        key: const ValueKey<String>('shell-more'),
+                        settings: (BuildContext context) =>
+                            const ThemeModeSwitch(showLabel: true),
+                        // A wide web/desktop bar keeps its own notices icon and badge,
+                        // so the menu icon carries the badge only where the notices
+                        // entry lives in the panel alone.
+                        decorate: (Widget icon) => Semantics(
+                          label: noticeController == null || !menuActions
+                              ? null
+                              : unreadNotices == null
+                              ? 'sin confirmar'
+                              : unreadNotices > 0
+                              ? 'Avisos de traslados: $unreadNotices sin leer'
+                              : null,
+                          child: ExcludeSemantics(
+                            child: Badge(
+                              isLabelVisible:
+                                  noticeController != null &&
+                                  menuActions &&
+                                  (unreadNotices == null || unreadNotices > 0),
+                              label: Text(
+                                unreadNotices == null ? '!' : '$unreadNotices',
+                              ),
+                              backgroundColor: unreadNotices == null
+                                  ? Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest
+                                  : null,
+                              child: icon,
+                            ),
+                          ),
+                        ),
+                        entries: () => <AppSidePanelEntry>[
+                          // First entry for the fastest access (S10); the count on the
+                          // entry is read when the panel opens.
+                          if (noticeController != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('notices-open'),
+                              icon: _noticeBadge(context, unreadNotices),
+                              label: 'Avisos de traslados',
+                              onSelected: showNotices ? null : _showNotices,
+                            ),
+                          AppSidePanelEntry(
+                            icon: const Icon(Icons.refresh),
+                            label: 'Actualizar catálogo',
+                            onSelected: _loading ? null : _requestCatalog,
+                          ),
+                          if (corrections != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('corrections-open'),
+                              icon: const Icon(
+                                Icons.assignment_return_outlined,
+                              ),
+                              label: 'Correcciones',
+                              onSelected: openCorrections,
+                            ),
+                          if (movements != null)
+                            AppSidePanelEntry(
+                              key: const ValueKey<String>('movements-open'),
+                              icon: const Icon(Icons.swap_vert),
+                              label: 'Movimientos',
+                              onSelected: openMovements,
+                            ),
+                          AppSidePanelEntry(
+                            icon: const Icon(Icons.logout),
+                            label: 'Cerrar sesión',
+                            onSelected: _logoutWithPrivacy,
+                          ),
+                        ],
+                      ),
+                    // The inline logout keeps its place whenever the bar is wide enough
+                    // for it — mobile only moved Reload out of the bar (S2c).
+                    if (!compactBar) ...<Widget>[
+                      OutlinedButton(
+                        onPressed: _logoutWithPrivacy,
+                        child: const Text('Cerrar sesión'),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                  ],
                 ),
               ),
-              onSelected: (VoidCallback action) => action(),
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<VoidCallback>>[
-                    // First entry for the fastest access (S10); the count on
-                    // the item is read when the menu opens.
-                    if (noticeController != null)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('notices-open'),
-                        enabled: !showNotices,
-                        value: _showNotices,
-                        child: ListTile(
-                          leading: _noticeBadge(context, unreadNotices),
-                          title: const Text('Avisos de traslados'),
-                        ),
-                      ),
-                    if (mobilePlatform)
-                      PopupMenuItem<VoidCallback>(
-                        enabled: !_loading,
-                        value: _requestCatalog,
-                        child: const ListTile(
-                          leading: Icon(Icons.refresh),
-                          title: Text('Actualizar catálogo'),
-                        ),
-                      ),
-                    if (corrections != null && compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('corrections-open'),
-                        enabled: openCorrections != null,
-                        value: openCorrections,
-                        child: const ListTile(
-                          leading: Icon(Icons.assignment_return_outlined),
-                          title: Text('Correcciones'),
-                        ),
-                      ),
-                    if (movements != null && compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        key: const ValueKey<String>('movements-open'),
-                        enabled: openMovements != null,
-                        value: openMovements,
-                        child: const ListTile(
-                          leading: Icon(Icons.swap_vert),
-                          title: Text('Movimientos'),
-                        ),
-                      ),
-                    if (compactBar)
-                      PopupMenuItem<VoidCallback>(
-                        value: widget.onLogout,
-                        child: const ListTile(
-                          leading: Icon(Icons.logout),
-                          title: Text('Cerrar sesión'),
-                        ),
-                      ),
-                  ],
             ),
-          // The inline logout keeps its place whenever the bar is wide enough
-          // for it — mobile only moved Reload out of the bar (S2c).
-          if (!compactBar) ...<Widget>[
-            OutlinedButton(
-              onPressed: widget.onLogout,
-              child: const Text('Cerrar sesión'),
-            ),
-            const SizedBox(width: 12),
           ],
-        ],
+        ),
       ),
       body: SafeArea(
         child: Column(
           children: <Widget>[
             if (_creationSuccess case final ProductCreationResult result)
-              _CreationSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _creationNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_creationNoticeExpired &&
+                      identical(_creationSuccess, result)) {
+                    setState(() => _creationSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _CreationSuccess(),
+              ),
             if (_pricingSuccess case final ProductPricingResult result)
-              _PricingSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _pricingNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_pricingNoticeExpired &&
+                      identical(_pricingSuccess, result)) {
+                    setState(() => _pricingSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _PricingSuccess(),
+              ),
             if (_renameSuccess case final ProductRenameResult result)
               _RenameSuccess(result: result),
             if (_intakeSuccess case final StockIntakeResult result)
-              _IntakeSuccess(result: result),
+              TweenAnimationBuilder<double>(
+                key: ObjectKey(result),
+                tween: Tween<double>(
+                  begin: 1,
+                  end: _intakeNoticeExpired ? 0 : 1,
+                ),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                onEnd: () {
+                  if (_intakeNoticeExpired &&
+                      identical(_intakeSuccess, result)) {
+                    setState(() => _intakeSuccess = null);
+                  }
+                },
+                builder: (context, value, child) => ClipRect(
+                  child: SizeTransition(
+                    alignment: Alignment.topCenter,
+                    sizeFactor: AlwaysStoppedAnimation<double>(value),
+                    child: FadeTransition(
+                      opacity: AlwaysStoppedAnimation<double>(value),
+                      child: Transform.translate(
+                        offset: Offset(0, -8 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const _IntakeSuccess(),
+              ),
             if (transfer != null)
               _TransferToolbar(
                 enabled: !showTransfer,
@@ -1186,60 +1527,78 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 onPressed: _creationPending ? null : _showCreation,
               ),
             Expanded(
-              child: showMovements
-                  ? MovementsView(
-                      movements: movements,
-                      productNames: _productNames(),
-                      branchChoices:
-                          _snapshot?.branchChoices ??
-                          const <CatalogBranchChoice>[],
-                      onClose: _closeMovements,
-                    )
-                  : showCorrections
-                  ? CorrectionLookupView(
-                      corrections: corrections,
-                      productNames: _productNames(),
-                      products: _catalogProducts(),
-                      onClose: _closeCorrections,
-                    )
-                  : transfer != null && _transferVisible
-                  ? _transferForm(transfer)
-                  : showNotices
-                  ? TransferNoticesView(
-                      state: noticeController.state,
-                      productNames: _productNames(),
-                      onMarkRead: _markNoticeRead,
-                      onClose: _closeNotices,
-                      onRetry: noticeController.retry,
-                    )
-                  : receipt != null
-                  ? SaleReceiptView(
-                      receipt: receipt,
-                      notice: sale?.receiptPending ?? false
-                          ? salePendingReceiptMessage
-                          : null,
-                      onNewSale: _startNewSale,
-                    )
-                  : sale != null && _cartVisible
-                  ? SaleCartPanel(
-                      controller: sale,
-                      onClose: () => setState(() => _cartVisible = false),
-                    )
-                  : _creationVisible
-                  ? _creationForm()
-                  : _pricingProduct != null
-                  ? _pricingForm()
-                  : _intakeProduct != null
-                  ? _intakeForm()
-                  : _catalogBody(),
+              child: _bodyPanel(
+                showMovements
+                    ? _panel(
+                        'movements',
+                        MovementsView(
+                          movements: movements,
+                          productNames: _productNames(),
+                          branchChoices:
+                              _snapshot?.branchChoices ??
+                              const <CatalogBranchChoice>[],
+                        ),
+                      )
+                    : showCorrections
+                    ? _panel(
+                        'corrections',
+                        CorrectionLookupView(
+                          corrections: corrections,
+                          productNames: _productNames(),
+                          products: _catalogProducts(),
+                        ),
+                      )
+                    : transfer != null && _transferVisible
+                    ? _panel('transfer', _transferForm(transfer))
+                    : showNotices
+                    ? _panel(
+                        'notices',
+                        TransferNoticesView(
+                          state: noticeController.state,
+                          productNames: _productNames(),
+                          onMarkRead: _markNoticeRead,
+                          onRetry: noticeController.retry,
+                        ),
+                      )
+                    : receipt != null
+                    ? _panel(
+                        'receipt',
+                        SaleReceiptView(
+                          receipt: receipt,
+                          notice: sale?.receiptPending ?? false
+                              ? salePendingReceiptMessage
+                              : null,
+                          onNewSale: _startNewSale,
+                        ),
+                      )
+                    : sale != null && _cartVisible
+                    ? _panel(
+                        'cart',
+                        SaleCartPanel(
+                          controller: sale,
+                          onClose: () => setState(() => _cartVisible = false),
+                        ),
+                      )
+                    : _creationVisible
+                    ? _panel('creation', _creationForm())
+                    : _pricingProduct != null
+                    ? _panel('pricing', _pricingForm())
+                    : _intakeProduct != null
+                    ? _panel('intake', _intakeForm())
+                    : _catalogPanel(),
+              ),
             ),
           ],
         ),
       ),
     );
+    return AppBarSurfaceScope(
+      child: CatalogSearchChromeScope(child: _backNavigation(scaffold)),
+    );
   }
 
   void _showCreation() {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     setState(() => _creationVisible = true);
   }
@@ -1297,7 +1656,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _creationUncertain = false;
         _creationVisible = false;
         _creationSuccess = result;
-        _expireSuccessNotice('creation', () => _creationSuccess = null);
+        _creationNoticeExpired = false;
+        _expireSuccessNotice('creation', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _creationSuccess = null;
+          } else {
+            _creationNoticeExpired = true;
+          }
+        });
         _successfulCreationDraft = submittedDraft;
         _name.clear();
         _unit.clear();
@@ -1326,7 +1692,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       setState(() {
         _creationPending = false;
         _creationUncertain = false;
-        _creationError = 'Se rechazó la creación del producto (${error.code}).';
+        _creationError = _productRejectionMessage(error.code, creation: true);
       });
     } on ProductCreationStaleException {
       // A newer attempt or session owns presentation authority.
@@ -1366,7 +1732,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
 
   Widget _creationForm() {
     final bool locked = _creationPending || _creationUncertain;
-    return SingleChildScrollView(
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -1408,10 +1774,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   },
                   decoration: _requiredErrorDecoration(
                     context,
-                    const InputDecoration(
-                      labelText: 'Nombre del producto',
-                      border: _pricingFieldBorder,
-                    ),
+                    const InputDecoration(labelText: 'Nombre del producto'),
                     _creationNameError,
                   ),
                 ),
@@ -1435,8 +1798,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                     context,
                     const InputDecoration(
                       labelText: 'Identificador de unidad',
-                      border: _pricingFieldBorder,
-                      helperText: 'Identificador en minúsculas, por ejemplo piece o kg.',
+                      helperText: 'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
                     ),
                     _creationUnitError,
                   ),
@@ -1448,7 +1810,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 liveRegion: _creationPrecisionError != null,
                 label: _creationPrecisionError == null
                     ? null
-                    : 'Error en la precisión: $_creationPrecisionError',
+                    : 'Error en los decimales: $_creationPrecisionError',
                 child: DropdownButtonFormField<int>(
                   key: const ValueKey<String>('create-product-precision'),
                   isExpanded: true,
@@ -1456,13 +1818,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   decoration: _requiredErrorDecoration(
                     context,
                     const InputDecoration(
-                      labelText: 'Precisión de cantidad',
-                      border: _pricingFieldBorder,
-                      helperText: 'Entero del 0 al 6.',
+                      labelText: 'Decimales del producto',
+                      helperText: 'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).',
                     ),
                     _creationPrecisionError,
                   ),
-                  hint: const Text('Selecciona 0–6'),
+                  hint: const Text('Selecciona de 0 a 6 decimales'),
                   items: List<DropdownMenuItem<int>>.generate(
                     7,
                     (int index) => DropdownMenuItem<int>(
@@ -1492,6 +1853,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                 runSpacing: 8,
                 children: <Widget>[
                   FilledButton(
+                    style: primaryActionStyle(context),
                     onPressed: _creationPending ? null : _submitCreation,
                     child: _creationPending
                         ? Semantics(
@@ -1508,10 +1870,6 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                                 : 'Crear',
                           ),
                   ),
-                  OutlinedButton(
-                    onPressed: _creationPending ? null : _closeCreation,
-                    child: const Text('Cerrar'),
-                  ),
                 ],
               ),
             ],
@@ -1519,9 +1877,53 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _creationPreview());
   }
 
+  Widget _creationPreview() => ValueListenableBuilder<TextEditingValue>(
+    valueListenable: _name,
+    builder: (context, name, _) => ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _unit,
+      builder: (context, unit, _) => Card(
+        key: const ValueKey<String>('create-product-preview'),
+        margin: const EdgeInsets.symmetric(vertical: 20),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                name.text.isEmpty ? 'Nombre del producto' : name.text,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                unit.text.isEmpty ? 'Identificador de unidad' : unit.text,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Identificador en minúsculas, por ejemplo: pieza, mts, serv, etc.',
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _creationPrecision == null
+                    ? 'Selecciona cuántos decimales usarás en las cantidades del producto (de 0 a 6).'
+                    : 'Las cantidades de este producto se trabajarán con $_creationPrecision decimales.',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'El servidor asigna el código interno permanente y la identidad QR.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   void _showPricing(CatalogProduct product) {
+    _leaveIntakeForPanel();
     _presentationRevision += 1;
     final ProductPricingDraft? unresolved = _unresolvedPricingDraftFor(
       product.internalCode,
@@ -1595,8 +1997,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       _ivaRateError = null;
       if (value == 'zero-rated') {
         _ivaRate.text = '0';
-      } else if (value == 'exempt') {
-        _ivaRate.clear();
+      } else if (value == 'taxable') {
+        _ivaRate.text = '16';
       } else {
         _ivaRate.clear();
       }
@@ -1676,7 +2078,14 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _lockedPricingDraft = null;
         _pricingProduct = null;
         _pricingSuccess = result;
-        _expireSuccessNotice('pricing', () => _pricingSuccess = null);
+        _pricingNoticeExpired = false;
+        _expireSuccessNotice('pricing', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _pricingSuccess = null;
+          } else {
+            _pricingNoticeExpired = true;
+          }
+        });
       });
       await _requestCatalog();
     } on ProductPricingValidationException catch (error) {
@@ -1693,7 +2102,7 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _pricingPending = false;
         _pricingUncertain = false;
         _lockedPricingDraft = null;
-        _pricingError = 'Se rechazó el precio del producto (${error.code}).';
+        _pricingError = _productRejectionMessage(error.code, creation: false);
       });
     } on ProductPricingUnresolvedException {
       if (!mounted || generation != _pricingGeneration) return;
@@ -1841,7 +2250,9 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   Widget _pricingForm() {
     final CatalogProduct product = _pricingProduct!;
     final bool locked = _pricingPending || _pricingUncertain;
-    return SingleChildScrollView(
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -1851,232 +2262,171 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                header: true,
-                child: Text(
-                  'Editar precio / IVA',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(product.name),
-              SelectableText(product.internalCode),
-              const SizedBox(height: 16),
-              Semantics(
-                container: true,
-                liveRegion: _listedPriceError != null,
-                label: _listedPriceError == null
-                    ? null
-                    : 'Error en el precio de lista: $_listedPriceError',
-                child: TextFormField(
-                  key: const ValueKey<String>('pricing-listed-price'),
-                  controller: _listedPrice,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    if (_listedPriceError == null) return;
-                    setState(() => _listedPriceError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Precio de lista (MXN)',
-                      helperText:
-                          'Monto exacto en MXN con máximo dos decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _listedPriceError,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              border: Border.all(color: colors.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Editar precio / IVA',
+                    style: theme.textTheme.headlineSmall,
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _priceModeError != null,
-                label: _priceModeError == null
-                    ? null
-                    : 'Error en el modo de precio: $_priceModeError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('pricing-mode'),
-                  isExpanded: true,
-                  initialValue: _priceMode,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Modo de precio',
-                      border: _pricingFieldBorder,
-                    ),
-                    _priceModeError,
-                  ),
-                  hint: const Text('Selecciona el modo de precio'),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(
-                      value: 'iva-included',
-                      child: Text('IVA incluido'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'iva-additional-on-invoice',
-                      child: Text('IVA adicional en factura'),
-                    ),
-                  ],
-                  onChanged: locked
-                      ? null
-                      : (String? value) => setState(() {
-                          _priceMode = value;
-                          _priceModeError = null;
-                        }),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _ivaTreatmentError != null,
-                label: _ivaTreatmentError == null
-                    ? null
-                    : 'Error en el tratamiento de IVA: $_ivaTreatmentError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('pricing-treatment'),
-                  isExpanded: true,
-                  initialValue: _ivaTreatment,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Tratamiento de IVA',
-                      border: _pricingFieldBorder,
-                    ),
-                    _ivaTreatmentError,
-                  ),
-                  hint: const Text('Selecciona el tratamiento de IVA'),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem(value: 'taxable', child: Text('Gravado')),
-                    DropdownMenuItem(
-                      value: 'zero-rated',
-                      child: Text('Tasa 0%'),
-                    ),
-                    DropdownMenuItem(value: 'exempt', child: Text('Exento')),
-                  ],
-                  onChanged: locked ? null : _changeIvaTreatment,
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (_ivaTreatment == 'exempt')
-                const Text('Tasa de IVA: No requerida')
-              else
+                const SizedBox(height: 12),
+                Text(product.name, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 16),
                 Semantics(
                   container: true,
-                  liveRegion: _ivaRateError != null,
-                  label: _ivaRateError == null
+                  liveRegion: _listedPriceError != null,
+                  label: _listedPriceError == null
                       ? null
-                      : 'Error en la tasa de IVA: $_ivaRateError',
+                      : 'Error en el precio de lista: $_listedPriceError',
                   child: TextFormField(
-                    key: const ValueKey<String>('pricing-iva-rate'),
-                    controller: _ivaRate,
-                    enabled: !locked && _ivaTreatment != 'zero-rated',
+                    key: const ValueKey<String>('pricing-listed-price'),
+                    controller: _listedPrice,
+                    enabled: !locked,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     onChanged: (_) {
-                      if (_ivaRateError == null) return;
-                      setState(() => _ivaRateError = null);
+                      setState(() => _listedPriceError = null);
                     },
                     decoration: _requiredErrorDecoration(
                       context,
                       const InputDecoration(
-                        labelText: 'Tasa de IVA (%)',
+                        labelText: 'Precio de lista (MXN)',
                         helperText:
-                            'La tasa gravada debe ser mayor que 0 y hasta 100.',
-                        border: _pricingFieldBorder,
+                            'Monto exacto en MXN con máximo dos decimales.',
+                        helperMaxLines: 3,
                       ),
-                      _ivaRateError,
+                      _listedPriceError,
                     ),
-                  ),
-                ),
-              if (_pricingError case final String error) ...<Widget>[
-                const SizedBox(height: 12),
-                Semantics(
-                  label: 'Error en el precio del producto',
-                  liveRegion: true,
-                  child: ExcludeSemantics(child: Text(error)),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: <Widget>[
-                  FilledButton(
-                    onPressed: _pricingPending ? null : _submitPricing,
-                    child: _pricingPending
-                        ? Semantics(
-                            label: 'Guardando precio del producto',
-                            liveRegion: true,
-                            child: const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Text(
-                            _pricingUncertain
-                                ? 'Reintentar misma solicitud'
-                                : 'Guardar precio / IVA',
-                          ),
-                  ),
-                  OutlinedButton(
-                    onPressed: _pricingPending ? null : _closePricing,
-                    child: const Text('Cerrar'),
-                  ),
-                ],
-              ),
-              if (widget.renameProduct != null) ...<Widget>[
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 8),
-                Semantics(
-                  header: true,
-                  child: Text(
-                    'Nombre del producto',
-                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
                 const SizedBox(height: 12),
                 Semantics(
                   container: true,
-                  liveRegion: _renameNameError != null,
-                  label: _renameNameError == null
+                  liveRegion: _priceModeError != null,
+                  label: _priceModeError == null
                       ? null
-                      : 'Error en el nombre del producto: $_renameNameError',
-                  child: TextFormField(
-                    key: ValueKey<String>(
-                      'rename-name-${product.internalCode}',
-                    ),
-                    controller: _renameName,
-                    enabled: !_renameLocked,
-                    maxLength: maxProductRenameNameLength,
-                    onChanged: (_) {
-                      if (_renameNameError == null) return;
-                      setState(() => _renameNameError = null);
-                    },
+                      : 'Error en el modo de precio: $_priceModeError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('pricing-mode'),
+                    isExpanded: true,
+                    initialValue: _priceMode,
                     decoration: _requiredErrorDecoration(
                       context,
-                      const InputDecoration(
-                        labelText: 'Nombre del producto',
-                        border: _pricingFieldBorder,
-                      ),
-                      _renameNameError,
+                      const InputDecoration(labelText: 'Modo de precio'),
+                      _priceModeError,
                     ),
+                    hint: const Text('Selecciona el modo de precio'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(
+                        value: 'iva-included',
+                        child: Text('IVA incluido'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'iva-additional-on-invoice',
+                        child: Text('IVA adicional en factura'),
+                      ),
+                    ],
+                    onChanged: locked
+                        ? null
+                        : (String? value) => setState(() {
+                            _priceMode = value;
+                            _priceModeError = null;
+                          }),
                   ),
                 ),
-                if (_renameError case final String error) ...<Widget>[
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _ivaTreatmentError != null,
+                  label: _ivaTreatmentError == null
+                      ? null
+                      : 'Error en el tratamiento de IVA: $_ivaTreatmentError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('pricing-treatment'),
+                    isExpanded: true,
+                    initialValue: _ivaTreatment,
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(labelText: 'Tratamiento de IVA'),
+                      _ivaTreatmentError,
+                    ),
+                    hint: const Text('Selecciona el tratamiento de IVA'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(
+                        value: 'taxable',
+                        child: Text('Gravado'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'zero-rated',
+                        child: Text('Tasa 0%'),
+                      ),
+                      DropdownMenuItem(value: 'exempt', child: Text('Exento')),
+                    ],
+                    onChanged: locked ? null : _changeIvaTreatment,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_ivaTreatment == 'exempt')
+                  const Text('Tasa de IVA: No requerida')
+                else
+                  Semantics(
+                    container: true,
+                    liveRegion: _ivaRateError != null,
+                    label: _ivaRateError == null
+                        ? null
+                        : 'Error en la tasa de IVA: $_ivaRateError',
+                    child: TextFormField(
+                      key: const ValueKey<String>('pricing-iva-rate'),
+                      controller: _ivaRate,
+                      enabled: !locked && _ivaTreatment != 'zero-rated',
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      onChanged: (_) {
+                        setState(() => _ivaRateError = null);
+                      },
+                      decoration: _requiredErrorDecoration(
+                        context,
+                        const InputDecoration(
+                          labelText: 'Tasa de IVA (%)',
+                          helperText: 'La tasa gravada debe ser mayor que 0 y hasta 100.',
+                          helperMaxLines: 3,
+                        ),
+                        _ivaRateError,
+                      ),
+                    ),
+                  ),
+                if (_pricingError case final String error) ...<Widget>[
                   const SizedBox(height: 12),
                   Semantics(
-                    label: 'Error en el nombre del producto',
+                    label: 'Error en el precio del producto',
                     liveRegion: true,
-                    child: ExcludeSemantics(child: Text(error)),
+                    child: ExcludeSemantics(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 20),
@@ -2085,13 +2435,11 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                   runSpacing: 8,
                   children: <Widget>[
                     FilledButton(
-                      key: ValueKey<String>(
-                        'rename-submit-${product.internalCode}',
-                      ),
-                      onPressed: _renamePending ? null : _submitRename,
-                      child: _renamePending
+                      style: primaryActionStyle(context),
+                      onPressed: _pricingPending ? null : _submitPricing,
+                      child: _pricingPending
                           ? Semantics(
-                              label: 'Guardando nombre del producto',
+                              label: 'Guardando precio del producto',
                               liveRegion: true,
                               child: const SizedBox.square(
                                 dimension: 20,
@@ -2101,22 +2449,242 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
                               ),
                             )
                           : Text(
-                              _renameUncertain
+                              _pricingUncertain
                                   ? 'Reintentar misma solicitud'
-                                  : 'Guardar nombre',
+                                  : 'Guardar precio / IVA',
                             ),
                     ),
                   ],
                 ),
+                if (widget.renameProduct != null) ...<Widget>[
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Nombre del producto',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Semantics(
+                    container: true,
+                    liveRegion: _renameNameError != null,
+                    label: _renameNameError == null
+                        ? null
+                        : 'Error en el nombre del producto: $_renameNameError',
+                    child: TextFormField(
+                      key: ValueKey<String>(
+                        'rename-name-${product.internalCode}',
+                      ),
+                      controller: _renameName,
+                      enabled: !_renameLocked,
+                      maxLength: maxProductRenameNameLength,
+                      onChanged: (_) {
+                        if (_renameNameError == null) return;
+                        setState(() => _renameNameError = null);
+                      },
+                      decoration: _requiredErrorDecoration(
+                        context,
+                        const InputDecoration(labelText: 'Nombre del producto'),
+                        _renameNameError,
+                      ),
+                    ),
+                  ),
+                  if (_renameError case final String error) ...<Widget>[
+                    const SizedBox(height: 12),
+                    Semantics(
+                      label: 'Error en el nombre del producto',
+                      liveRegion: true,
+                      child: ExcludeSemantics(
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colors.errorContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            error,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colors.onErrorContainer,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      FilledButton(
+                        style: primaryActionStyle(context),
+                        key: ValueKey<String>(
+                          'rename-submit-${product.internalCode}',
+                        ),
+                        onPressed: _renamePending ? null : _submitRename,
+                        child: _renamePending
+                            ? Semantics(
+                                label: 'Guardando nombre del producto',
+                                liveRegion: true,
+                                child: const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            : Text(
+                                _renameUncertain
+                                    ? 'Reintentar misma solicitud'
+                                    : 'Guardar nombre',
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _pricingContext(product));
   }
 
-  void _showIntake(CatalogProduct product) {
+  Widget _contextCard(String key, List<Widget> children) => Container(
+    key: ValueKey<String>(key),
+    margin: const EdgeInsets.symmetric(vertical: 20),
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    ),
+  );
+
+  Widget _contextHeading(String text) =>
+      Text(text, style: Theme.of(context).textTheme.titleSmall);
+
+  // Pricing helpers validate/format entered values only; tax extraction is
+  // server-owned. This preview deliberately does not invent IVA arithmetic.
+  Widget _pricingContext(CatalogProduct product) {
+    final CatalogPricing? pricing = product.pricing;
+    return _contextCard('pricing-context', <Widget>[
+      _contextHeading('Precio actual'),
+      const SizedBox(height: 12),
+      if (pricing == null)
+        const Text('Sin precio')
+      else ...<Widget>[
+        Text(
+          'Precio de lista: ${formatCentavos(pricing.listedPriceCentavos)} ${pricing.currency}',
+        ),
+        Text('Modo de precio: ${_priceModeLabel(pricing.priceMode)}'),
+        Text('Tratamiento de IVA: ${_ivaTreatmentLabel(pricing.ivaTreatment)}'),
+        Text(
+          'Tasa de IVA: ${pricing.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(pricing.ivaRateBasisPoints!)}%'}',
+        ),
+      ],
+      const SizedBox(height: 24),
+      _contextHeading('Vista previa'),
+      const SizedBox(height: 12),
+      Text(
+        _listedPrice.text.isEmpty
+            ? 'Sin precio ingresado'
+            : 'Precio de lista: ${_listedPrice.text} MXN',
+      ),
+      Text(
+        _priceMode == null
+            ? 'Sin modo de precio seleccionado'
+            : 'Modo de precio: ${_priceModeLabel(_priceMode!)}',
+      ),
+      Text(
+        _ivaTreatment == null
+            ? 'Sin tratamiento de IVA seleccionado'
+            : 'Tratamiento de IVA: ${_ivaTreatmentLabel(_ivaTreatment!)}',
+      ),
+      Text(
+        _ivaTreatment == 'exempt'
+            ? 'Tasa de IVA: No requerida'
+            : _ivaRate.text.isEmpty
+            ? 'Sin tasa de IVA ingresada'
+            : 'Tasa de IVA ingresada: ${_ivaRate.text}%',
+      ),
+    ]);
+  }
+
+  Widget _intakeContext(CatalogProduct product) {
+    CatalogItem? item;
+    for (final CatalogItem candidate in _snapshot?.items ?? <CatalogItem>[]) {
+      if (candidate.product.internalCode == product.internalCode) {
+        item = candidate;
+        break;
+      }
+    }
+    final String? total = _intakeTotalPreview();
+    return _contextCard('intake-context', <Widget>[
+      _contextHeading('Existencias por sucursal'),
+      const SizedBox(height: 12),
+      if (item != null)
+        ..._holdingLines(
+          item: item,
+          role: InventoryRole.administrator,
+          branchChoices: _snapshot?.branchChoices ?? <CatalogBranchChoice>[],
+        )
+      else
+        const Text('Sin entrada registrada'),
+      const SizedBox(height: 24),
+      _contextHeading('Último costo unitario'),
+      const SizedBox(height: 12),
+      Text(_latestCostLabel(_snapshot, product.internalCode)),
+      const SizedBox(height: 24),
+      _contextHeading('Vista previa'),
+      const SizedBox(height: 12),
+      Text(
+        total == null
+            ? 'Ingresa sucursal, cantidad y costo unitario para ver el total.'
+            : 'Total de la línea (truncado): $total',
+      ),
+    ]);
+  }
+
+  bool _intakePinPromptOpen = false;
+
+  Future<void> _showIntake(
+    CatalogProduct product, {
+    _IntakeReturn? restore,
+  }) async {
+    if (_intakePinPromptOpen ||
+        widget.session.role != InventoryRole.administrator ||
+        widget.submitStockIntake == null) {
+      return;
+    }
+    _intakeReturn = null;
+    _privacy.invalidate();
+    final privacyToken = _privacy.token;
+    _intakePinPromptOpen = true;
+    final session = _sessionIdentity(widget.session);
+    final generation = _intakeGeneration;
+    final revision = _presentationRevision;
+    final accepted = await showCostPinDialog(
+      context,
+      store: widget.costPinStore,
+      curtain: _privacy,
+    );
+    _intakePinPromptOpen = false;
+    if (!mounted ||
+        !accepted ||
+        !_privacy.isCurrent(privacyToken) ||
+        _sessionIdentity(widget.session) != session ||
+        generation != _intakeGeneration ||
+        revision != _presentationRevision) {
+      return;
+    }
     _presentationRevision += 1;
     // Explicitly scan every existing administrator branch choice for an
     // unresolved draft. A draft found for any branch — including one different
@@ -2152,14 +2720,16 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _intakeBranch = unresolvedBranchId;
         _lockIntakeDraft(unresolved);
       } else {
-        _intakeBranch = null;
+        _intakeBranch = restore?.branch;
+        _intakeQuantity.text = restore?.quantity ?? '';
+        _intakeCost.text = restore?.cost ?? '';
         _intakeUncertain = false;
       }
     });
   }
 
   void _closeIntake() {
-    if (_intakePending) return;
+    if (_intakePending || _intakeConfirming) return;
     _presentationRevision += 1;
     setState(() {
       _intakeProduct = null;
@@ -2219,7 +2789,12 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
   Future<void> _submitIntake() async {
     final CatalogProduct? product = _intakeProduct;
     final StockIntakeSubmit? submit = widget.submitStockIntake;
-    if (product == null || submit == null || _intakePending) return;
+    if (product == null ||
+        submit == null ||
+        _intakePending ||
+        _intakeConfirming) {
+      return;
+    }
     if (!_intakeUncertain) {
       // One pass reports every applicable missing required field before any
       // UUID allocation or gateway call.
@@ -2253,8 +2828,8 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
           (_intakeUncertain
               ? _lockedIntakeDraft!
               : StockIntakeDraft(
-                  idempotencyKey:
-                      (widget.createIntakeId ?? createStockIntakeUuidV4)(),
+                  // Validate before asking for confirmation or allocating a UUID.
+                  idempotencyKey: 'intake-confirm-preview',
                   branchId: _intakeBranch!,
                   productId: product.internalCode,
                   quantity: _intakeQuantity.text,
@@ -2268,6 +2843,39 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     } on StockIntakeValidationException catch (error) {
       setState(() => _intakeError = error.message);
       return;
+    }
+
+    final int revision = _presentationRevision;
+    final int intakeGeneration = _intakeGeneration;
+    final String owner = _sessionIdentity(widget.session);
+    setState(() {
+      _intakeConfirming = true;
+      _intakeError = null;
+    });
+    final bool confirmed = await _confirmIntake(product, draft);
+    if (!mounted) return;
+    setState(() => _intakeConfirming = false);
+    if (!confirmed ||
+        revision != _presentationRevision ||
+        intakeGeneration != _intakeGeneration ||
+        owner != _sessionIdentity(widget.session)) {
+      return;
+    }
+    if (!_intakeUncertain) {
+      draft = StockIntakeDraft(
+        idempotencyKey: (widget.createIntakeId ?? createStockIntakeUuidV4)(),
+        branchId: draft.branchId,
+        productId: draft.productId,
+        quantity: draft.quantity,
+        unitCostMxn: draft.unitCostMxn,
+        quantitySpec: draft.quantitySpec,
+      );
+      try {
+        draft.validate();
+      } on StockIntakeValidationException catch (error) {
+        setState(() => _intakeError = error.message);
+        return;
+      }
     }
 
     final int generation = ++_intakeGeneration;
@@ -2284,17 +2892,25 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         _intakeUncertain = false;
         _lockedIntakeDraft = null;
         _intakeProduct = null;
+        _intakeReturn = null;
         _intakeSuccess = result;
-        _expireSuccessNotice('intake', () => _intakeSuccess = null);
+        _intakeNoticeExpired = false;
+        _expireSuccessNotice('intake', () {
+          if (MediaQuery.disableAnimationsOf(context)) {
+            _intakeSuccess = null;
+          } else {
+            _intakeNoticeExpired = true;
+          }
+        });
       });
       await _requestCatalog();
-    } on StockIntakeRejectedException catch (error) {
+    } on StockIntakeRejectedException {
       if (!mounted || generation != _intakeGeneration) return;
       setState(() {
         _intakePending = false;
         _intakeUncertain = false;
         _lockedIntakeDraft = null;
-        _intakeError = 'Se rechazó la entrada de inventario (${error.code}).';
+        _intakeError = 'Se rechazó la entrada de inventario.';
       });
     } on StockIntakeUnresolvedException {
       if (!mounted || generation != _intakeGeneration) return;
@@ -2334,13 +2950,95 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
     }
   }
 
+  Future<bool> _confirmIntake(
+    CatalogProduct product,
+    StockIntakeDraft draft,
+  ) async {
+    String branchName = draft.branchId;
+    for (final CatalogBranchChoice choice
+        in _snapshot?.branchChoices ?? <CatalogBranchChoice>[]) {
+      if (choice.branchId == draft.branchId) branchName = choice.branchName;
+    }
+    final token = _privacy.token;
+    bool answered = false;
+    return await showCurtainedDialog<bool>(
+          context: context,
+          curtain: _privacy,
+          barrierDismissible: false,
+          barrierColor: Colors.transparent,
+          transitionDuration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                    child: ColoredBox(
+                      color: Theme.of(dialogContext).colorScheme.scrim
+                          .withValues(alpha: 0.32),
+                    ),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: AlertDialog(
+                  key: const ValueKey<String>('intake-confirm-dialog'),
+                  title: const Text('Confirmar entrada de inventario'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Text('Producto: ${product.name}'),
+                        Text('Sucursal: $branchName'),
+                        Text(
+                          'Cantidad: ${draft.quantity} ${draft.quantitySpec.unit}',
+                        ),
+                        Text('Costo unitario: ${draft.unitCostMxn} MXN'),
+                        Text(
+                          'Total de la línea (truncado): ${formatCentavos(draft.lineTotalCentavos)} MXN',
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: <Widget>[
+                    OutlinedButton(
+                      onPressed: () {
+                        if (answered || !_privacy.isCurrent(token)) return;
+                        answered = true;
+                        Navigator.of(dialogContext).pop(false);
+                      },
+                      child: const Text('Corregir'),
+                    ),
+                    FilledButton(
+                      style: primaryActionStyle(dialogContext),
+                      onPressed: () {
+                        if (answered || !_privacy.isCurrent(token)) return;
+                        answered = true;
+                        Navigator.of(dialogContext).pop(true);
+                      },
+                      child: const Text('Confirmar'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Widget _intakeForm() {
     final CatalogProduct product = _intakeProduct!;
     final bool locked = _intakePending || _intakeUncertain;
     final List<CatalogBranchChoice> choices =
         _snapshot?.branchChoices ?? const <CatalogBranchChoice>[];
     final String? totalPreview = _intakeTotalPreview();
-    return SingleChildScrollView(
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final Widget primary = SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         20,
         20,
@@ -2350,190 +3048,266 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                header: true,
-                child: Text(
-                  'Registrar entrada de inventario',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(product.name),
-              SelectableText(product.internalCode),
-              const SizedBox(height: 8),
-              Text(
-                'Unidad: ${product.quantitySpec.unit} '
-                '(precisión ${product.quantitySpec.precision})',
-              ),
-              const SizedBox(height: 16),
-              Semantics(
-                container: true,
-                liveRegion: _intakeBranchError != null,
-                label: _intakeBranchError == null
-                    ? null
-                    : 'Error en la sucursal: $_intakeBranchError',
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey<String>('intake-branch'),
-                  isExpanded: true,
-                  initialValue: _intakeBranch,
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Sucursal',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeBranchError,
-                  ),
-                  hint: const Text('Selecciona una sucursal'),
-                  items: choices
-                      .map(
-                        (CatalogBranchChoice choice) =>
-                            DropdownMenuItem<String>(
-                              value: choice.branchId,
-                              child: Text(choice.branchName),
-                            ),
-                      )
-                      .toList(growable: false),
-                  onChanged: locked ? null : _changeIntakeBranch,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _intakeQuantityError != null,
-                label: _intakeQuantityError == null
-                    ? null
-                    : 'Error en la cantidad: $_intakeQuantityError',
-                child: TextFormField(
-                  key: const ValueKey<String>('intake-quantity'),
-                  controller: _intakeQuantity,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    setState(() => _intakeQuantityError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    InputDecoration(
-                      labelText: 'Cantidad (${product.quantitySpec.unit})',
-                      helperText: product.quantitySpec.precision == 0
-                          ? 'Solo cantidades enteras.'
-                          : 'Hasta ${product.quantitySpec.precision} decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeQuantityError,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              border: Border.all(color: colors.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Semantics(
+                  header: true,
+                  child: Text(
+                    'Registrar entrada de inventario',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Semantics(
-                container: true,
-                liveRegion: _intakeCostError != null,
-                label: _intakeCostError == null
-                    ? null
-                    : 'Error en el costo unitario: $_intakeCostError',
-                child: TextFormField(
-                  key: const ValueKey<String>('intake-unit-cost'),
-                  controller: _intakeCost,
-                  enabled: !locked,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  onChanged: (_) {
-                    setState(() => _intakeCostError = null);
-                  },
-                  decoration: _requiredErrorDecoration(
-                    context,
-                    const InputDecoration(
-                      labelText: 'Costo unitario (MXN)',
-                      helperText:
-                          'Monto exacto en MXN con máximo dos decimales.',
-                      border: _pricingFieldBorder,
-                    ),
-                    _intakeCostError,
-                  ),
+                TextButton(
+                  onPressed: locked || _intakeConfirming
+                      ? null
+                      : () => showCostPinDialog(
+                          context,
+                          change: true,
+                          store: widget.costPinStore,
+                          curtain: _privacy,
+                        ),
+                  child: const Text('Cambiar PIN'),
                 ),
-              ),
-              if (totalPreview case final String total) ...<Widget>[
                 const SizedBox(height: 12),
-                Text('Total de la línea (truncado): $total'),
-              ],
-              if (_intakeError case final String error) ...<Widget>[
+                Text(product.name, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  'Unidad: ${product.quantitySpec.unit} '
+                  '(decimales: ${product.quantitySpec.precision})',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Semantics(
+                  container: true,
+                  liveRegion: _intakeBranchError != null,
+                  label: _intakeBranchError == null
+                      ? null
+                      : 'Error en la sucursal: $_intakeBranchError',
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey<String>('intake-branch'),
+                    isExpanded: true,
+                    initialValue: _intakeBranch,
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(labelText: 'Sucursal'),
+                      _intakeBranchError,
+                    ),
+                    hint: const Text('Selecciona una sucursal'),
+                    items: choices
+                        .map(
+                          (CatalogBranchChoice choice) =>
+                              DropdownMenuItem<String>(
+                                value: choice.branchId,
+                                child: Text(choice.branchName),
+                              ),
+                        )
+                        .toList(growable: false),
+                    onChanged: locked ? null : _changeIntakeBranch,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Semantics(
-                  label: 'Error en la entrada de inventario',
-                  liveRegion: true,
-                  child: ExcludeSemantics(child: Text(error)),
-                ),
-              ],
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: <Widget>[
-                  FilledButton(
-                    onPressed: _intakePending ? null : _submitIntake,
-                    child: _intakePending
-                        ? Semantics(
-                            label: 'Registrando entrada de inventario',
-                            liveRegion: true,
-                            child: const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Text(
-                            _intakeUncertain
-                                ? 'Reintentar misma solicitud'
-                                : 'Registrar entrada',
-                          ),
+                  container: true,
+                  liveRegion: _intakeQuantityError != null,
+                  label: _intakeQuantityError == null
+                      ? null
+                      : 'Error en la cantidad: $_intakeQuantityError',
+                  child: TextFormField(
+                    key: const ValueKey<String>('intake-quantity'),
+                    controller: _intakeQuantity,
+                    enabled: !locked,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) {
+                      setState(() => _intakeQuantityError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      InputDecoration(
+                        labelText: 'Cantidad (${product.quantitySpec.unit})',
+                        helperText: product.quantitySpec.precision == 0
+                            ? 'Solo cantidades enteras.'
+                            : 'Hasta ${product.quantitySpec.precision} decimales.',
+                        helperMaxLines: 3,
+                      ),
+                      _intakeQuantityError,
+                    ),
                   ),
-                  OutlinedButton(
-                    onPressed: _intakePending ? null : _closeIntake,
-                    child: const Text('Cerrar'),
+                ),
+                const SizedBox(height: 12),
+                Semantics(
+                  container: true,
+                  liveRegion: _intakeCostError != null,
+                  label: _intakeCostError == null
+                      ? null
+                      : 'Error en el costo unitario: $_intakeCostError',
+                  child: TextFormField(
+                    key: const ValueKey<String>('intake-unit-cost'),
+                    controller: _intakeCost,
+                    enabled: !locked,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) {
+                      setState(() => _intakeCostError = null);
+                    },
+                    decoration: _requiredErrorDecoration(
+                      context,
+                      const InputDecoration(
+                        labelText: 'Costo unitario (MXN)',
+                        helperText:
+                            'Monto exacto en MXN con máximo dos decimales.',
+                        helperMaxLines: 3,
+                      ),
+                      _intakeCostError,
+                    ),
+                  ),
+                ),
+                if (totalPreview case final String total) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'Total de la línea (truncado): $total',
+                      style: theme.textTheme.titleSmall,
+                    ),
                   ),
                 ],
-              ),
-            ],
+                if (_intakeError case final String error) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    label: 'Error en la entrada de inventario',
+                    liveRegion: true,
+                    child: ExcludeSemantics(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          error,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    FilledButton(
+                      style: primaryActionStyle(context),
+                      onPressed: _intakePending ? null : _submitIntake,
+                      child: _intakePending
+                          ? Semantics(
+                              label: 'Registrando entrada de inventario',
+                              liveRegion: true,
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              _intakeUncertain
+                                  ? 'Reintentar misma solicitud'
+                                  : 'Registrar entrada',
+                            ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+    return PanelLayout(primary: primary, context: _intakeContext(product));
   }
 
-  Widget _catalogBody() {
-    if (_loading && _snapshot == null) return const _CatalogLoading();
-    if (_failed) return _CatalogError(onRetry: _requestCatalog);
+  /// A body panel with the identity its transition is keyed by (T9/S9). The
+  /// identity names the panel, not its content, so an in-panel change never
+  /// re-animates and never recreates the panel.
+  ({String? identity, Widget child}) _panel(String identity, Widget child) =>
+      (identity: identity, child: child);
+
+  /// The body: one panel cross-fades into the next (T9/S9). A body that is not
+  /// a panel at all carries no identity and is presented without the wrapper,
+  /// so the transition always mounts on its first panel still and an initial
+  /// load never animates. Panel priority stays exactly where it was: in the
+  /// chain that produced this record.
+  Widget _bodyPanel(({String? identity, Widget child}) panel) {
+    if (panel.identity case final String identity) {
+      return PanelTransition(
+        // An intake privacy boundary must unmount the previous presentation,
+        // not keep its sensitive text alive as a fading outgoing panel.
+        key: ValueKey<int>(_intakeGeneration),
+        identity: identity,
+        child: panel.child,
+      );
+    }
+    return panel.child;
+  }
+
+  /// The catalog list, or the body that stands in for it while there is none.
+  /// Those stand-ins are not panels (T9/S9): no identity, so no transition in
+  /// either direction.
+  ({String? identity, Widget child}) _catalogPanel() {
+    if (_loading && _snapshot == null) {
+      return (identity: null, child: const _CatalogLoading());
+    }
+    if (_failed) {
+      return (identity: null, child: _CatalogError(onRetry: _requestCatalog));
+    }
     final List<CatalogItem> items = _snapshot?.items ?? const <CatalogItem>[];
-    if (items.isEmpty) return const _EmptyCatalog();
-    return _CatalogList(
-      qrScan: widget.qrScan,
-      items: items,
-      role: widget.session.role,
-      branchChoices: _snapshot!.branchChoices,
-      snapshot: _snapshot,
-      onConfigurePricing:
-          widget.session.role == InventoryRole.administrator &&
-              widget.setProductPrice != null
-          ? _showPricing
-          : null,
-      onRecordIntake:
-          widget.session.role == InventoryRole.administrator &&
-              widget.submitStockIntake != null
-          ? _showIntake
-          : null,
-      saleAction: switch (_sale) {
-        final SaleCartController sale =>
-          (CatalogProduct product) => product.pricing == null
-              ? null
-              : SaleAddControl(controller: sale, product: product),
-        null => null,
-      },
+    if (items.isEmpty) return (identity: null, child: const _EmptyCatalog());
+    return (
+      identity: 'catalog',
+      child: _CatalogList(
+        curtain: _privacy,
+        pinStore: widget.costPinStore,
+        qrScan: widget.qrScan,
+        items: items,
+        role: widget.session.role,
+        branchChoices: _snapshot!.branchChoices,
+        snapshot: _snapshot,
+        onConfigurePricing:
+            widget.session.role == InventoryRole.administrator &&
+                widget.setProductPrice != null
+            ? _showPricing
+            : null,
+        onRecordIntake:
+            widget.session.role == InventoryRole.administrator &&
+                widget.submitStockIntake != null
+            ? _showIntake
+            : null,
+        saleAction: switch (_sale) {
+          final SaleCartController sale =>
+            (CatalogProduct product) => product.pricing == null
+                ? null
+                : SaleAddControl(controller: sale, product: product),
+          null => null,
+        },
+      ),
     );
   }
 }
@@ -2701,7 +3475,6 @@ const double _compactShellWidth = 600;
 
 /// Stable outlined shape shared by the pricing form fields in normal and error
 /// states, so an error never switches the field's border shape.
-const OutlineInputBorder _pricingFieldBorder = OutlineInputBorder();
 
 /// Resolves the stable outlined shape for [decoration]: the field's own border
 /// first, then the theme's input decoration border, then the default outline.
@@ -2807,9 +3580,9 @@ String? _creationUnitFieldError(String unit) {
 }
 
 String? _creationPrecisionFieldError(int? precision) {
-  if (precision == null) return 'La precisión es obligatoria.';
+  if (precision == null) return 'Los decimales son obligatorios.';
   if (precision < 0 || precision > 6) {
-    return 'La precisión debe ser un entero del 0 al 6.';
+    return 'Los decimales deben ser un entero del 0 al 6.';
   }
   return null;
 }
@@ -2834,10 +3607,12 @@ class _ShellTitle extends StatelessWidget {
     required this.session,
     required this.environment,
     this.centered = false,
+    this.showVersion = false,
   });
 
   final EmulatorSession session;
   final BackendEnvironment environment;
+  final bool showVersion;
 
   /// Whether the title and its session line center under the app bar's
   /// centerTitle layout (Android and iOS only).
@@ -2851,14 +3626,18 @@ class _ShellTitle extends StatelessWidget {
       if (session.branchId case final String branchId)
         _branchDisplayName(branchId),
     ].join(' · ');
-    return Column(
+    final Widget identity = Column(
       mainAxisSize: MainAxisSize.min,
       // Centered with the title on mobile (S2); left-aligned on desktop/web.
       crossAxisAlignment: centered
           ? CrossAxisAlignment.center
           : CrossAxisAlignment.start,
       children: <Widget>[
-        const Text('LDA Inventory'),
+        Text(
+          'LDA Inventory',
+          maxLines: showVersion ? 1 : null,
+          overflow: showVersion ? TextOverflow.ellipsis : null,
+        ),
         Text(
           status,
           key: const ValueKey<String>('session-status'),
@@ -2866,6 +3645,32 @@ class _ShellTitle extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
         ),
       ],
+    );
+    if (!showVersion) return identity;
+    return SizedBox(
+      width: MediaQuery.sizeOf(context).width,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: <Widget>[
+            Flexible(child: identity),
+            const SizedBox(width: 8),
+            // Back/Home further reduce the title slot while a panel is open.
+            // Keep the full version visible without taking all session space.
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: constraints.maxWidth * .55),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  appVersionLabel,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2880,7 +3685,8 @@ class _CreationToolbar extends StatelessWidget {
     alignment: Alignment.centerRight,
     child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: FilledButton.icon(
+      // Same soft tonal treatment as the card's 'Agregar' (S22).
+      child: FilledButton.tonalIcon(
         onPressed: onPressed,
         icon: const Icon(Icons.add),
         label: const Text('Crear producto'),
@@ -2919,28 +3725,36 @@ class _TransferToolbar extends StatelessWidget {
 }
 
 class _PricingSuccess extends StatelessWidget {
-  const _PricingSuccess({required this.result});
-
-  final ProductPricingResult result;
+  const _PricingSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
-    label: 'Precio del producto guardado',
-    child: ColoredBox(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Icon(Icons.check_circle_outline),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text('Precio guardado. Auditoría ${result.auditId}'),
-            ),
-          ],
+    label: 'Precio guardado',
+    child: ExcludeSemantics(
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                Icons.check_circle_outline,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Precio guardado',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -2948,9 +3762,7 @@ class _PricingSuccess extends StatelessWidget {
 }
 
 class _CreationSuccess extends StatelessWidget {
-  const _CreationSuccess({required this.result});
-
-  final ProductCreationResult result;
+  const _CreationSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -2966,7 +3778,7 @@ class _CreationSuccess extends StatelessWidget {
           children: <Widget>[
             const Icon(Icons.check_circle_outline),
             const SizedBox(width: 8),
-            Flexible(child: Text('Producto creado ${result.internalCode}')),
+            const Flexible(child: Text('Producto creado correctamente')),
           ],
         ),
       ),
@@ -2975,28 +3787,36 @@ class _CreationSuccess extends StatelessWidget {
 }
 
 class _IntakeSuccess extends StatelessWidget {
-  const _IntakeSuccess({required this.result});
-
-  final StockIntakeResult result;
+  const _IntakeSuccess();
 
   @override
   Widget build(BuildContext context) => Semantics(
     container: true,
     liveRegion: true,
     label: 'Entrada de inventario registrada',
-    child: ColoredBox(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Icon(Icons.check_circle_outline),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text('Entrada registrada. Folio ${result.entryId}'),
-            ),
-          ],
+    child: ExcludeSemantics(
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(
+                Icons.check_circle_outline,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Entrada registrada.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -3083,7 +3903,11 @@ class _ConnectionStatus extends StatelessWidget {
 }
 
 class _CatalogList extends StatefulWidget {
+  final PrivacyCurtain? curtain;
+  final CostPinStore? pinStore;
   const _CatalogList({
+    this.curtain,
+    this.pinStore,
     required this.items,
     this.branchChoices = const <CatalogBranchChoice>[],
     this.snapshot,
@@ -3110,11 +3934,22 @@ class _CatalogList extends StatefulWidget {
 
 class _CatalogListState extends State<_CatalogList> {
   final TextEditingController _search = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
 
   String _query = '';
 
   @override
+  void initState() {
+    super.initState();
+    _searchFocus.addListener(_focusChanged);
+  }
+
+  void _focusChanged() => setState(() {});
+
+  @override
   void dispose() {
+    _searchFocus.removeListener(_focusChanged);
+    _searchFocus.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -3143,102 +3978,156 @@ class _CatalogListState extends State<_CatalogList> {
   @override
   Widget build(BuildContext context) {
     final List<CatalogItem> visible = filterCatalogItems(widget.items, _query);
+    // S10: the product list melts into the page background at the edges that
+    // still have products behind it. Paint only — taps, card layout, keys, the
+    // scroll extent and the semantics tree stay exactly where the list puts
+    // them.
+    return CatalogSearchFocus(
+      focusNode: _searchFocus,
+      results: _query.trim().isEmpty ? null : _searchResults(visible),
+      builder: (liftSearch) =>
+          CatalogScrollFade(child: _catalogScroll(visible, liftSearch)),
+    );
+  }
+
+  Widget _card(CatalogItem item) => _ProductCard(
+    curtain: widget.curtain,
+    pinStore: widget.pinStore,
+    item: item,
+    costLabel: widget.role == InventoryRole.administrator
+        ? _latestCostLabel(widget.snapshot, item.product.internalCode)
+        : null,
+    role: widget.role,
+    branchChoices: widget.branchChoices,
+    onConfigurePricing: widget.onConfigurePricing,
+    onRecordIntake: widget.onRecordIntake,
+    saleAction: widget.saleAction,
+  );
+
+  Widget _noResults() => _CatalogMessage(
+    icon: Icons.search_off,
+    title: 'Sin resultados',
+    message: 'Ningún producto coincide con "$_query".',
+    action: OutlinedButton(
+      onPressed: _clearSearch,
+      child: const Text('Limpiar búsqueda'),
+    ),
+  );
+
+  Widget _searchResults(List<CatalogItem> visible) => SmoothScroll(
+    builder: (context, controller) => ListView.separated(
+      controller: controller,
+      primary: false,
+      shrinkWrap: true,
+      padding: const EdgeInsets.all(12),
+      itemCount: visible.isEmpty ? 1 : visible.length,
+      itemBuilder: (_, index) =>
+          visible.isEmpty ? _noResults() : _card(visible[index]),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+    ),
+  );
+
+  Widget _guardGrid(Widget child) => IgnorePointer(
+    ignoring: _searchFocus.hasFocus,
+    child: ExcludeSemantics(
+      excluding: _searchFocus.hasFocus,
+      child: ExcludeFocus(
+        excluding: _searchFocus.hasFocus,
+        child: KeyedSubtree(
+          key: const ValueKey<String>('catalog-search-grid'),
+          child: child,
+        ),
+      ),
+    ),
+  );
+
+  /// The catalog header, the search field and the product grid, sized by the
+  /// panel they are given (S4 columns).
+  Widget _catalogScroll(
+    List<CatalogItem> visible,
+    Widget Function(Widget) liftSearch,
+  ) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final int columns = _columnsFor(context, constraints.maxWidth);
-        return CustomScrollView(
-          slivers: <Widget>[
-            SliverToBoxAdapter(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                    child: Semantics(
-                      header: true,
-                      child: Text(
-                        'Catálogo',
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                    child: CatalogSearchField(
-                      controller: _search,
-                      onChanged: _onSearchChanged,
-                      onClear: _clearSearch,
-                      onScan: widget.qrScan == null || !productQrScanSupported
-                          ? null
-                          : _scanSearch,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (visible.isEmpty)
+        return SmoothScroll(
+          builder: (context, controller) => CustomScrollView(
+            controller: controller,
+            slivers: <Widget>[
               SliverToBoxAdapter(
-                child: _CatalogMessage(
-                  icon: Icons.search_off,
-                  title: 'Sin resultados',
-                  message: 'Ningún producto coincide con "$_query".',
-                  action: OutlinedButton(
-                    onPressed: _clearSearch,
-                    child: const Text('Limpiar búsqueda'),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                      child: Semantics(
+                        header: true,
+                        child: Text(
+                          'Catálogo',
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                sliver: SliverList.separated(
-                  // The grid lays out complete rows of Expanded cards so the
-                  // row height follows the tallest card instead of a fixed
-                  // aspect ratio (S4).
-                  itemCount: (visible.length + columns - 1) ~/ columns,
-                  itemBuilder: (BuildContext context, int index) {
-                    final int first = index * columns;
-                    return IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          for (
-                            int i = first;
-                            i < first + columns && i < visible.length;
-                            i++
-                          )
-                            Expanded(
-                              child: _ProductCard(
-                                item: visible[i],
-                                costLabel:
-                                    widget.role == InventoryRole.administrator
-                                    ? _latestCostLabel(
-                                        widget.snapshot,
-                                        visible[i].product.internalCode,
-                                      )
-                                    : null,
-                                role: widget.role,
-                                branchChoices: widget.branchChoices,
-                                onConfigurePricing: widget.onConfigurePricing,
-                                onRecordIntake: widget.onRecordIntake,
-                                saleAction: widget.saleAction,
-                              ),
-                            ),
-                        ],
+              ),
+              SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                      child: liftSearch(
+                        CatalogSearchField(
+                          controller: _search,
+                          focusNode: _searchFocus,
+                          onChanged: _onSearchChanged,
+                          onClear: _clearSearch,
+                          onScan:
+                              widget.qrScan == null || !productQrScanSupported
+                              ? null
+                              : _scanSearch,
+                        ),
                       ),
-                    );
-                  },
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    ),
+                  ),
                 ),
               ),
-          ],
+              if (visible.isEmpty)
+                SliverToBoxAdapter(child: _guardGrid(_noResults()))
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  sliver: SliverList.separated(
+                    // The grid lays out complete rows of Expanded cards so the
+                    // row height follows the tallest card instead of a fixed
+                    // aspect ratio (S4).
+                    itemCount: (visible.length + columns - 1) ~/ columns,
+                    itemBuilder: (BuildContext context, int index) {
+                      final int first = index * columns;
+                      return _guardGrid(
+                        IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              // Incomplete final rows keep their empty slots so
+                              // the loaded cards never stretch across the row
+                              // (S5). The slots are inert and noninteractive.
+                              for (int i = first; i < first + columns; i++)
+                                if (i < visible.length)
+                                  Expanded(child: _card(visible[i]))
+                                else
+                                  const Expanded(child: SizedBox.shrink()),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -3276,7 +4165,11 @@ String _latestCostLabel(CatalogSnapshot? snapshot, String productId) {
 /// on every platform. The seller's sale action stays on the card so selling
 /// remains one tap.
 class _ProductCard extends StatelessWidget {
+  final PrivacyCurtain? curtain;
+  final CostPinStore? pinStore;
   const _ProductCard({
+    this.curtain,
+    this.pinStore,
     required this.costLabel,
     required this.item,
     required this.role,
@@ -3298,21 +4191,44 @@ class _ProductCard extends StatelessWidget {
   CatalogProduct get product => item.product;
 
   void _openDetails(BuildContext context) {
+    // This local flag dies with the sheet; it never authorizes intake or a
+    // subsequent sheet. Cost data is still in memory, not access-controlled.
+    bool costRevealed = false;
+    curtain?.invalidate();
+    final token = curtain?.token;
     showProductPeek(
       context: context,
-      builder: (BuildContext context) => _ProductSheet(
-        costLabel: costLabel,
-        item: item,
-        role: role,
-        branchChoices: branchChoices,
-        onConfigurePricing: onConfigurePricing,
-        onRecordIntake: onRecordIntake,
+      curtain: curtain,
+      builder: (BuildContext context) => StatefulBuilder(
+        builder: (context, updateSheet) => _ProductSheet(
+          costLabel: costRevealed ? costLabel : null,
+          onRevealCost: role == InventoryRole.administrator && !costRevealed
+              ? () async {
+                  final accepted = await showCostPinDialog(
+                    context,
+                    store: pinStore,
+                    curtain: curtain,
+                  );
+                  if (context.mounted &&
+                      accepted &&
+                      (curtain == null || curtain!.isCurrent(token!))) {
+                    updateSheet(() => costRevealed = true);
+                  }
+                }
+              : null,
+          item: item,
+          role: role,
+          branchChoices: branchChoices,
+          onConfigurePricing: onConfigurePricing,
+          onRecordIntake: onRecordIntake,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     final CatalogPricing? pricing = product.pricing;
     final String priceLine = pricing == null
         ? 'Sin precio'
@@ -3334,27 +4250,46 @@ class _ProductCard extends StatelessWidget {
             children: <Widget>[
               Semantics(
                 header: true,
-                child: Text(
-                  product.name,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
+                child: Text(product.name, style: theme.textTheme.titleLarge),
               ),
               if (role != null) ...<Widget>[
                 const SizedBox(height: 8),
-                ..._holdingLines(
-                  item: item,
-                  role: role,
-                  branchChoices: branchChoices,
+                // Stock is secondary information (S2): small, muted ink under
+                // the name. The shared _holdingLines contribute only text.
+                DefaultTextStyle.merge(
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: _holdingLines(
+                      item: item,
+                      role: role,
+                      branchChoices: branchChoices,
+                    ),
+                  ),
                 ),
               ],
               const SizedBox(height: 8),
-              Text(priceLine, style: Theme.of(context).textTheme.titleMedium),
+              // The price is the card's strongest line (S2): large and bold,
+              // with the exact amount and copy unchanged.
+              Text(
+                priceLine,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 12,
                 runSpacing: 8,
                 children: <Widget>[
-                  OutlinedButton.icon(
+                  if (saleAction?.call(product) case final Widget action)
+                    action,
+                  // 'Detalles' is the discreet secondary action (S3); the
+                  // sale 'Agregar' FilledButton above keeps the primary role.
+                  TextButton.icon(
                     key: ValueKey<String>(
                       'product-details-${product.internalCode}',
                     ),
@@ -3365,8 +4300,6 @@ class _ProductCard extends StatelessWidget {
                       semanticsLabel: 'Ver detalles de ${product.name}',
                     ),
                   ),
-                  if (saleAction?.call(product) case final Widget action)
-                    action,
                 ],
               ),
             ],
@@ -3377,14 +4310,20 @@ class _ProductCard extends StatelessWidget {
   }
 }
 
-/// Detail content for one product (S5), presented in the S12 peek. The
-/// seller sees name, price, price mode, stock and the QR; the administrator
+/// Detail content for one product (S1, S5), presented in the S12 peek. The
+/// sheet hugs its content: short seller details stay compact while tall
+/// administrator details (or large text) cap and scroll. The name and price
+/// lead the visual hierarchy and the QR sits on its own surface. The seller
+/// sees name, price, price mode, stock and the QR; the administrator
 /// additionally sees the IVA treatment and rate, unit and precision, the
 /// internal code, the latest cost, per-branch stock, and the pricing and
 /// intake actions. The unauthenticated diagnostic page (role null) keeps the
 /// full detail set it always showed.
 class _ProductSheet extends StatelessWidget {
+  final VoidCallback? onRevealCost;
+
   const _ProductSheet({
+    this.onRevealCost,
     required this.costLabel,
     required this.item,
     required this.role,
@@ -3405,136 +4344,161 @@ class _ProductSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    final TextStyle? secondaryStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: colors.onSurfaceVariant,
+    );
     final bool administrator = role == InventoryRole.administrator;
     final bool fullDetails = administrator || role == null;
     final CatalogPricing? pricing = product.pricing;
-    return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            24,
-            0,
-            24,
-            24 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: ConstrainedBox(
-            key: ValueKey<String>('product-sheet-${product.internalCode}'),
-            constraints: BoxConstraints(
-              maxWidth: 560,
-              maxHeight: MediaQuery.sizeOf(context).height * 0.9,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
+    // No Center here: the sheet must size to its content so short seller
+    // details do not stretch the peek card (S1). Keyboard avoidance lives in
+    // showProductPeek.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+      child: ConstrainedBox(
+        key: ValueKey<String>('product-sheet-${product.internalCode}'),
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Row(
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Semantics(
-                          header: true,
-                          child: Text(
-                            'Detalles del producto',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ),
+                  Expanded(
+                    child: Text(
+                      'Detalles del producto',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
                       ),
-                      IconButton(
-                        key: const ValueKey<String>('product-sheet-close'),
-                        tooltip: 'Cerrar detalles',
-                        onPressed: Navigator.of(context).pop,
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    product.name,
-                    style: Theme.of(context).textTheme.titleMedium,
+                  IconButton(
+                    key: const ValueKey<String>('product-sheet-close'),
+                    tooltip: 'Cerrar detalles',
+                    onPressed: Navigator.of(context).pop,
+                    icon: const Icon(Icons.close),
                   ),
-                  if (fullDetails) ...<Widget>[
-                    const SizedBox(height: 8),
-                    SelectableText(
-                      product.internalCode,
-                      semanticsLabel: 'Código interno ${product.internalCode}',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ],
-                  if (pricing case final CatalogPricing shown) ...<Widget>[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
-                      '${shown.currency}',
-                    ),
-                    const SizedBox(height: 4),
-                    Text('Modo de precio: ${_priceModeLabel(shown.priceMode)}'),
-                    if (fullDetails) ...<Widget>[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
-                      ),
-                    ],
-                  ],
-                  if (administrator && costLabel != null) ...<Widget>[
-                    const SizedBox(height: 4),
-                    Semantics(
-                      container: true,
-                      label: costLabel,
-                      excludeSemantics: true,
-                      child: Text(costLabel!),
-                    ),
-                  ],
-                  if (fullDetails) ...<Widget>[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Unidad: ${product.quantitySpec.unit} '
-                      '(precisión ${product.quantitySpec.precision})',
-                    ),
-                  ],
-                  if (role != null) ...<Widget>[
-                    const SizedBox(height: 8),
-                    ..._holdingLines(
-                      item: item,
-                      role: role,
-                      branchChoices: branchChoices,
-                    ),
-                  ],
-                  if (administrator && onConfigurePricing != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      key: ValueKey<String>(
-                        'configure-price-${product.internalCode}',
-                      ),
-                      // Close the sheet first, then open the existing flow.
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        onConfigurePricing!(product);
-                      },
-                      icon: const Icon(Icons.price_change_outlined),
-                      label: const Text('Editar precio / IVA'),
-                    ),
-                  ],
-                  if (administrator && onRecordIntake != null) ...<Widget>[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      key: ValueKey<String>('intake-${product.internalCode}'),
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        onRecordIntake!(product);
-                      },
-                      icon: const Icon(Icons.inventory_outlined),
-                      label: const Text('Registrar entrada de inventario'),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  Center(child: ProductQrView(product: product)),
                 ],
               ),
-            ),
+              Semantics(
+                header: true,
+                child: Text(
+                  product.name,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (fullDetails) ...<Widget>[
+                const SizedBox(height: 4),
+                SelectableText(
+                  product.internalCode,
+                  semanticsLabel: 'Código interno ${product.internalCode}',
+                  style: secondaryStyle,
+                ),
+              ],
+              if (pricing case final CatalogPricing shown) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  'Precio de lista: ${formatCentavos(shown.listedPriceCentavos)} '
+                  '${shown.currency}',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: colors.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Modo de precio: ${_priceModeLabel(shown.priceMode)}',
+                  style: secondaryStyle,
+                ),
+                if (fullDetails) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tratamiento de IVA: ${_ivaTreatmentLabel(shown.ivaTreatment)}',
+                    style: secondaryStyle,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tasa de IVA: ${shown.ivaRateBasisPoints == null ? 'No requerida' : '${_formatBasisPoints(shown.ivaRateBasisPoints!)}%'}',
+                    style: secondaryStyle,
+                  ),
+                ],
+              ],
+              if (administrator && onRevealCost != null)
+                TextButton(
+                  onPressed: onRevealCost,
+                  child: const Text('Ver costo'),
+                ),
+              if (administrator && costLabel != null) ...<Widget>[
+                const SizedBox(height: 4),
+                Semantics(
+                  container: true,
+                  label: costLabel,
+                  excludeSemantics: true,
+                  child: Text(costLabel!, style: secondaryStyle),
+                ),
+              ],
+              if (fullDetails) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  'Unidad: ${product.quantitySpec.unit} '
+                  '(decimales: ${product.quantitySpec.precision})',
+                  style: secondaryStyle,
+                ),
+              ],
+              if (role != null) ...<Widget>[
+                const SizedBox(height: 8),
+                ..._holdingLines(
+                  item: item,
+                  role: role,
+                  branchChoices: branchChoices,
+                ),
+              ],
+              if (administrator && onConfigurePricing != null) ...<Widget>[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: ValueKey<String>(
+                    'configure-price-${product.internalCode}',
+                  ),
+                  // Close the sheet first, then open the existing flow.
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    onConfigurePricing!(product);
+                  },
+                  icon: const Icon(Icons.price_change_outlined),
+                  label: const Text('Editar precio / IVA'),
+                ),
+              ],
+              if (administrator && onRecordIntake != null) ...<Widget>[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  key: ValueKey<String>('intake-${product.internalCode}'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    onRecordIntake!(product);
+                  },
+                  icon: const Icon(Icons.inventory_outlined),
+                  label: const Text('Registrar entrada de inventario'),
+                ),
+              ],
+              const SizedBox(height: 16),
+              // Separate QR surface (S1) so the code reads as its own block.
+              Container(
+                key: ValueKey<String>(
+                  'product-sheet-qr-${product.internalCode}',
+                ),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Center(child: ProductQrView(product: product)),
+              ),
+            ],
           ),
         ),
       ),
@@ -3634,7 +4598,11 @@ class _CatalogError extends StatelessWidget {
       icon: Icons.cloud_off_outlined,
       title: 'Catálogo no disponible',
       message: 'Revisa tu conexión e inténtalo de nuevo.',
-      action: FilledButton(onPressed: onRetry, child: const Text('Reintentar')),
+      action: FilledButton(
+        style: primaryActionStyle(context),
+        onPressed: onRetry,
+        child: const Text('Reintentar'),
+      ),
     );
   }
 }

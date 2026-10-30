@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import '../firebase/emulator_correction_gateway.dart';
 import '../firebase/emulator_sale_gateway.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_exchange_form.dart';
 import 'correction_exchange_receipt_view.dart';
@@ -37,7 +40,6 @@ class CorrectionLookupView extends StatefulWidget {
   const CorrectionLookupView({
     required this.corrections,
     required this.productNames,
-    required this.onClose,
     this.products = const <CatalogProduct>[],
     super.key,
   });
@@ -50,7 +52,6 @@ class CorrectionLookupView extends StatefulWidget {
   /// The branch catalog snapshot; its priced products are the new items an
   /// exchange may offer.
   final List<CatalogProduct> products;
-  final VoidCallback onClose;
 
   @override
   State<CorrectionLookupView> createState() => _CorrectionLookupViewState();
@@ -265,21 +266,12 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
       );
     }
     final ThemeData theme = Theme.of(context);
-    return Center(
+    final Widget primary = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: <Widget>[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const ValueKey<String>('corrections-close'),
-                onPressed: widget.onClose,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Volver al catálogo'),
-              ),
-            ),
             Text('Correcciones', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 12),
             Row(
@@ -305,6 +297,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: FilledButton(
+                    style: primaryActionStyle(context),
                     key: const ValueKey<String>('correction-search'),
                     onPressed: _searching ? null : _search,
                     child: _searching
@@ -327,6 +320,13 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
           ],
         ),
       ),
+    );
+    return PanelLayout(
+      primary: primary,
+      // A short help card needs a narrow rail; keeping it narrow also keeps
+      // the recent-sale rows wide enough to show their total as a trailing.
+      maxContextWidth: 240,
+      context: const CorrectionHelpContext(),
     );
   }
 
@@ -429,6 +429,7 @@ class _CorrectionLookupViewState extends State<CorrectionLookupView> {
                     spacing: 8,
                     children: <Widget>[
                       FilledButton(
+                        style: primaryActionStyle(context),
                         key: const ValueKey<String>('correction-refresh-retry'),
                         onPressed: () => _refreshSale(saleId),
                         child: const Text('Reintentar'),
@@ -499,14 +500,32 @@ class _RecentSaleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-    child: ListTile(
-      onTap: onTap,
-      title: Text(sale.folio ?? 'Venta sin folio'),
-      subtitle: Text(
-        '${formatSaleDateTime(sale.createdAt.toLocal())} · '
-        '${salePaymentLabel(sale.paymentMethod)}',
-      ),
-      trailing: Text(formatMoney(sale.totalCentavos)),
+    child: LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool stacked =
+            constraints.maxWidth <
+            480 * MediaQuery.textScalerOf(context).scale(1);
+        final Widget total = Text(
+          formatMoney(sale.totalCentavos),
+          style: Theme.of(context).textTheme.titleLarge
+              ?.copyWith(fontWeight: FontWeight.w700),
+        );
+        return ListTile(
+          onTap: onTap,
+          title: Text(sale.folio ?? 'Venta sin folio'),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '${formatSaleDateTime(sale.createdAt.toLocal())} · '
+                '${salePaymentLabel(sale.paymentMethod)}',
+              ),
+              if (stacked) total,
+            ],
+          ),
+          trailing: stacked ? null : total,
+        );
+      },
     ),
   );
 }

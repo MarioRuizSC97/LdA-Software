@@ -50,7 +50,7 @@ class _Backend {
   );
 }
 
-Widget _view(_Backend backend, {VoidCallback? onClose}) => MaterialApp(
+Widget _view(_Backend backend) => MaterialApp(
   home: Scaffold(
     body: MovementsView(
       movements: backend.movements,
@@ -59,7 +59,6 @@ Widget _view(_Backend backend, {VoidCallback? onClose}) => MaterialApp(
         CatalogBranchChoice(branchId: 'branch-north', branchName: 'Norte'),
         CatalogBranchChoice(branchId: 'branch-south', branchName: 'Sur'),
       ],
-      onClose: onClose ?? () {},
     ),
   ),
 );
@@ -130,10 +129,7 @@ void main() {
       findsOne,
     );
     expect(
-      find.descendant(
-        of: intake,
-        matching: find.textContaining('PRD-UNKNOWN-01'),
-      ),
+      find.descendant(of: intake, matching: find.text('código PRD-UNKNOWN-01')),
       findsOne,
     );
     expect(
@@ -149,6 +145,14 @@ void main() {
       'Vendedor sin nombre (seller…)',
     );
     expect(find.text('Asignar nombre'), findsOne);
+    await tester.scrollUntilVisible(
+      find.text('Movimiento ilegible'),
+      150,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ),
+    );
     expect(find.text('Movimiento ilegible'), findsOne);
     // Intake never reads a profile, and each seller is read once.
     expect(backend.profileReads, <String>[namedSellerId, unnamedSellerId]);
@@ -306,11 +310,10 @@ void main() {
     expect(backend.loads, <String?>[null, null]);
   });
 
-  testWidgets('branch filter and refresh reload; back closes', (
+  testWidgets('branch filter and refresh reload without a duplicate back', (
     WidgetTester tester,
   ) async {
-    bool closed = false;
-    await tester.pumpWidget(_view(backend, onClose: () => closed = true));
+    await tester.pumpWidget(_view(backend));
     await tester.pumpAndSettle();
 
     await tester.tap(_key('movements-branch-filter'));
@@ -324,8 +327,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.loads, <String?>[null, 'branch-south', 'branch-south']);
 
-    await tester.tap(find.text('Volver'));
-    expect(closed, isTrue);
+    expect(find.text('Volver'), findsNothing);
   });
 
   testWidgets('a stale load never overwrites a newer filter', (
@@ -339,6 +341,9 @@ void main() {
     await tester.pumpWidget(_view(backend));
     await tester.pump();
     await tester.tap(_key('movements-branch-filter'));
+    // Lay out the popup route before advancing its entrance animation. The
+    // pending load animates indefinitely, so pumpAndSettle cannot be used yet.
+    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     await tester.tap(find.text('Norte').last);
     await tester.pumpAndSettle();
@@ -358,6 +363,9 @@ void main() {
   testWidgets('assigning a name updates every row of that seller', (
     WidgetTester tester,
   ) async {
+    // The default 800 px surface now renders the narrower wide-layout list;
+    // a taller viewport keeps all five lazy rows built.
+    useViewport(tester, const Size(800, 1200));
     backend.onLoad = (_) async => <MovementEntry>[
       ..._standardEntries(),
       _entry(

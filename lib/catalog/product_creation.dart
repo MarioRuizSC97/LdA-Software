@@ -53,7 +53,7 @@ class ProductCreationDraft {
     }
     if (precision < 0 || precision > 6) {
       throw const ProductCreationValidationException(
-        'La precisión debe ser un entero del 0 al 6.',
+        'Los decimales deben ser un entero del 0 al 6.',
       );
     }
   }

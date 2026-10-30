@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
 import '../catalog/catalog_product.dart';
 import '../sales/sale_cart.dart';
 import '../sales/sale_format.dart';
 import '../sales/sale_quote.dart';
+import 'correction_context.dart';
 import 'correction_draft.dart';
 import 'correction_exchange_controller.dart';
 import 'correction_labels.dart';
@@ -91,7 +94,7 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
         preview != null &&
         form.previewStatus == ExchangePreviewStatus.ready &&
         preview.customerPaysCentavos > 0;
-    return Center(
+    final Widget primary = Center(
       key: const ValueKey<String>('exchange-form'),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -218,12 +221,14 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
               const SizedBox(height: 16),
               if (form.isLocked)
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('exchange-retry'),
                   onPressed: form.isSubmitting ? null : form.retrySubmit,
                   child: _label(form.isSubmitting, 'Reintentar'),
                 )
               else
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('exchange-confirm'),
                   onPressed: form.canConfirm ? form.confirm : null,
                   child: _label(form.isSubmitting, 'Confirmar cambio'),
@@ -231,6 +236,13 @@ class _CorrectionExchangeFormState extends State<CorrectionExchangeForm> {
             ],
           ),
         ),
+      ),
+    );
+    return PanelLayout(
+      primary: primary,
+      context: CorrectionSaleContext(
+        sale: widget.sale,
+        productNames: widget.productNames,
       ),
     );
   }
@@ -281,6 +293,7 @@ class _ReturnLineEditor extends StatelessWidget {
               Row(
                 children: <Widget>[
                   Checkbox(
+                    semanticLabel: 'Seleccionar $name',
                     key: ValueKey<String>('exchange-line-select-$index'),
                     value: entry.selected,
                     onChanged: editable

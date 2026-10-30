@@ -222,7 +222,10 @@ void main() {
       startsWith('NTE-${key.substring(0, 4).toUpperCase()}'),
     );
     await _tap(tester, _key('sale-receipt-new'));
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a failed gateway initialization is dropped and retried', (
@@ -304,12 +307,15 @@ void main() {
 
       expect(backend.submits, hasLength(1));
       expect(_key('sale-receipt-folio'), findsNothing);
-      expect(find.textContaining('Carrito vacío'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+        findsOneWidget,
+      );
 
       // The draft stayed stored for the original seller: same-key retry.
       gateway.sessions.add(_seller);
       await tester.pumpAndSettle();
-      expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);
+      expect(find.textContaining('2.00 meter · 20.00 MXN'), findsOneWidget);
       await _tap(tester, _key('sale-cart-button'));
       expect(_key('sale-retry-submit'), findsOneWidget);
       await _tap(tester, _key('sale-retry-submit'));
@@ -341,7 +347,7 @@ void main() {
     await _tap(tester, find.widgetWithText(FilledButton, 'Iniciar sesión'));
 
     expect(_key('sale-cart-button'), findsOneWidget);
-    expect(find.textContaining('1 producto · 20.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2.00 meter · 20.00 MXN'), findsOneWidget);
     await _tap(tester, _key('sale-cart-button'));
     await _tap(tester, _key('sale-retry-submit'));
 
@@ -366,7 +372,10 @@ void main() {
     gateway.sessions.add(_otherSeller);
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(_key('sale-retry-submit'), findsNothing);
   });
 
@@ -402,7 +411,10 @@ void main() {
     await _switchTo(tester, gateway, _otherSeller);
     await _switchTo(tester, gateway, _seller);
     expect(_key('sale-receipt-folio'), findsNothing);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(backend.submits, hasLength(1));
 
     // A new sale can begin with a new key.

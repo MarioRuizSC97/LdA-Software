@@ -17,6 +17,8 @@ import 'package:lda_inventory/firebase/emulator_product_creation_gateway.dart';
 import 'package:lda_inventory/firebase/emulator_stock_intake_gateway.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
+import '../catalog/cost_pin_test_helper.dart';
+
 class _FakeGateway implements EmulatorSessionGateway {
   _FakeGateway({
     this.restored,
@@ -392,6 +394,7 @@ class _FakeNoticeStreams implements TransferNoticeStreamSource {
 }
 
 void main() {
+  setUpCostPin();
   testWidgets('shows a safe loading state while bootstrap is pending', (
     WidgetTester tester,
   ) async {
@@ -625,7 +628,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -654,7 +657,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
       expect(attempts[1].idempotencyKey, attempts[0].idempotencyKey);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
     },
   );
 
@@ -705,7 +708,7 @@ void main() {
       expect(find.textContaining('failed-precondition'), findsNothing);
       final Map<String, Object?> originalRequest = requests.single;
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -734,7 +737,7 @@ void main() {
       expect(requests, hasLength(2));
       expect(requests[1], originalRequest);
       expect(requests[1]['idempotencyKey'], originalRequest['idempotencyKey']);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
     },
   );
 
@@ -776,7 +779,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -847,7 +850,7 @@ void main() {
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], attempts[0]);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.textContaining('late transport detail'), findsNothing);
     },
   );
@@ -922,7 +925,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('Producto creado $code'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           expect(find.textContaining('resultado es incierto'), findsNothing);
           expect(attempts, hasLength(index + 1));
         }
@@ -988,7 +991,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       // The shell has now resolved the store; a later same-identity frame
       // changes the observed draft to null during the catalog refresh await.
       auth.sessions.add(
@@ -999,7 +1002,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       refresh.complete(
         CatalogSnapshot(<CatalogItem>[
           CatalogItem(
@@ -1065,9 +1068,11 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
     await tester.pump(const Duration(seconds: 10));
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+    // The notice leaves through a short exit at its deadline.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Producto creado correctamente'), findsNothing);
     sameIdentityFrame();
     await tester.pump();
     expect(find.textContaining('resultado es incierto'), findsNothing);
@@ -1084,7 +1089,7 @@ void main() {
       ]),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+    expect(find.text('Producto creado correctamente'), findsNothing);
     expect(
       tester
           .widget<TextFormField>(
@@ -1156,7 +1161,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(attempts, hasLength(2));
       expect(identical(attempts[0], attempts[1]), isTrue);
-      expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.textContaining('resultado es incierto'), findsNothing);
     },
   );
@@ -1213,7 +1218,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
+      expect(find.text('Producto creado correctamente'), findsNothing);
       expect(find.textContaining('resultado es incierto'), findsNothing);
       expect(calls, 1);
     });
@@ -1775,6 +1780,11 @@ void main() {
       findsOneWidget,
     );
     gateway.loginCompleter = Completer<EmulatorSession>();
+    // Failure feedback can push the retry button below a short viewport.
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Iniciar sesión'),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Iniciar sesión'));
     await tester.pump();
     expect(
@@ -2218,7 +2228,7 @@ void main() {
 
     expect(find.textContaining('resultado es incierto'), findsNothing);
     expect(
-      find.textContaining('Auditoría ${oldDraft.idempotencyKey}'),
+      find.text('Precio guardado'),
       findsOneWidget,
     );
     expect(gatewayLoads, 2);
@@ -2276,7 +2286,7 @@ void main() {
 
     expect(loads, 2);
     expect(retried?.listedPriceMxn, frozenPrice);
-    expect(find.textContaining('Precio guardado. Auditoría'), findsOneWidget);
+    expect(find.text('Precio guardado'), findsOneWidget);
   });
 
   testWidgets('seller never receives or initializes product pricing', (
@@ -2368,7 +2378,7 @@ void main() {
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
       final ProductPricingDraft original = attempts.single;
 
-      Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      Finder close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2388,9 +2398,9 @@ void main() {
             ?.text,
         '75.00',
       );
-      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(3));
 
-      close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pumpAndSettle();
@@ -2425,7 +2435,7 @@ void main() {
       expect(attempts[1].idempotencyKey, original.idempotencyKey);
       expect(attempts[1].productId, 'PRD-COFFEE-001');
       expect(
-        find.textContaining('Auditoría ${original.idempotencyKey}'),
+        find.text('Precio guardado'),
         findsOneWidget,
       );
     },
@@ -2471,7 +2481,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
 
-      final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+      final Finder close = find.byKey(const ValueKey<String>('panel-back'));
       await tester.ensureVisible(close);
       await tester.tap(close);
       await tester.pump();
@@ -2492,7 +2502,7 @@ void main() {
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
       expect(
-        find.textContaining('Auditoría ${attempts[0].idempotencyKey}'),
+        find.text('Precio guardado'),
         findsOneWidget,
       );
     },
@@ -2518,7 +2528,7 @@ void main() {
     await tester.pumpAndSettle();
     await _submitExistingPricing(tester);
     await tester.pumpAndSettle();
-    final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+    final Finder close = find.byKey(const ValueKey<String>('panel-back'));
     await tester.ensureVisible(close);
     await tester.tap(close);
     await tester.pump();
@@ -2916,7 +2926,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
-      await tester.pumpAndSettle();
+      await unlockCostPin(tester);
       await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('North Demo Branch').last);
@@ -2937,6 +2947,13 @@ void main() {
       await tester.tap(record);
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const ValueKey('intake-confirm-dialog')),
+        findsOneWidget,
+      );
+      expect(attempts, isEmpty);
+      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+      await tester.pumpAndSettle();
       expect(attempts, hasLength(1));
       final String frozenKey = attempts.single.idempotencyKey;
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -2976,7 +2993,7 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('intake-PRD-COFFEE-001')),
       );
-      await tester.pumpAndSettle();
+      await unlockCostPin(tester);
       expect(find.text('North Demo Branch'), findsOneWidget);
       expect(
         tester
@@ -2995,11 +3012,17 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const ValueKey('intake-confirm-dialog')),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+      await tester.pumpAndSettle();
       expect(gatewayLoads, 2);
       expect(attempts, hasLength(2));
       expect(attempts[1], same(attempts[0]));
       expect(attempts[1].idempotencyKey, frozenKey);
-      expect(find.text('Entrada registrada. Folio $frozenKey'), findsOneWidget);
+      expect(find.text('Entrada registrada.'), findsOneWidget);
       expect(
         shell.unresolvedStockIntakeDraftFor(
           _administrator,

@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 
 import 'package:flutter/material.dart';
+
+import 'cost_pin_test_helper.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lda_inventory/catalog/catalog_page.dart';
 import 'package:lda_inventory/catalog/catalog_product.dart';
@@ -147,7 +150,14 @@ Future<void> _openSheetAndStartIntake(WidgetTester tester, String code) async {
   final Finder intake = find.byKey(ValueKey<String>('intake-$code'));
   await tester.ensureVisible(intake);
   await tester.tap(intake);
+  await unlockCostPin(tester);
+}
+
+Future<void> _confirmIntake(WidgetTester tester) async {
   await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('intake-confirm-dialog')), findsOneWidget);
+  await tester.tap(find.widgetWithText(FilledButton, 'Confirmar'));
+  await tester.pump();
 }
 
 Widget _authenticatedApp({
@@ -253,6 +263,7 @@ class _FakeNoticeStreams implements TransferNoticeStreamSource {
 }
 
 void main() {
+  setUpCostPin();
   for (final String category in <String>['creation', 'pricing', 'intake']) {
     group('$category notice ownership', () {
       final List<Object> requests = <Object>[];
@@ -277,8 +288,8 @@ void main() {
           );
       Finder banner() => find.textContaining(switch (category) {
         'creation' => 'Producto creado',
-        'pricing' => 'Precio guardado. Auditoría',
-        _ => 'Entrada registrada. Folio',
+        'pricing' => 'Precio guardado',
+        _ => 'Entrada registrada.',
       });
       Future<void> begin(WidgetTester tester) async {
         // Since T4/T5 the pricing and intake actions live in the product
@@ -308,6 +319,7 @@ void main() {
           );
           await _selectCreationPrecision(tester, 2);
         } else if (category == 'intake') {
+          await unlockCostPin(tester);
           await tester.tap(find.byKey(const ValueKey<String>('intake-branch')));
           await tester.pumpAndSettle();
           await tester.tap(find.text('North Demo Branch').last);
@@ -331,6 +343,7 @@ void main() {
         );
         await tester.ensureVisible(button);
         await tester.tap(button);
+        if (category == 'intake') await _confirmIntake(tester);
         await tester.pump();
       }
 
@@ -408,6 +421,12 @@ void main() {
           await tester.pump();
           // An identical SDK identity frame does not own a new deadline.
           await tester.pump(const Duration(seconds: 1));
+          // All three banners start their short exit at the unchanged
+          // ten-second deadline: still on screen mid-exit, then gone.
+          expect(banner(), findsOneWidget);
+          await tester.pump(const Duration(milliseconds: 120));
+          expect(banner(), findsOneWidget);
+          await tester.pumpAndSettle();
           expect(banner(), findsNothing);
           expect(requests, hasLength(2));
           expect(find.textContaining('resultado es incierto'), findsNothing);
@@ -417,7 +436,8 @@ void main() {
             await _openProductSheet(tester, 'PRD-COFFEE-001');
             expect(find.text('Coffee'), findsWidgets);
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
-            expect(find.text('Costo no disponible'), findsOneWidget);
+            expect(find.text('Costo no disponible'), findsNothing);
+            expect(find.text('Ver costo'), findsOneWidget);
             await _closeProductSheet(tester);
             expect(find.textContaining('Sin entrada registrada'), findsWidgets);
           } else {
@@ -447,21 +467,16 @@ void main() {
             await tester.pump();
             await accept(tester);
             expect(banner(), findsOneWidget);
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsOneWidget,
-            );
+            expect(find.text('Precio guardado'), findsOneWidget);
             await tester.pump(const Duration(seconds: 5));
+            expect(banner(), findsOneWidget);
+            await tester.pump(const Duration(milliseconds: 120));
+            await tester.pumpAndSettle();
             expect(banner(), findsNothing);
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsOneWidget,
-            );
+            expect(find.text('Precio guardado'), findsOneWidget);
             await tester.pump(const Duration(seconds: 5));
-            expect(
-              find.textContaining('Precio guardado. Auditoría'),
-              findsNothing,
-            );
+            await tester.pumpAndSettle();
+            expect(find.text('Precio guardado'), findsNothing);
             await _openProductSheet(tester, 'PRD-COFFEE-001');
             expect(find.text('Precio de lista: 129.00 MXN'), findsOneWidget);
             await _closeProductSheet(tester);
@@ -505,6 +520,7 @@ void main() {
                 find.text('Reintentar misma solicitud'),
               );
               await tester.tap(find.text('Reintentar misma solicitud'));
+              if (category == 'intake') await _confirmIntake(tester);
               await tester.pump();
               expect(requests, hasLength(2));
               expect(requests.last, requests.first);
@@ -679,6 +695,8 @@ void main() {
             findsOneWidget,
           );
           await _openProductSheet(tester, _coffee.internalCode);
+          expect(find.text(state.$3), findsNothing);
+          await revealCost(tester);
           expect(find.text(state.$3), findsOneWidget);
           expect(find.bySemanticsLabel(state.$3), findsOneWidget);
           expect(
@@ -741,6 +759,7 @@ void main() {
         loader.requests.last.complete(snapshot(cents: 345));
         await tester.pumpAndSettle();
         await _openProductSheet(tester, _coffee.internalCode);
+        await revealCost(tester);
         expect(find.text('Último costo unitario: 3.45 MXN'), findsOneWidget);
         await _closeProductSheet(tester);
         for (final CatalogSnapshot next in <CatalogSnapshot>[
@@ -761,6 +780,7 @@ void main() {
               : next.costs.isEmpty
               ? 'Sin costo registrado'
               : 'Último costo unitario: 6.78 MXN';
+          await revealCost(tester);
           expect(find.text(expected), findsOneWidget);
           expect(find.text('Último costo unitario: 3.45 MXN'), findsNothing);
           await _closeProductSheet(tester);
@@ -924,7 +944,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Producto creado PRD-STALE-001'), findsNothing);
+        expect(find.text('Producto creado correctamente'), findsNothing);
         expect(calls, 1);
         if (change.startsWith('foreign')) {
           expect(find.textContaining('resultado es incierto'), findsOneWidget);
@@ -1699,8 +1719,8 @@ void main() {
     // (T4/T5); the per-branch stock line stays on the compact card.
     expect(find.text('North Demo Branch: 1.00 kg'), findsOneWidget);
     await _openProductSheet(tester, _coffee.internalCode);
-    expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
-    expect(find.text('Cantidad: kg (precisión 2)'), findsNothing);
+    expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
+    expect(find.text('Cantidad: kg (decimales: 2)'), findsNothing);
     expect(find.text('Editar precio / IVA'), findsOneWidget);
     expect(find.text('Configure price / IVA'), findsNothing);
     await _closeProductSheet(tester);
@@ -1764,7 +1784,13 @@ void main() {
       expect(find.bySemanticsLabel('Identificador de unidad'), findsOneWidget);
       // The collapsed precision dropdown announces through its hint until a
       // value is selected, so assert the hint and the decoration label.
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('create-product-precision')),
+          matching: find.text('Selecciona de 0 a 6 decimales'),
+        ),
+        findsOneWidget,
+      );
       expect(
         tester
             .widget<DropdownButtonFormField<int>>(
@@ -1772,7 +1798,7 @@ void main() {
             )
             .decoration
             .labelText,
-        'Precisión de cantidad',
+        'Decimales del producto',
       );
       final Finder nameField = find.byKey(
         const ValueKey<String>('create-product-name'),
@@ -1856,8 +1882,8 @@ void main() {
         RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'La precisión es obligatoria.',
-        RegExp('^Error en la precisión: '),
+        'Los decimales son obligatorios.',
+        RegExp('^Error en los decimales: '),
       );
 
       // Invalid non-empty values report their own field, not the banner.
@@ -1866,7 +1892,7 @@ void main() {
       await tester.pump();
       expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
       expect(find.text('La unidad es obligatoria.'), findsNothing);
-      expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+      expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
       await tester.pump();
@@ -1885,8 +1911,8 @@ void main() {
         RegExp('^Error en la unidad: '),
       );
       expectDropdownFeedback(
-        'La precisión es obligatoria.',
-        RegExp('^Error en la precisión: '),
+        'Los decimales son obligatorios.',
+        RegExp('^Error en los decimales: '),
       );
       expect(
         tester
@@ -1936,7 +1962,7 @@ void main() {
     await tester.pump();
     expect(find.text('El nombre del producto es obligatorio.'), findsNothing);
     expect(find.text('La unidad es obligatoria.'), findsOneWidget);
-    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+    expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const ValueKey<String>('create-product-unit')),
@@ -1944,7 +1970,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('La unidad es obligatoria.'), findsNothing);
-    expect(find.text('La precisión es obligatoria.'), findsOneWidget);
+    expect(find.text('Los decimales son obligatorios.'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Crear'));
     await tester.pump();
@@ -1963,7 +1989,7 @@ void main() {
         precision: 0,
       ),
     );
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets(
@@ -1998,7 +2024,13 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: precisionField,
+          matching: find.text('Selecciona de 0 a 6 decimales'),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
@@ -2030,7 +2062,13 @@ void main() {
             .initialValue,
         isNull,
       );
-      expect(find.text('Selecciona 0–6'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: precisionField,
+          matching: find.text('Selecciona de 0 a 6 decimales'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(precisionField);
       await tester.pumpAndSettle();
       await tester.tap(find.text('0').last);
@@ -2108,7 +2146,7 @@ void main() {
 
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets('restored same-admin uncertainty is prefilled and must resolve', (
@@ -2183,7 +2221,7 @@ void main() {
 
     expect(attempts, <ProductCreationDraft>[unresolved]);
     expect(keyCalls, 1);
-    expect(find.text('Producto creado PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
   });
 
   testWidgets('duplicate taps invoke once and progress is accessible', (
@@ -2276,7 +2314,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(loads, 2);
-    expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+    expect(find.text('Producto creado correctamente'), findsOneWidget);
     // The QR lives in the detail sheet since T5.
     await _openProductSheet(tester, 'PRD-NEW-0001');
     expect(
@@ -2327,7 +2365,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(creates, 1);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
     },
   );
@@ -2409,7 +2447,7 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Producto creado PRD-COFFEE-001'), findsNothing);
+        expect(find.text('Producto creado correctamente'), findsNothing);
         expect(tester.takeException(), isNull);
       }
     },
@@ -2487,7 +2525,7 @@ void main() {
     await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
 
     expect(find.text('Coffee'), findsOneWidget);
-    expect(find.text('PRD-COFFEE-001'), findsOneWidget);
+    expect(find.text('PRD-COFFEE-001'), findsNothing);
     expect(
       tester
           .widget<TextFormField>(
@@ -2519,10 +2557,7 @@ void main() {
       'ivaTreatment': 'taxable',
       'ivaRatePercent': '16',
     });
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     expect(loads, 2);
   });
 
@@ -2594,7 +2629,7 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
       expect(
@@ -2719,14 +2754,14 @@ void main() {
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
 
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(tea.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -2749,7 +2784,7 @@ void main() {
       await tester.enterText(priceField, '');
       await tapPricingButton(FilledButton, 'Guardar precio / IVA');
       authoritative = restored;
-      await tapPricingButton(OutlinedButton, 'Cerrar');
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await openPricing(_coffee.internalCode);
       expect(find.text('El precio de lista es obligatorio.'), findsNothing);
@@ -2882,10 +2917,7 @@ void main() {
       expect(requests, hasLength(1));
       expect(requests.single.listedPriceMxn, '129.00');
       expect(requests.single.ivaRatePercent, '16');
-      expect(
-        find.text('Precio guardado. Auditoría pricing-key-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
       semantics.dispose();
     },
   );
@@ -2955,9 +2987,11 @@ void main() {
           greaterThan(normalBorderWidth),
         );
 
-        // The error state keeps the field's own stable outlined shape.
+        // Errors inherit the themed outline (or the default fallback).
         final OutlineInputBorder normalOutline =
-            decoration.border! as OutlineInputBorder;
+            themeBorder is OutlineInputBorder
+            ? themeBorder
+            : const OutlineInputBorder();
         expect(errorBorder.borderRadius, normalOutline.borderRadius);
         expect(focusedErrorBorder.borderRadius, normalOutline.borderRadius);
 
@@ -2967,15 +3001,9 @@ void main() {
         expect(find.bySemanticsLabel(announcedLabel), findsOneWidget);
       }
 
-      // Both pricing fields declare one stable outlined shape in normal state.
-      expect(
-        decorationOf('pricing-listed-price').border,
-        isA<OutlineInputBorder>(),
-      );
-      expect(
-        decorationOf('pricing-iva-rate').border,
-        isA<OutlineInputBorder>(),
-      );
+      // Pricing fields leave the normal shape to the app theme.
+      expect(decorationOf('pricing-listed-price').border, isNull);
+      expect(decorationOf('pricing-iva-rate').border, isNull);
 
       // Blank listed price: strong local error presentation.
       final Finder priceField = find.byKey(
@@ -3091,7 +3119,7 @@ void main() {
       };
       await open();
       for (final String key in messages.keys) {
-        expect(decoration(key).border, isA<OutlineInputBorder>());
+        expect(decoration(key).border, isNull);
         expect(decoration(key).errorText, isNull);
       }
       await save();
@@ -3101,7 +3129,10 @@ void main() {
       for (final MapEntry<String, String> entry in messages.entries) {
         final InputDecoration value = decoration(entry.key);
         expect(value.errorText, entry.value);
-        final OutlineInputBorder normal = value.border! as OutlineInputBorder;
+        final InputBorder? themed = theme.inputDecorationTheme.border;
+        final OutlineInputBorder normal = themed is OutlineInputBorder
+            ? themed
+            : const OutlineInputBorder();
         for (final InputBorder? border in <InputBorder?>[
           value.errorBorder,
           value.focusedErrorBorder,
@@ -3210,7 +3241,7 @@ void main() {
       );
       expect(ids, 0);
       expect(calls, 0);
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
       await open();
       for (final String key in messages.keys) {
@@ -3226,10 +3257,7 @@ void main() {
       );
       expect(decoration('pricing-mode').errorText, messages['pricing-mode']);
       expect(decoration('pricing-treatment').errorText, isNull);
-      expect(
-        decoration('pricing-iva-rate').errorText,
-        'La tasa de IVA es obligatoria para productos gravados.',
-      );
+      expect(decoration('pricing-iva-rate').errorText, isNull);
       await tester.enterText(
         find.byKey(const ValueKey<String>('pricing-iva-rate')),
         '8',
@@ -3408,7 +3436,7 @@ void main() {
             ?.text,
         stored.listedPriceMxn,
       );
-      expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+      expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(2));
 
       final Finder retry = find.widgetWithText(
         FilledButton,
@@ -3421,10 +3449,7 @@ void main() {
       expect(requests, hasLength(2));
       expect(requests[1], same(stored));
       expect(requests[1].idempotencyKey, 'pricing-original-a');
-      expect(
-        find.text('Precio guardado. Auditoría pricing-original-a'),
-        findsOneWidget,
-      );
+      expect(find.text('Precio guardado'), findsOneWidget);
     },
   );
 
@@ -3501,7 +3526,7 @@ void main() {
         expect(rate.enabled, isFalse);
         expect(rate.controller?.text, '0');
       } else {
-        expect(find.text('Tasa de IVA: No requerida'), findsOneWidget);
+        expect(find.text('Tasa de IVA: No requerida'), findsNWidgets(2));
         expect(
           find.byKey(const ValueKey<String>('pricing-iva-rate')),
           findsNothing,
@@ -3635,10 +3660,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(mutations, 1);
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     // The refreshed pricing fields show in the detail sheet (T5).
     await _openProductSheet(tester, _coffee.internalCode);
     expect(find.text('Precio de lista: 200.00 MXN'), findsOneWidget);
@@ -3691,10 +3713,7 @@ void main() {
     await tester.tap(save);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Precio guardado. Auditoría pricing-key-1'),
-      findsOneWidget,
-    );
+    expect(find.text('Precio guardado'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(mutations, 1);
   });
@@ -3916,6 +3935,8 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(intakeIds, 1);
       expect(requests, hasLength(1));
       expect(requests.single.toRequest(), <String, Object?>{
@@ -3925,10 +3946,7 @@ void main() {
         'quantity': '2',
         'unitCostMxn': '12.50',
       });
-      expect(
-        find.text('Entrada registrada. Folio intake-key-1'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
       expect(find.text('Registrar entrada'), findsNothing);
 
       // The next intake advances to a fresh idempotency key.
@@ -3946,6 +3964,8 @@ void main() {
         '5',
       );
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
+      await tester.pumpAndSettle();
+      await _confirmIntake(tester);
       await tester.pumpAndSettle();
       expect(intakeIds, 2);
       expect(requests, hasLength(2));
@@ -3996,13 +4016,16 @@ void main() {
     // 2.55 kg * 12.33 MXN: 255 * 1233 / 100 truncates to 3144 centavos.
     expect(
       find.text('Total de la línea (truncado): 31.44 MXN'),
-      findsOneWidget,
+      findsNWidgets(2),
     );
 
     await tester.enterText(quantityField, '0.01');
     await tester.enterText(costField, '0.01');
     await tester.pump();
-    expect(find.text('Total de la línea (truncado): 0.00 MXN'), findsOneWidget);
+    expect(
+      find.text('Total de la línea (truncado): 0.00 MXN'),
+      findsNWidgets(2),
+    );
 
     await tester.enterText(quantityField, '0.001');
     await tester.pump();
@@ -4042,9 +4065,14 @@ void main() {
       find.byKey(const ValueKey<String>('intake-unit-cost')),
       '12.50',
     );
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Registrar entrada'),
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(find.textContaining('resultado es incierto'), findsOneWidget);
     expect(
       tester
@@ -4078,11 +4106,13 @@ void main() {
     await tester.tap(retry);
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(keyCalls, 1);
     expect(requests, hasLength(2));
     expect(requests[1], same(requests[0]));
     expect(requests[1].idempotencyKey, 'intake-key-1');
-    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada.'), findsOneWidget);
   });
 
   testWidgets(
@@ -4120,13 +4150,15 @@ void main() {
         find.byKey(const ValueKey<String>('intake-unit-cost')),
         '12.50',
       );
+      await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Registrar entrada'),
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Registrar entrada'));
       await tester.pumpAndSettle();
 
-      expect(
-        find.text('Se rechazó la entrada de inventario (out-of-range).'),
-        findsOneWidget,
-      );
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Se rechazó la entrada de inventario.'), findsOneWidget);
       expect(find.text('Reintentar misma solicitud'), findsNothing);
       expect(
         tester
@@ -4145,13 +4177,12 @@ void main() {
       await tester.tap(retryRecord);
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(keyCalls, 2);
       expect(requests, hasLength(2));
       expect(requests.last.idempotencyKey, 'intake-key-2');
-      expect(
-        find.text('Entrada registrada. Folio intake-key-2'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
     },
   );
 
@@ -4197,8 +4228,10 @@ void main() {
     await tester.tap(record);
     await tester.pumpAndSettle();
 
+    await _confirmIntake(tester);
+    await tester.pumpAndSettle();
     expect(mutations, 1);
-    expect(find.text('Entrada registrada. Folio intake-key-1'), findsOneWidget);
+    expect(find.text('Entrada registrada.'), findsOneWidget);
     expect(find.text('Catálogo no disponible'), findsOneWidget);
     expect(find.text('Reintentar misma solicitud'), findsNothing);
   });
@@ -4249,7 +4282,7 @@ void main() {
             ?.text,
         isEmpty,
       );
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cerrar'));
+      await tester.tap(find.byKey(const ValueKey<String>('panel-back')));
       await tester.pumpAndSettle();
 
       // Reopen: the draft for South is restored explicitly and locked.
@@ -4294,12 +4327,11 @@ void main() {
       await tester.tap(retry);
       await tester.pumpAndSettle();
 
+      await _confirmIntake(tester);
+      await tester.pumpAndSettle();
       expect(requests, <StockIntakeDraft>[stored]);
       expect(requests.single.idempotencyKey, 'intake-stored');
-      expect(
-        find.text('Entrada registrada. Folio intake-stored'),
-        findsOneWidget,
-      );
+      expect(find.text('Entrada registrada.'), findsOneWidget);
     },
   );
 
@@ -4364,6 +4396,92 @@ void main() {
     },
   );
 
+  for (final change in ['uid', 'branch', 'role', 'logout', 'dispose']) {
+    testWidgets('intake confirmation revokes stale action on $change', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      var calls = 0;
+      Future<StockIntakeResult> submit(StockIntakeDraft draft) async {
+        calls++;
+        return _intakeResult(draft);
+      }
+
+      Future<CatalogSnapshot> load(EmulatorSession _) async =>
+          _snapshotWithBranches(_coffee);
+      await tester.pumpWidget(
+        _authenticatedApp(
+          session: _administrator,
+          loader: load,
+          submitStockIntake: submit,
+          createIntakeId: () => 'intake-revoked',
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openSheetAndStartIntake(tester, 'PRD-COFFEE-001');
+      await tester.tap(find.byKey(const ValueKey('intake-branch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('North Demo Branch').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('intake-quantity')),
+        '3',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('intake-unit-cost')),
+        '12.50',
+      );
+      final record = find.widgetWithText(FilledButton, 'Registrar entrada');
+      await tester.ensureVisible(record);
+      await tester.tap(record);
+      await tester.pumpAndSettle();
+      final staleConfirm = tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Confirmar'))
+          .onPressed!;
+      if (change == 'logout') {
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Cerrar sesión'),
+            )
+            .onPressed!();
+      } else if (change == 'dispose') {
+        await tester.pumpWidget(const SizedBox.shrink());
+      } else {
+        await tester.pumpWidget(
+          _authenticatedApp(
+            session: EmulatorSession(
+              userId: change == 'uid' ? 'another-admin' : _administrator.userId,
+              email: _administrator.email,
+              role: change == 'role'
+                  ? InventoryRole.seller
+                  : InventoryRole.administrator,
+              branchId: change == 'branch' || change == 'role'
+                  ? 'branch-south'
+                  : null,
+            ),
+            loader: load,
+            submitStockIntake: submit,
+          ),
+        );
+      }
+      // Even a callback retained before the route is removed has no authority.
+      staleConfirm();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('intake-confirm-dialog')), findsNothing);
+      expect(
+        find.textContaining('Costo unitario: 12.50', skipOffstage: false),
+        findsNothing,
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Costo unitario: 12[.,]50')),
+        findsNothing,
+      );
+      expect(calls, 0);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+  }
+
   testWidgets(
     'stale intake completion is discarded after role change and disposal',
     (WidgetTester tester) async {
@@ -4402,6 +4520,7 @@ void main() {
         );
         await tester.ensureVisible(record);
         await tester.tap(record);
+        await _confirmIntake(tester);
         await tester.pump();
 
         if (dispose) {
@@ -4428,83 +4547,170 @@ void main() {
     },
   );
 
-  testWidgets('creation outline stays stable in default and custom themes', (
-    WidgetTester tester,
-  ) async {
-    for (final ThemeData theme in <ThemeData>[
-      ThemeData(),
-      ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.green)),
-    ]) {
-      await tester.pumpWidget(const SizedBox());
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: theme,
-          home: AuthenticatedCatalogPage(
-            session: _administrator,
-            catalogLoader: (_) async => CatalogSnapshot(const <CatalogItem>[]),
-            onLogout: () async {},
-            createDraftId: () => 'outline-key',
-            createProduct: (_) => throw StateError('must not submit'),
+  testWidgets(
+    'creation outline inherits its theme and stays stable on errors',
+    (WidgetTester tester) async {
+      for (final ThemeData theme in <ThemeData>[
+        ThemeData(
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(24)),
+            ),
           ),
         ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Crear producto'));
-      await tester.pumpAndSettle();
-      InputDecoration decoration(String key) {
-        final Finder field = find.byKey(ValueKey<String>(key));
-        if (key == 'create-product-precision') {
-          return tester.widget<DropdownButtonFormField<int>>(field).decoration;
-        }
-        return tester
-            .widget<TextField>(
-              find.descendant(of: field, matching: find.byType(TextField)),
-            )
-            .decoration!;
-      }
-
-      final List<OutlineInputBorder> normal = <OutlineInputBorder>[];
-      for (final String key in <String>[
-        'create-product-name',
-        'create-product-unit',
-        'create-product-precision',
+        ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(40)),
+            ),
+          ),
+        ),
       ]) {
-        final InputDecoration input = decoration(key);
-        expect(input.border, isA<OutlineInputBorder>());
-        normal.add(input.border! as OutlineInputBorder);
-        expect(input.focusedBorder ?? input.border, isA<OutlineInputBorder>());
-      }
-      final Finder create = find.widgetWithText(FilledButton, 'Crear');
-      await tester.ensureVisible(create);
-      await tester.tap(create);
-      await tester.pumpAndSettle();
-      var index = 0;
-      for (final String key in <String>[
-        'create-product-name',
-        'create-product-unit',
-        'create-product-precision',
-      ]) {
-        final InputDecoration input = decoration(key);
-        for (final InputBorder? border in <InputBorder?>[
-          input.border,
-          input.errorBorder,
-          input.focusedErrorBorder,
-        ]) {
-          expect(border, isA<OutlineInputBorder>());
-          final OutlineInputBorder outline = border! as OutlineInputBorder;
-          expect(outline.borderRadius, normal[index].borderRadius);
-          expect(outline.gapPadding, normal[index].gapPadding);
-        }
-        expect(input.errorBorder!.borderSide.width, 2);
-        expect(
-          input.focusedErrorBorder!.borderSide.color,
-          theme.colorScheme.error,
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: AuthenticatedCatalogPage(
+              session: _administrator,
+              catalogLoader: (_) async =>
+                  CatalogSnapshot(const <CatalogItem>[]),
+              onLogout: () async {},
+              createDraftId: () => 'outline-key',
+              createProduct: (_) => throw StateError('must not submit'),
+            ),
+          ),
         );
-        index += 1;
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Crear producto'));
+        await tester.pumpAndSettle();
+        InputDecoration decoration(String key) {
+          final Finder field = find.byKey(ValueKey<String>(key));
+          return tester
+              .widget<InputDecorator>(
+                find.descendant(
+                  of: field,
+                  matching: find.byType(InputDecorator),
+                ),
+              )
+              .decoration;
+        }
+
+        final List<OutlineInputBorder> normal = <OutlineInputBorder>[];
+        for (final String key in <String>[
+          'create-product-name',
+          'create-product-unit',
+          'create-product-precision',
+        ]) {
+          final InputDecoration input = decoration(key);
+          expect(input.border, isA<OutlineInputBorder>());
+          normal.add(input.border! as OutlineInputBorder);
+          expect(input.border, theme.inputDecorationTheme.border);
+          expect(
+            input.focusedBorder ?? input.border,
+            isA<OutlineInputBorder>(),
+          );
+        }
+        final Finder create = find.widgetWithText(FilledButton, 'Crear');
+        await tester.ensureVisible(create);
+        await tester.tap(create);
+        await tester.pumpAndSettle();
+        var index = 0;
+        for (final String key in <String>[
+          'create-product-name',
+          'create-product-unit',
+          'create-product-precision',
+        ]) {
+          final InputDecoration input = decoration(key);
+          for (final InputBorder? border in <InputBorder?>[
+            input.border,
+            input.errorBorder,
+            input.focusedErrorBorder,
+          ]) {
+            expect(border, isA<OutlineInputBorder>());
+            final OutlineInputBorder outline = border! as OutlineInputBorder;
+            expect(outline.borderRadius, normal[index].borderRadius);
+            expect(outline.gapPadding, normal[index].gapPadding);
+          }
+          expect(input.errorBorder!.borderSide.width, 2);
+          expect(
+            input.focusedErrorBorder!.borderSide.color,
+            theme.colorScheme.error,
+          );
+          index += 1;
+        }
+        expect(find.byIcon(Icons.error_outline), findsNWidgets(3));
       }
-      expect(find.byIcon(Icons.error_outline), findsNWidgets(3));
+    },
+  );
+
+  for (final creation in [true, false]) {
+    for (final code in [
+      'permission-denied',
+      'failed-precondition',
+      'private-id English exception',
+    ]) {
+      testWidgets(
+        '${creation ? 'creation' : 'pricing'} rejection safely maps $code',
+        (tester) async {
+          final semantics = tester.ensureSemantics();
+          await tester.pumpWidget(
+            _authenticatedApp(
+              session: _administrator,
+              loader: (_) async => _snapshotWithBranches(_coffee),
+              createDraftId: () => 'rejection-test',
+              createProduct: (_) async =>
+                  throw ProductCreationRejectedException(code: code),
+              setProductPrice: (_) async =>
+                  throw ProductPricingRejectedException(code: code),
+            ),
+          );
+          await tester.pumpAndSettle();
+          if (creation) {
+            await tester.tap(find.text('Crear producto'));
+            await tester.pumpAndSettle();
+            await tester.enterText(
+              find.byKey(const ValueKey('create-product-name')),
+              'Coffee',
+            );
+            await tester.enterText(
+              find.byKey(const ValueKey('create-product-unit')),
+              'kg',
+            );
+            await _selectCreationPrecision(tester, 0);
+          } else {
+            await _openSheetAndConfigurePricing(tester, 'PRD-COFFEE-001');
+          }
+          final action = find.widgetWithText(
+            FilledButton,
+            creation ? 'Crear' : 'Guardar precio / IVA',
+          );
+          await tester.ensureVisible(action);
+          await tester.tap(action);
+          await tester.pumpAndSettle();
+          final detail = switch (code) {
+            'permission-denied' =>
+              creation
+                  ? 'No tienes permiso para crear productos.'
+                  : 'No tienes permiso para cambiar el precio del producto.',
+            'failed-precondition' =>
+              creation
+                  ? 'No se cumplen las condiciones para crear el producto. Revisa los datos.'
+                  : 'El producto cambió mientras lo editabas; vuelve a abrirlo.',
+            _ => 'No se pudo guardar el producto. Intenta de nuevo.',
+          };
+          expect(find.textContaining(detail), findsOneWidget);
+          expect(find.textContaining(code), findsNothing);
+          expect(
+            find.bySemanticsLabel(RegExp(RegExp.escape(code))),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+          semantics.dispose();
+        },
+      );
     }
-  });
+  }
 
   for (final bool validation in <bool>[false, true]) {
     testWidgets(
@@ -4547,9 +4753,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(
           find.text(
-            validation
-                ? 'Server validation declined the request.'
-                : 'Se rechazó la creación del producto (permission-denied).',
+            validation ? 'Server validation declined the request.' : 'Se rechazó la creación del producto. No tienes permiso para crear productos.',
           ),
           findsOneWidget,
         );
@@ -4617,7 +4821,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Guardar precio / IVA'),
         findsOneWidget,
       );
-      expect(find.text(code), findsWidgets);
+      expect(find.text(code), findsNothing);
       expect(
         tester
             .widget<TextFormField>(
@@ -4712,11 +4916,13 @@ void main() {
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           await tester.tap(find.text('Crear producto'));
           await tester.pump();
           if (close) {
-            final Finder button = find.widgetWithText(OutlinedButton, 'Cerrar');
+            final Finder button = find.byKey(
+              const ValueKey<String>('panel-back'),
+            );
             await tester.ensureVisible(button);
             await tester.tap(button);
             await tester.pump();
@@ -4743,7 +4949,7 @@ void main() {
 
     for (final bool intake in <bool>[false, true]) {
       testWidgets(
-        'manual ${intake ? 'intake' : 'pricing'} close cancels delayed creation handoff',
+        'manual ${intake ? 'navigation after intake exit' : 'pricing close'} cancels delayed creation handoff',
         (WidgetTester tester) async {
           final _CatalogLoader loader = _CatalogLoader();
           await tester.pumpWidget(
@@ -4771,11 +4977,23 @@ void main() {
           await tester.pumpAndSettle();
           await tester.tap(action);
           await tester.pumpAndSettle();
+          if (intake) await unlockCostPin(tester);
           await fillAndCreate(tester);
           await tester.pump();
           await tester.pump();
           expect(loader.requests, hasLength(2));
-          final Finder close = find.widgetWithText(OutlinedButton, 'Cerrar');
+          // Let the 350 ms panel cross-fade (T9/S15) finish before leaving
+          // through the header; a refresh is still pending, so a bounded
+          // pump is used instead of pumpAndSettle.
+          await tester.pump(const Duration(milliseconds: 400));
+          if (intake) {
+            // Creation now exits intake instead of suspending its PIN grant.
+            // A new manual navigation still cancels the delayed handoff.
+            expect(find.byKey(const ValueKey('intake-quantity')), findsNothing);
+            await tester.tap(find.text('Crear producto'));
+            await tester.pump(const Duration(milliseconds: 400));
+          }
+          final Finder close = find.byKey(const ValueKey<String>('panel-back'));
           await tester.ensureVisible(close);
           await tester.tap(close);
           await tester.pump();
@@ -4789,7 +5007,7 @@ void main() {
             find.byKey(const ValueKey<String>('intake-quantity')),
             findsNothing,
           );
-          expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+          expect(find.text('Producto creado correctamente'), findsOneWidget);
           expect(find.text('Reintentar misma solicitud'), findsNothing);
         },
       );
@@ -4875,7 +5093,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
       expect(pricingCalls, 0);
     });
@@ -4901,7 +5119,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -4929,7 +5147,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(find.text('Catálogo no disponible'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
@@ -4959,7 +5177,7 @@ void main() {
       await fillAndCreate(tester);
       await tester.pumpAndSettle();
 
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('pricing-listed-price')),
         findsNothing,
@@ -5011,7 +5229,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(creates, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
       expectEmptyPricingFormFor(tester, 'PRD-NEW-0001');
     });
 
@@ -5046,8 +5264,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001'), findsWidgets);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
+      expect(find.text('PRD-COFFEE-001'), findsNothing);
+      expect(find.text('Coffee'), findsOneWidget);
       expect(find.text('PRD-NEW-0001'), findsNothing);
       expect(find.textContaining('resultado es incierto'), findsOneWidget);
     });
@@ -5075,8 +5294,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(loads, 2);
-      expect(find.text('Producto creado PRD-NEW-0001'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001'), findsWidgets);
+      expect(find.text('Producto creado correctamente'), findsOneWidget);
+      expect(find.text('PRD-COFFEE-001'), findsNothing);
+      expect(find.text('Coffee'), findsOneWidget);
       expect(find.text('PRD-NEW-0001'), findsNothing);
     });
 
@@ -5298,12 +5518,12 @@ void main() {
       }
 
       await openMenu();
+      // A list entry merges its badge label into its own node.
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('notices-open')),
-          matching: find.bySemanticsLabel(RegExp('sin confirmar')),
-        ),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const ValueKey<String>('notices-open')))
+            .label,
+        contains('sin confirmar'),
       );
       expect(
         find.descendant(
@@ -5325,12 +5545,12 @@ void main() {
         find.bySemanticsLabel(RegExp('Avisos de traslados: 1 sin leer')),
         findsOneWidget,
       );
+      // A list entry merges its badge label into its own node.
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey<String>('notices-open')),
-          matching: find.bySemanticsLabel(RegExp('1 sin leer')),
-        ),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const ValueKey<String>('notices-open')))
+            .label,
+        contains('1 sin leer'),
       );
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();

@@ -187,27 +187,27 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      final PopupMenuItem<VoidCallback> item = tester.widget(
-        find.widgetWithText(PopupMenuItem<VoidCallback>, 'Actualizar catálogo'),
+      final ListTile item = tester.widget(
+        find.widgetWithText(ListTile, 'Actualizar catálogo'),
       );
       expect(item.enabled, isFalse);
     }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   });
 
   group('overflow menu icon (S2d)', () {
-    testWidgets('the menu icon is three bars on mobile', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('the menu icon is the animated three bars on every platform '
+        '(T10 S6/S7)', (WidgetTester tester) async {
       await tester.pumpWidget(_adminPage());
       await tester.pumpAndSettle();
 
-      expect(
+      final AnimatedIcon icon = tester.widget(
         find.descendant(
           of: _key('shell-more'),
-          matching: find.byIcon(Icons.menu),
+          matching: find.byType(AnimatedIcon),
         ),
-        findsOneWidget,
       );
+      expect(icon.icon, AnimatedIcons.menu_close);
+      expect(icon.progress.value, 0);
     }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   });
 
@@ -218,6 +218,7 @@ void main() {
       await tester.pumpWidget(_adminPage(withMovements: true));
       await tester.pumpAndSettle();
 
+      // T11 S2 restores a menu-free wide bar; compact keeps the panel.
       expect(_key('shell-more'), findsNothing);
       expect(_inAppBar(find.text('Movimientos')), findsOneWidget);
       expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
@@ -228,8 +229,8 @@ void main() {
       final Rect wideTitle = tester.getRect(find.text('LDA Inventory'));
       expect(wideTitle.center.dx, lessThan(wideBar.center.dx - 100));
 
-      // A narrow desktop window still collapses into the three-dot menu with
-      // the refresh button kept in the bar.
+      // A narrow desktop window collapses its text actions into the side
+      // panel (three bars, T10 S6) with the refresh button kept in the bar.
       _useViewport(tester, const Size(320, 700));
       await tester.pumpWidget(_adminPage(withMovements: true));
       await tester.pumpAndSettle();
@@ -238,10 +239,11 @@ void main() {
       expect(
         find.descendant(
           of: _key('shell-more'),
-          matching: find.byIcon(Icons.more_vert),
+          matching: find.byType(AnimatedIcon),
         ),
         findsOneWidget,
       );
+      expect(_inAppBar(find.text('Movimientos')), findsNothing);
       expect(_inAppBar(find.byIcon(Icons.refresh)), findsOneWidget);
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
   });

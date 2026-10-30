@@ -44,17 +44,18 @@ PATH="$HOME/develop/flutter/bin:$HOME/.local/share/lda-firebase-tools/node_modul
 ```
 
 This client configuration contains public Firebase identifiers only. It does
-not include service-account credentials or private keys, and it does not enable
-billing, Cloud Storage, or Cloud Functions.
+not include service-account credentials or private keys. The project's billing
+plan and enabled Google Cloud APIs are console settings, not part of this file.
 
 ## Local Firebase boundary
 
 The emulator configuration continues to use the explicit demo project ID
 `demo-lda-inventory`. The `.firebaserc` `dev` alias targets the development
 project, so local emulator commands must continue passing
-`--project demo-lda-inventory` explicitly. There is no production project,
-Functions emulator, or Hosting emulator in this slice. Only Auth, Firestore,
-and Storage emulators are configured locally.
+`--project demo-lda-inventory` explicitly. Only Auth, Firestore and Storage
+emulators are configured locally: there is no Functions or Hosting emulator,
+so the callable backend runs against the deployed project (see "Deployed
+backend" below).
 
 Install the pinned rules-test dependencies and run the local security suite:
 
@@ -79,15 +80,15 @@ The minimal local data contract is:
 
 The local tests simulate trusted custom claims with roles `administrator` and
 `seller`. Every direct Firestore inventory mutation and every direct Storage
-mutation is denied, including for administrators. Future trusted server code
-must perform those writes with validation and auditing; no such business logic
-is part of this local-boundary slice.
+mutation is denied, including for administrators. Those writes are performed
+by the deployed Cloud Functions, which validate, audit and keep cost data
+physically separate; no client code writes inventory directly.
 
 Firestore rules cannot hide selected fields inside a readable document.
 Therefore `products/{productId}` documents **MUST exclude acquisition costs**,
 and cost data must remain physically separate under `costs/{productId}`.
 Physically separated costs and server-owned inventory writes are mandatory
-schema constraints for the next implementation phase, not field filtering that
+schema constraints, not field filtering that
 these rules can provide.
 
 ## Production mode
@@ -99,13 +100,45 @@ real Firebase project `lda-inventory-dev-mx` (the options in
 emulators, and shows connection copy without emulator wording. Combining it
 with `LDA_LOCAL_EMULATORS=true` is ambiguous, so the app stays offline.
 
-Writes go through Cloud Functions, which are not deployed yet (the project is
-on the Spark plan), so until they are only sign-in and reads can work. Every
-callable already accepts exactly two runtimes: the `demo-lda-inventory`
-emulator and a deployed `lda-inventory-dev-mx` runtime with no emulator
+Every callable accepts exactly two runtimes: the `demo-lda-inventory`
+emulator and the deployed `lda-inventory-dev-mx` runtime with no emulator
 variables (`functions/src/runtime-project.js`); any other project is refused.
-Callable CORS stays localhost-only until a production web origin is chosen;
-the Android and iOS apps are not subject to CORS.
+
+### Deployed backend (status 2026-10-27)
+
+Checked read-only against the project, not assumed:
+
+| Piece | State |
+| --- | --- |
+| Billing plan | Blaze, so Cloud Functions can run in the project |
+| `firestore.rules` | Deployed; identical to this repository (269 lines, same SHA-256) |
+| Cloud Functions | 16 callables deployed and ACTIVE (sales, corrections, transfers, catalog, pricing, intake, seller profiles) |
+| Auth accounts | Real accounts exist, each with its `role` and, for sellers, its `branchId` claim |
+| Hosting | Site `lda-inventory-dev-mx` exists with **no release**: the web app is not published |
+| Callable CORS | `functions/src/index.js` `LOCAL_WEB_ORIGINS` allows `localhost`/`127.0.0.1` only |
+
+Consequences:
+
+- Android and iOS builds in production mode work end to end; they are not
+  subject to CORS.
+- Publishing the web app requires adding the hosting domain to
+  `LOCAL_WEB_ORIGINS` and redeploying the callables first, otherwise every
+  write is rejected by CORS.
+- Redeploying rules is only needed when `firestore.rules` changes; compare
+  before deploying instead of assuming drift.
+
+Read-only checks used for the table above:
+
+```sh
+# Deployed ruleset source and release (needs an access token with quota project)
+curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: lda-inventory-dev-mx" \
+  "https://firebaserules.googleapis.com/v1/projects/lda-inventory-dev-mx/releases"
+# Deployed functions
+gcloud functions list --project lda-inventory-dev-mx
+# Real accounts and their claims
+firebase auth:export /tmp/auth-users.csv --project lda-inventory-dev-mx --format=csv
+```
 
 ### Preparing the real project
 
@@ -192,6 +225,11 @@ Validated on 2026-10-16: demo seller sign-in and the live catalog on the iOS
 Not yet validated: physical iOS devices, release signing, and store builds
 (TestFlight / Play). Android command-line tools are still missing; Gradle
 builds work without them.
+
+The full UI round (T9-T22) is verified on the web build, the iOS simulator and
+a physical Huawei HBP-LX9 (badge layout, back gesture, PIN flow), and by 1927
+automated tests plus 321 audit tests. Publishing still needs release signing,
+store builds and a physical iOS run.
 
 ## Camera scan on a device
 

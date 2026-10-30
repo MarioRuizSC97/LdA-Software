@@ -2,12 +2,16 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
+import '../app/privacy_curtain.dart';
+
 /// Presents product details without changing their role or action ownership.
 Future<void> showProductPeek({
   required BuildContext context,
   required WidgetBuilder builder,
-}) => showGeneralDialog<void>(
+  PrivacyCurtain? curtain,
+}) => showCurtainedDialog<void>(
   context: context,
+  curtain: curtain,
   barrierDismissible: true,
   barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
   barrierColor: Colors.black54,
@@ -26,7 +30,16 @@ Future<void> showProductPeek({
       ),
       SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          // The keyboard inset is absorbed here (not inside the sheet) so the
+          // centered card rises above the keyboard instead of growing. The
+          // padding already removes the inset from the available height, so
+          // the cap below never subtracts it again (it could go negative).
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            16 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
           child: Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(

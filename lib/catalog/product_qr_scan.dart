@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../app/primary_action_style.dart';
+
 /// Camera scan of a product QR code, used to fill the catalog search.
 ///
 /// The QR payload of a product is its internal code (`product_qr.dart`), and
@@ -245,6 +247,7 @@ class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
   }
 
   Widget _closeButton() => FilledButton(
+    style: primaryActionStyle(context),
     key: const ValueKey<String>('qr-scan-close'),
     onPressed: () => Navigator.of(context).pop(),
     child: const Text('Cerrar'),

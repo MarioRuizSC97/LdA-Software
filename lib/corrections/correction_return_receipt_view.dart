@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app/primary_action_style.dart';
 import '../sales/sale_format.dart';
 import 'correction_labels.dart';
 import 'correction_receipt.dart';
@@ -98,6 +99,7 @@ class CorrectionReturnReceiptView extends StatelessWidget {
               runSpacing: 8,
               children: <Widget>[
                 FilledButton(
+                  style: primaryActionStyle(context),
                   key: const ValueKey<String>('return-receipt-back'),
                   onPressed: onBackToSale,
                   child: const Text('Volver a la venta'),

@@ -62,7 +62,6 @@ void main() {
                 'PRD-SUGAR-002': 'Azúcar',
               },
               onMarkRead: marked.add,
-              onClose: () {},
             ),
           ),
         ),
@@ -99,7 +98,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: marked.add,
-              onClose: () {},
             ),
           ),
         ),
@@ -111,7 +109,8 @@ void main() {
         findsNothing,
       );
       // The notice stays visible (retained history), just marked read.
-      expect(find.textContaining(_transferA), findsOneWidget);
+      expect(find.textContaining('Traslado del '), findsOneWidget);
+      expect(find.textContaining(_transferA), findsNothing);
       expect(marked, isEmpty);
     });
 
@@ -136,7 +135,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: (_) {},
-              onClose: () {},
             ),
           ),
         ),
@@ -165,7 +163,6 @@ void main() {
               state: state,
               productNames: const <String, String>{},
               onMarkRead: (_) {},
-              onClose: () {},
             ),
           ),
         ),
@@ -189,7 +186,6 @@ void main() {
             state: const TransferNoticeState(),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () {},
           ),
         ),
       ),
@@ -209,7 +205,6 @@ void main() {
             state: const TransferNoticeState(phase: TransferNoticePhase.error),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () {},
             onRetry: () => retries += 1,
           ),
         ),
@@ -230,8 +225,9 @@ void main() {
     expect(retries, 1);
   });
 
-  testWidgets('close notifies the host', (WidgetTester tester) async {
-    var closed = false;
+  testWidgets('inbox has no duplicate close control', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -239,14 +235,13 @@ void main() {
             state: const TransferNoticeState(),
             productNames: const <String, String>{},
             onMarkRead: (_) {},
-            onClose: () => closed = true,
           ),
         ),
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('notices-close')));
-    expect(closed, isTrue);
+    expect(find.byKey(const ValueKey<String>('notices-close')), findsNothing);
+    expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
   });
 
   testWidgets('exposes accessible labels without overflowing at 320 px', (
@@ -275,7 +270,6 @@ void main() {
             state: state,
             productNames: const <String, String>{'PRD-COFFEE-001': 'Café'},
             onMarkRead: (_) {},
-            onClose: () {},
           ),
         ),
       ),
@@ -283,7 +277,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Avisos de traslados'), findsOneWidget);
-    expect(find.byTooltip('Cerrar bandeja de avisos'), findsOneWidget);
+    expect(find.byTooltip('Cerrar bandeja de avisos'), findsNothing);
     await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
     await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
     semantics.dispose();

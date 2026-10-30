@@ -566,7 +566,10 @@ void main() {
       await _fillSingleLine(tester, quantity: '2.50');
 
       await _openConfirmation(tester);
-      expect(find.text('PRD-COFFEE-001: 2.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 2.50 kg',
+      );
       await _confirm(tester);
 
       final Map<String, Object?> line =
@@ -605,11 +608,11 @@ void main() {
       );
 
       await _pickProduct(tester, 0, 'Café');
-      expect(find.text('Unidad: kg (precisión 2)'), findsOneWidget);
+      expect(find.text('Unidad: kg (decimales: 2)'), findsOneWidget);
       expect(find.text('Hasta 2 decimales.'), findsOneWidget);
 
       await _pickProduct(tester, 0, 'Cinta');
-      expect(find.text('Unidad: piece (precisión 0)'), findsOneWidget);
+      expect(find.text('Unidad: piece (decimales: 0)'), findsOneWidget);
       expect(find.text('Solo números enteros.'), findsOneWidget);
     });
 
@@ -694,7 +697,62 @@ void main() {
     });
   });
 
+  for (final dispose in [false, true]) {
+    testWidgets(
+      'stale transfer confirmation cannot submit after ${dispose ? 'disposal' : 'owner change'}',
+      (tester) async {
+        final harness = await _pump(tester);
+        await _fillSingleLine(tester);
+        await _openConfirmation(tester);
+        final staleConfirm = tester
+            .widget<FilledButton>(_key('transfer-confirm-ok'))
+            .onPressed!;
+        if (dispose) {
+          await _unmount(tester);
+        } else {
+          harness.owner = 'admin-2';
+          await tester.pumpWidget(harness.widget());
+        }
+        staleConfirm();
+        await tester.pumpAndSettle();
+        expect(_key('transfer-confirm-dialog'), findsNothing);
+        expect(harness.backend.invocations, 0);
+        expect(harness.completed, isEmpty);
+        if (!dispose) {
+          expect(
+            tester.widget<TextFormField>(_quantities().first).controller!.text,
+            isEmpty,
+          );
+          // The new owner can build a new draft with a new key.
+          await _fillSingleLine(tester);
+          await _openConfirmation(tester);
+          expect(harness.minted, ['key-1', 'key-2']);
+          await _confirm(tester);
+          harness.succeed();
+          await tester.pumpAndSettle();
+          expect(harness.backend.invocations, 1);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   group('confirmation freezes the payload', () {
+    testWidgets('falls back to the id only when the product name is unknown', (
+      WidgetTester tester,
+    ) async {
+      final _Harness harness = await _pump(tester);
+      await _fillSingleLine(tester, quantity: '2.50');
+      harness.products = <CatalogProduct>[_ribbon];
+      await _repump(tester, harness);
+      await _openConfirmation(tester);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'PRD-COFFEE-001: 2.50 kg',
+      );
+      expect(harness.backend.invocations, 0);
+    });
+
     testWidgets('shows one branch pair plus the frozen lines', (
       WidgetTester tester,
     ) async {
@@ -706,7 +764,10 @@ void main() {
       expect(_key('transfer-confirm-dialog'), findsOneWidget);
       expect(find.text('De: Norte'), findsOneWidget);
       expect(find.text('Para: Sur'), findsOneWidget);
-      expect(find.text('PRD-COFFEE-001: 2.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 2.50 kg',
+      );
       expect(harness.backend.invocations, 0);
     });
 
@@ -745,7 +806,10 @@ void main() {
 
       await _enter(tester, 0, '3.50');
       await _openConfirmation(tester);
-      expect(find.text('PRD-COFFEE-001: 3.50 kg'), findsOneWidget);
+      expect(
+        tester.widget<Text>(_key('transfer-confirm-line-0')).data,
+        'Café: 3.50 kg',
+      );
       await _confirm(tester);
 
       expect(harness.backend.invocations, 1);
@@ -1191,7 +1255,7 @@ void main() {
 
       expect(find.text('branch-gone'), findsWidgets);
       expect(find.text('PRD-GHOST-0001'), findsWidgets);
-      expect(find.text('Unidad: l (precisión 2)'), findsOneWidget);
+      expect(find.text('Unidad: l (decimales: 2)'), findsOneWidget);
       expect(
         tester.widget<TextFormField>(_quantities().first).controller!.text,
         '3.25',

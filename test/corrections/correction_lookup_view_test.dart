@@ -97,18 +97,13 @@ class _Backend {
 
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
 
-Future<void> _pump(
-  WidgetTester tester,
-  _Backend backend, {
-  VoidCallback? onClose,
-}) async {
+Future<void> _pump(WidgetTester tester, _Backend backend) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: CorrectionLookupView(
           corrections: backend.corrections,
           productNames: _names,
-          onClose: onClose ?? () {},
         ),
       ),
     ),
@@ -142,7 +137,6 @@ void main() {
           body: CorrectionLookupView(
             corrections: backend.corrections,
             productNames: _names,
-            onClose: () {},
           ),
         ),
       ),
@@ -415,11 +409,11 @@ void main() {
     );
   });
 
-  testWidgets('closing returns to the catalog', (WidgetTester tester) async {
-    int closes = 0;
-    await _pump(tester, _Backend(), onClose: () => closes += 1);
-    await _tap(tester, _key('corrections-close'));
-    expect(closes, 1);
+  testWidgets('lookup has no duplicate catalog return', (
+    WidgetTester tester,
+  ) async {
+    expect(_key('corrections-close'), findsNothing);
+    expect(find.text('Volver al catálogo'), findsNothing);
   });
 
   testWidgets(

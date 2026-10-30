@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../app/panel_layout.dart';
 import 'sale_draft.dart';
 import 'sale_format.dart';
 import 'sale_quote.dart';
@@ -10,7 +11,8 @@ import 'sale_quote.dart';
 // Ticket printing is deferred.
 
 /// The confirmed sale: folio, QR of the full sale ID, lines, totals, payment,
-/// invoice option, server time and branch, plus "Nueva venta".
+/// invoice option, server time and branch, plus the secondary "Nueva venta"
+/// action that acknowledges the receipt.
 class SaleReceiptView extends StatelessWidget {
   const SaleReceiptView({
     required this.receipt,
@@ -30,110 +32,143 @@ class SaleReceiptView extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String dateTime = formatSaleDateTime(receipt.createdAt.toLocal());
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                header: true,
-                liveRegion: true,
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      Icons.check_circle_outline,
-                      color: theme.colorScheme.primary,
+    return PanelLayout(
+      maxPrimaryWidth: 560,
+      context: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text('Folio', style: theme.textTheme.labelLarge),
+            Text(receipt.folio, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 12),
+            _detail('Sucursal', receipt.branchCode),
+            _detail('Fecha y hora', dateTime),
+            _detail('Método de pago', salePaymentLabel(receipt.paymentMethod)),
+            Text(
+              '${receipt.lines.length} ${receipt.lines.length == 1 ? 'producto' : 'productos'}',
+            ),
+            const Divider(),
+            _amountRow(
+              'Total',
+              formatMoney(receipt.totalCentavos),
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+      primary: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Semantics(
+                  header: true,
+                  liveRegion: true,
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.check_circle_outline,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Venta registrada',
+                          style: theme.textTheme.headlineSmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (notice case final String text) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    text,
+                    key: const ValueKey<String>('sale-receipt-notice'),
+                  ),
+                ],
+                if (receipt.replayed) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Venta repetida (ya registrada)',
+                    key: const ValueKey<String>('sale-receipt-replayed'),
+                    style: TextStyle(
+                      color: theme.colorScheme.tertiary,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Venta registrada',
-                        style: theme.textTheme.headlineSmall,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Text('Folio', style: theme.textTheme.labelLarge),
+                Semantics(
+                  label: 'Folio ${receipt.folio}',
+                  excludeSemantics: true,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      receipt.folio,
+                      key: const ValueKey<String>('sale-receipt-folio'),
+                      style: theme.textTheme.displaySmall?.copyWith(
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              if (notice case final String text) ...<Widget>[
-                const SizedBox(height: 8),
-                Text(text, key: const ValueKey<String>('sale-receipt-notice')),
-              ],
-              if (receipt.replayed) ...<Widget>[
-                const SizedBox(height: 8),
-                Text(
-                  'Venta repetida (ya registrada)',
-                  key: const ValueKey<String>('sale-receipt-replayed'),
-                  style: TextStyle(
-                    color: theme.colorScheme.tertiary,
-                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
-              const SizedBox(height: 16),
-              Text('Folio', style: theme.textTheme.labelLarge),
-              Semantics(
-                label: 'Folio ${receipt.folio}',
-                excludeSemantics: true,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerStart,
-                  child: Text(
-                    receipt.folio,
-                    key: const ValueKey<String>('sale-receipt-folio'),
-                    style: theme.textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                const SizedBox(height: 16),
+                Center(
+                  child: SaleReceiptQr(
+                    data: receipt.saleId,
+                    semanticsLabel: 'Código QR de la venta ${receipt.folio}',
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Center(
-                child: SaleReceiptQr(
-                  data: receipt.saleId,
-                  semanticsLabel: 'Código QR de la venta ${receipt.folio}',
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Divider(),
-              for (final SalePricedLine line in receipt.lines)
-                _ReceiptLine(line: line),
-              const Divider(),
-              _amountRow('Subtotal', formatMoney(receipt.baseCentavos)),
-              if (receipt.additionalIvaCentavos > 0)
+                const SizedBox(height: 16),
+                const Divider(),
+                for (final SalePricedLine line in receipt.lines)
+                  _ReceiptLine(line: line),
+                const Divider(),
+                _amountRow('Subtotal', formatMoney(receipt.baseCentavos)),
+                if (receipt.additionalIvaCentavos > 0)
+                  _amountRow(
+                    'IVA adicional',
+                    formatMoney(receipt.additionalIvaCentavos),
+                  ),
                 _amountRow(
-                  'IVA adicional',
-                  formatMoney(receipt.additionalIvaCentavos),
+                  'Total',
+                  formatMoney(receipt.totalCentavos),
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              _amountRow(
-                'Total',
-                formatMoney(receipt.totalCentavos),
-                style: theme.textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              _detail(
-                'Método de pago',
-                salePaymentLabel(receipt.paymentMethod),
-              ),
-              _detail(
-                'Factura',
-                receipt.invoiceRequested ? 'Con factura' : 'Sin factura',
-              ),
-              _detail('Fecha y hora', dateTime),
-              _detail('Sucursal', receipt.branchCode),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                key: const ValueKey<String>('sale-receipt-new'),
-                onPressed: onNewSale,
-                icon: const Icon(Icons.add_shopping_cart_outlined),
-                label: const Text(
-                  'Nueva venta',
-                  semanticsLabel: 'Iniciar una nueva venta',
+                const SizedBox(height: 12),
+                _detail(
+                  'Método de pago',
+                  salePaymentLabel(receipt.paymentMethod),
                 ),
-              ),
-            ],
+                _detail(
+                  'Factura',
+                  receipt.invoiceRequested ? 'Con factura' : 'Sin factura',
+                ),
+                _detail('Fecha y hora', dateTime),
+                _detail('Sucursal', receipt.branchCode),
+                const SizedBox(height: 24),
+                FilledButton.tonalIcon(
+                  key: const ValueKey<String>('sale-receipt-new'),
+                  onPressed: onNewSale,
+                  icon: const Icon(Icons.add_shopping_cart_outlined),
+                  label: const Text(
+                    'Nueva venta',
+                    semanticsLabel: 'Iniciar una nueva venta',
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

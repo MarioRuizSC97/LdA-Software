@@ -64,6 +64,34 @@ Widget _page(
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
 
 void main() {
+  for (final double width in <double>[400, 1400]) {
+    for (final bool withCorrections in <bool>[true, false]) {
+      testWidgets('seller side panel corrections: controller=$withCorrections, '
+          'width=$width', (WidgetTester tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          _page(
+            _seller,
+            corrections: withCorrections ? _corrections : null,
+            withCheckout: false,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(_key('shell-more'));
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(
+            of: _key('app-side-panel'),
+            matching: find.text('Correcciones'),
+          ),
+          withCorrections ? findsOneWidget : findsNothing,
+        );
+      });
+    }
+  }
+
   testWidgets('administrators never get the entry, even if handed one', (
     WidgetTester tester,
   ) async {
@@ -90,7 +118,9 @@ void main() {
       isNull,
     );
 
-    await tester.tap(_key('corrections-close'));
+    expect(_key('corrections-close'), findsNothing);
+    expect(find.text('Volver al catálogo'), findsNothing);
+    await tester.tap(_key('panel-back'));
     await tester.pumpAndSettle();
     expect(_key('correction-folio'), findsNothing);
     expect(_key('sale-cart-button'), findsOneWidget);

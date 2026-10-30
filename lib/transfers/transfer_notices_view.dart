@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:lda_inventory/app/panel_layout.dart';
 import 'package:lda_inventory/movements/inventory_movement.dart';
+import 'package:lda_inventory/sales/sale_format.dart';
 import 'package:lda_inventory/transfers/transfer_notice.dart';
 import 'package:lda_inventory/transfers/transfer_notice_controller.dart';
 
@@ -14,7 +16,6 @@ class TransferNoticesView extends StatelessWidget {
     required this.state,
     required this.productNames,
     required this.onMarkRead,
-    required this.onClose,
     this.onRetry,
     super.key,
   });
@@ -22,42 +23,43 @@ class TransferNoticesView extends StatelessWidget {
   final TransferNoticeState state;
   final Map<String, String> productNames;
   final ValueChanged<String> onMarkRead;
-  final VoidCallback onClose;
   final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return Column(
-      children: <Widget>[
-        Semantics(
-          header: true,
-          child: Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      'Avisos de traslados',
-                      style: theme.textTheme.titleLarge,
+    return PanelLayout(
+      context: _NoticesSummary(state: state),
+      primary: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: Column(
+            children: <Widget>[
+              Semantics(
+                header: true,
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            'Avisos de traslados',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  IconButton(
-                    key: const ValueKey<String>('notices-close'),
-                    tooltip: 'Cerrar bandeja de avisos',
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
+                ),
               ),
-            ),
+              const Divider(height: 1),
+              Expanded(child: _body(context)),
+            ],
           ),
         ),
-        const Divider(height: 1),
-        Expanded(child: _body(context)),
-      ],
+      ),
     );
   }
 
@@ -73,6 +75,42 @@ class TransferNoticesView extends StatelessWidget {
         onMarkRead: onMarkRead,
       ),
     };
+  }
+}
+
+/// Wide-only rail: unread and read counts, never a guessed zero while the
+/// book is loading or failed.
+class _NoticesSummary extends StatelessWidget {
+  const _NoticesSummary({required this.state});
+
+  final TransferNoticeState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final int? unread = state.unreadCount;
+    return Card(
+      key: const ValueKey<String>('notices-context'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Resumen', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (unread == null)
+              const Text('Resumen no disponible')
+            else if (state.notices.isEmpty)
+              const Text('Sin avisos por revisar')
+            else ...<Widget>[
+              Text('Sin leer: $unread', style: theme.textTheme.titleSmall),
+              Text('Leídos: ${state.notices.length - unread}'),
+              Text('Total: ${state.notices.length}'),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -127,16 +165,30 @@ class _EmptyBody extends StatelessWidget {
   const _EmptyBody();
 
   @override
-  Widget build(BuildContext context) => const Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Icon(Icons.inbox_outlined, size: 40),
-        SizedBox(height: 16),
-        Text('Sin avisos de traslados'),
-        SizedBox(height: 8),
-        Text('Cuando te envíen un traslado, aparecerá aquí.'),
-      ],
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(Icons.inbox_outlined, size: 40),
+          const SizedBox(height: 16),
+          Text(
+            'Sin avisos de traslados',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Cuando te envíen un traslado, aparecerá aquí.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -201,7 +253,7 @@ class _NoticeCard extends StatelessWidget {
     return Semantics(
       container: true,
       label:
-          'Traslado ${notice.transferId}, '
+          'Traslado del ${formatSaleDateTime(notice.occurredAt.toLocal())}, '
           '${isRead ? 'leído' : 'sin leer'}',
       child: Card(
         margin: EdgeInsets.zero,
@@ -214,7 +266,7 @@ class _NoticeCard extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      'Traslado ${notice.transferId}',
+                      'Traslado del ${formatSaleDateTime(notice.occurredAt.toLocal())}',
                       style: theme.textTheme.titleSmall,
                       softWrap: true,
                     ),
@@ -232,9 +284,21 @@ class _NoticeCard extends StatelessWidget {
               for (final TransferNoticeLine line in notice.lines)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${productNames[line.productId] ?? line.productId}: '
-                    '${formatSignedQuantity(line.quantityScaled, line.precision, line.unit)}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '${productNames[line.productId] ?? 'Producto no disponible'}: '
+                        '${formatSignedQuantity(line.quantityScaled, line.precision, line.unit)}',
+                      ),
+                      if (!productNames.containsKey(line.productId))
+                        Text(
+                          'código ${line.productId}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               const SizedBox(height: 8),

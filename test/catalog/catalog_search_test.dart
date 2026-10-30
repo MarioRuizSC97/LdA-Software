@@ -79,6 +79,9 @@ String _searchFieldValue(WidgetTester tester) {
 Future<void> _type(WidgetTester tester, String value) async {
   await tester.enterText(_searchField(), value);
   await tester.pumpAndSettle();
+  // These T6 assertions inspect the filtered grid after leaving focus mode.
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -155,7 +158,7 @@ void main() {
   });
 
   group('catalog search field', () {
-    testWidgets('is offered above the product list with an accessible label', (
+    testWidgets('is offered above the product list with an accessible hint', (
       WidgetTester tester,
     ) async {
       final SemanticsHandle semantics = tester.ensureSemantics();
@@ -165,9 +168,9 @@ void main() {
 
       expect(_searchField(), findsOneWidget);
       expect(
-        find.bySemanticsLabel(catalogSearchLabel),
+        find.bySemanticsLabel('Nombre o código'),
         findsOneWidget,
-        reason: 'the search input must be announced by its visible label',
+        reason: 'the hint must name the search input without a redundant label',
       );
       expect(_clearButton(), findsNothing);
 

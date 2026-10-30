@@ -1,8 +1,14 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
+import '../app/panel_layout.dart';
+import '../app/primary_action_style.dart';
+import '../app/privacy_curtain.dart';
 import '../catalog/catalog_product.dart';
 import '../catalog/catalog_stock.dart';
 import '../firebase/emulator_transfer_gateway.dart';
+import '../sales/sale_format.dart' show formatScaledQuantity;
 import 'transfer_draft.dart';
 
 /// Mints the stable idempotency key for a fresh transfer.
@@ -53,7 +59,7 @@ String _reasonMessage(TransferValidationReason reason) => switch (reason) {
     'Cada producto solo puede aparecer una vez.',
   TransferValidationReason.product => 'El código del producto no es válido.',
   TransferValidationReason.specification =>
-    'La unidad o la precisión del producto no es válida.',
+    'La unidad o los decimales del producto no son válidos.',
   TransferValidationReason.quantity =>
     'La cantidad debe ser un número positivo escrito con punto decimal.',
   TransferValidationReason.quantityRange => 'La cantidad es demasiado grande.',
@@ -73,6 +79,25 @@ const Map<String, String> _rejectionMessages = <String, String>{
 };
 
 const String _unknownRejectionText = 'No se pudo registrar el traslado.';
+
+/// The quantity in scaled integer units, or null while it is not a plain
+/// decimal that fits [precision].
+BigInt? _scaleQuantity(String text, int precision) {
+  final RegExpMatch? match = RegExp(r'^(\d+)(?:\.(\d+))?$').firstMatch(text);
+  if (match == null) return null;
+  final String fraction = match.group(2) ?? '';
+  if (fraction.length > precision) return null;
+  return BigInt.parse('${match.group(1)}${fraction.padRight(precision, '0')}');
+}
+
+String _formatTotal(BigInt scaled, int precision, String unit) {
+  final String digits = scaled.toString().padLeft(precision + 1, '0');
+  final int split = digits.length - precision;
+  final String number = precision == 0
+      ? digits
+      : '${digits.substring(0, split)}.${digits.substring(split)}';
+  return '$number $unit';
+}
 
 /// One editable line. The identifier keeps widget and controller identity
 /// stable while other rows are added or removed.
@@ -105,11 +130,15 @@ class AdministratorTransferForm extends StatefulWidget {
     required this.onCompleted,
     this.createTransferId = createTransferUuidV4,
     this.initialSourceBranchId,
+    this.holdingsByProduct,
   });
 
   final String ownerUserId;
   final List<CatalogBranchChoice> branches;
   final List<CatalogProduct> products;
+
+  /// Loaded catalog holdings, keyed by product code; null means unavailable.
+  final Map<String, List<CatalogHolding>>? holdingsByProduct;
   final TransferSubmit submitTransfer;
   final TransferDraftLookup unresolvedDraft;
   final VoidCallback onClose;
@@ -123,6 +152,7 @@ class AdministratorTransferForm extends StatefulWidget {
 }
 
 class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
+  final PrivacyCurtain _privacy = PrivacyCurtain();
   final List<_LineRow> _rows = <_LineRow>[];
 
   int _nextRowId = 0;
@@ -141,6 +171,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
   @override
   void initState() {
     super.initState();
+    _privacy.bind(widget.ownerUserId);
     // A retained operation is resumed, never replaced: no key is minted while
     // the shell still holds an unresolved payload.
     final TransferDraft? stored = widget.unresolvedDraft();
@@ -158,6 +189,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ownerUserId != widget.ownerUserId) {
       // A different owner must never inherit or report the previous payload.
+      _privacy.bind(widget.ownerUserId);
       _generation += 1;
       _resetEditing();
       _sessionLost = false;
@@ -171,6 +203,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
 
   @override
   void dispose() {
+    _privacy.invalidate();
     _generation += 1;
     for (final _LineRow row in _rows) {
       row.quantity.dispose();
@@ -182,6 +215,16 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     for (final CatalogBranchChoice choice in widget.branches)
       choice.branchId: choice.branchName,
   };
+
+  CatalogHolding? _sourceHolding(String productId, String sourceBranchId) =>
+      (widget.holdingsByProduct?[productId] ?? const <CatalogHolding>[])
+          .where((CatalogHolding value) => value.branchId == sourceBranchId)
+          .firstOrNull;
+
+  String _formatStock(CatalogHolding? holding, QuantitySpec spec) =>
+      holding == null
+      ? 'Sin entrada registrada'
+      : '${formatScaledQuantity(holding.quantityScaled, spec.precision)} ${spec.unit}';
 
   Map<String, CatalogProduct> get _productIndex => <String, CatalogProduct>{
     for (final CatalogProduct product in widget.products)
@@ -328,18 +371,42 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
       _error = null;
     });
     final int generation = _generation;
+    final token = _privacy.token;
     bool answered = false;
-    final TransferDraft? confirmed = await showDialog<TransferDraft>(
+    final TransferDraft? confirmed = await showCurtainedDialog<TransferDraft>(
       context: context,
+      curtain: _privacy,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) => _confirmationDialog(
-        draft,
-        dialogContext,
-        () => answered,
-        () => answered = true,
+      barrierColor: Colors.transparent,
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
+      pageBuilder: (BuildContext dialogContext, _, _) => Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                child: ColoredBox(
+                  color: Theme.of(dialogContext).colorScheme.scrim
+                      .withValues(alpha: 0.32),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: _confirmationDialog(
+              draft,
+              dialogContext,
+              () => answered || !_privacy.isCurrent(token),
+              () => answered = true,
+            ),
+          ),
+        ],
       ),
     );
-    final bool stale = !mounted || generation != _generation;
+    final bool stale =
+        !mounted || generation != _generation || !_privacy.isCurrent(token);
     if (!stale) {
       setState(() {
         _dialogOpen = false;
@@ -476,142 +543,223 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
   Widget build(BuildContext context) {
     final bool tooFewBranches = widget.branches.length < 2;
     final bool noProducts = widget.products.isEmpty;
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        20,
-        20,
-        20 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          key: const ValueKey<String>('transfer-content'),
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Semantics(
-                key: const ValueKey<String>('transfer-header-semantics'),
-                header: true,
-                child: Text(
-                  _headerText,
-                  key: const ValueKey<String>('transfer-header'),
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-              ),
-              if (tooFewBranches)
-                _notice(_emptyBranchesText, 'transfer-empty-branches'),
-              if (noProducts)
-                _notice(_emptyProductsText, 'transfer-empty-products'),
-              const SizedBox(height: 16),
-              _branchField(
-                keyName: 'transfer-source',
-                label: 'Sucursal de origen',
-                value: _sourceBranchId,
-                onChanged: _canStartNew ? _changeSource : null,
-              ),
-              const SizedBox(height: 12),
-              _branchField(
-                keyName: 'transfer-destination',
-                label: 'Sucursal de destino',
-                value: _destinationBranchId,
-                onChanged: _canStartNew ? _changeDestination : null,
-              ),
-              const SizedBox(height: 16),
-              for (final _LineRow row in _rows) _lineRow(row),
-              const SizedBox(height: 8),
-              Text(
-                'Productos: ${_rows.length} de $transferLineLimit',
-                key: const ValueKey<String>('transfer-line-counter'),
-              ),
-              if (_rows.length >= transferLineLimit)
-                _notice(_tooManyLinesText, 'transfer-max-lines'),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                key: const ValueKey<String>('transfer-add-line'),
-                onPressed:
-                    _canStartNew &&
-                        _rows.length < transferLineLimit &&
-                        _rows.length < widget.products.length
-                    ? _addRow
-                    : null,
-                icon: const Icon(Icons.add),
-                label: const Text('Agregar producto'),
-              ),
-              const SizedBox(height: 16),
-              Semantics(
-                key: const ValueKey<String>('transfer-notice-semantics'),
-                liveRegion: true,
-                child: Text(
-                  _stockNoticeText,
-                  key: const ValueKey<String>('transfer-notice'),
-                ),
-              ),
-              if (_banner case final String banner) ...<Widget>[
-                const SizedBox(height: 12),
+    return PanelLayout(
+      context: _summary(context),
+      primary: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          20,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            key: const ValueKey<String>('transfer-content'),
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
                 Semantics(
-                  key: const ValueKey<String>('transfer-banner-semantics'),
+                  key: const ValueKey<String>('transfer-header-semantics'),
+                  header: true,
+                  child: Text(
+                    _headerText,
+                    key: const ValueKey<String>('transfer-header'),
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                if (tooFewBranches)
+                  _notice(_emptyBranchesText, 'transfer-empty-branches'),
+                if (noProducts)
+                  _notice(_emptyProductsText, 'transfer-empty-products'),
+                const SizedBox(height: 16),
+                _branchField(
+                  keyName: 'transfer-source',
+                  label: 'Sucursal de origen',
+                  value: _sourceBranchId,
+                  onChanged: _canStartNew ? _changeSource : null,
+                ),
+                const SizedBox(height: 12),
+                _branchField(
+                  keyName: 'transfer-destination',
+                  label: 'Sucursal de destino',
+                  value: _destinationBranchId,
+                  onChanged: _canStartNew ? _changeDestination : null,
+                ),
+                const SizedBox(height: 16),
+                for (final _LineRow row in _rows) _lineRow(row),
+                const SizedBox(height: 8),
+                Text(
+                  'Productos: ${_rows.length} de $transferLineLimit',
+                  key: const ValueKey<String>('transfer-line-counter'),
+                ),
+                if (_rows.length >= transferLineLimit)
+                  _notice(_tooManyLinesText, 'transfer-max-lines'),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  key: const ValueKey<String>('transfer-add-line'),
+                  onPressed:
+                      _canStartNew &&
+                          _rows.length < transferLineLimit &&
+                          _rows.length < widget.products.length
+                      ? _addRow
+                      : null,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Agregar producto'),
+                ),
+                const SizedBox(height: 16),
+                Semantics(
+                  key: const ValueKey<String>('transfer-notice-semantics'),
                   liveRegion: true,
-                  label: 'Resultado del traslado',
-                  child: ExcludeSemantics(
-                    child: Text(
-                      banner,
-                      key: const ValueKey<String>('transfer-banner'),
+                  child: Text(
+                    _stockNoticeText,
+                    key: const ValueKey<String>('transfer-notice'),
+                  ),
+                ),
+                if (_banner case final String banner) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    key: const ValueKey<String>('transfer-banner-semantics'),
+                    liveRegion: true,
+                    label: 'Resultado del traslado',
+                    child: ExcludeSemantics(
+                      child: Text(
+                        banner,
+                        key: const ValueKey<String>('transfer-banner'),
+                      ),
                     ),
                   ),
-                ),
-              ],
-              if (_uncertain) ...<Widget>[
-                const SizedBox(height: 12),
-                _region(
-                  keyName: 'transfer-uncertain',
-                  semanticsKey: 'transfer-uncertain-region',
-                  label: 'Resultado del traslado sin confirmar',
-                  message: _uncertainText,
-                ),
-              ],
-              if (_error case final String message) ...<Widget>[
-                const SizedBox(height: 12),
-                _region(
-                  keyName: 'transfer-error',
-                  semanticsKey: 'transfer-error-region',
-                  label: 'Error del traslado',
-                  message: message,
-                ),
-              ],
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: <Widget>[
-                  FilledButton(
-                    key: const ValueKey<String>('transfer-submit'),
-                    onPressed: _canSubmit ? _onSubmit : null,
-                    child: _pending
-                        ? Semantics(
-                            key: const ValueKey<String>('transfer-spinner'),
-                            liveRegion: true,
-                            label: 'Procesando el envío del traslado',
-                            child: const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Text(
-                            _uncertain
-                                ? 'Reintentar mismo envío'
-                                : 'Registrar traslado',
-                          ),
-                  ),
-                  OutlinedButton(
-                    key: const ValueKey<String>('transfer-close'),
-                    onPressed: _pending || _dialogOpen ? null : widget.onClose,
-                    child: const Text('Cerrar'),
+                ],
+                if (_uncertain) ...<Widget>[
+                  const SizedBox(height: 12),
+                  _region(
+                    keyName: 'transfer-uncertain',
+                    semanticsKey: 'transfer-uncertain-region',
+                    label: 'Resultado del traslado sin confirmar',
+                    message: _uncertainText,
                   ),
                 ],
-              ),
-            ],
+                if (_error case final String message) ...<Widget>[
+                  const SizedBox(height: 12),
+                  _region(
+                    keyName: 'transfer-error',
+                    semanticsKey: 'transfer-error-region',
+                    label: 'Error del traslado',
+                    message: message,
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    FilledButton(
+                      style: primaryActionStyle(context),
+                      key: const ValueKey<String>('transfer-submit'),
+                      onPressed: _canSubmit ? _onSubmit : null,
+                      child: _pending
+                          ? Semantics(
+                              key: const ValueKey<String>('transfer-spinner'),
+                              liveRegion: true,
+                              label: 'Procesando el envío del traslado',
+                              child: const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : Text(
+                              _uncertain
+                                  ? 'Reintentar mismo envío'
+                                  : 'Registrar traslado',
+                            ),
+                    ),
+                    FilledButton.tonal(
+                      key: const ValueKey<String>('transfer-close'),
+                      onPressed: _pending || _dialogOpen
+                          ? null
+                          : widget.onClose,
+                      child: const Text('Cerrar'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Wide-only rail: a running summary of the current draft.
+  Widget _summary(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Map<String, String> names = _branchNames;
+    String branch(String? id) =>
+        id == null ? 'Sin seleccionar' : (names[id] ?? id);
+    final Map<String, CatalogProduct> products = _productIndex;
+    // Totals per product, in scaled integers so decimals never drift.
+    final Map<String, (BigInt, QuantitySpec)> totals =
+        <String, (BigInt, QuantitySpec)>{};
+    for (final _LineRow row in _rows) {
+      final QuantitySpec? spec = row.spec;
+      final BigInt? scaled = spec == null
+          ? null
+          : _scaleQuantity(row.quantity.text, spec.precision);
+      final String? productId = row.productId;
+      if (productId == null || spec == null || scaled == null) continue;
+      final (BigInt, QuantitySpec) current =
+          totals[productId] ?? (BigInt.zero, spec);
+      totals[productId] = (current.$1 + scaled, spec);
+    }
+    final Map<String, List<CatalogHolding>>? holdings =
+        widget.holdingsByProduct;
+    final Set<String> selectedProducts = <String>{
+      for (final _LineRow row in _rows)
+        if (row.productId != null && products.containsKey(row.productId))
+          row.productId!,
+    };
+    final List<String> stockLines = <String>[];
+    if (holdings != null && _sourceBranchId != null) {
+      for (final String productId in selectedProducts) {
+        final CatalogProduct product = products[productId]!;
+        final CatalogHolding? holding = _sourceHolding(
+          productId,
+          _sourceBranchId!,
+        );
+        final String stock = _formatStock(holding, product.quantitySpec);
+        stockLines.add('${product.name}: $stock');
+      }
+    }
+    return Card(
+      key: const ValueKey<String>('transfer-context'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Resumen del traslado', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text('Origen: ${branch(_sourceBranchId)}'),
+            Text('Destino: ${branch(_destinationBranchId)}'),
+            Text('Productos: ${_rows.length}'),
+            for (final MapEntry<String, (BigInt, QuantitySpec)> entry
+                in totals.entries)
+              Text(
+                '${products[entry.key]?.name ?? entry.key}: '
+                '${_formatTotal(entry.value.$1, entry.value.$2.precision, entry.value.$2.unit)}',
+              ),
+            if (stockLines.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 16),
+              Text(
+                'Existencias en sucursal origen',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              for (final String line in stockLines) Text(line),
+            ],
+          ],
         ),
       ),
     );
@@ -677,8 +825,13 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     }
     final QuantitySpec? spec = row.spec;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -703,7 +856,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           Text(
             spec == null
                 ? 'Selecciona un producto para ver la unidad.'
-                : 'Unidad: ${spec.unit} (precisión ${spec.precision})',
+                : 'Unidad: ${spec.unit} (decimales: ${spec.precision})',
             key: ValueKey<String>('transfer-unit-${row.id}'),
           ),
           const SizedBox(height: 4),
@@ -720,9 +873,8 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
                   ? 'Solo números enteros.'
                   : 'Hasta ${spec.precision} decimales.',
             ),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
+            // Every keystroke rebuilds so the wide summary stays current.
+            onChanged: (_) => setState(() => _error = null),
           ),
           if (!_frozen && _rows.length > 1)
             Align(
@@ -746,6 +898,26 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
     void Function() markAnswered,
   ) {
     final Map<String, String> names = _branchNames;
+    final Map<String, CatalogProduct> products = _productIndex;
+    final bool hasHoldings = widget.holdingsByProduct != null;
+    final List<String> stockSuffixes = <String>[];
+    final List<String> stockWarnings = <String>[];
+    for (final TransferLine line in draft.lines) {
+      if (!hasHoldings) {
+        stockSuffixes.add('');
+        continue;
+      }
+      final CatalogHolding? holding = _sourceHolding(
+        line.productId,
+        draft.sourceBranchId,
+      );
+      final QuantitySpec spec =
+          products[line.productId]?.quantitySpec ?? line.quantitySpec;
+      stockSuffixes.add(' · Origen: ${_formatStock(holding, spec)}');
+      if (holding == null || line.quantityScaled > holding.quantityScaled) {
+        stockWarnings.add(products[line.productId]?.name ?? line.productId);
+      }
+    }
     return AlertDialog(
       key: const ValueKey<String>('transfer-confirm-dialog'),
       title: const Text('Confirmar traslado'),
@@ -765,10 +937,18 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
             const SizedBox(height: 12),
             for (int index = 0; index < draft.lines.length; index += 1)
               Text(
-                '${draft.lines[index].productId}: ${draft.lines[index].quantity} '
-                '${draft.lines[index].quantitySpec.unit}',
+                '${products[draft.lines[index].productId]?.name ?? draft.lines[index].productId}: ${draft.lines[index].quantity} '
+                '${draft.lines[index].quantitySpec.unit}${stockSuffixes[index]}',
                 key: ValueKey<String>('transfer-confirm-line-$index'),
               ),
+            if (stockWarnings.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Text(
+                'Revisa las existencias en origen de: ${stockWarnings.join(', ')}. '
+                'La cantidad supera lo registrado o no hay entrada registrada. '
+                'Puedes continuar con el envío.',
+              ),
+            ],
           ],
         ),
       ),
@@ -783,6 +963,7 @@ class _AdministratorTransferFormState extends State<AdministratorTransferForm> {
           child: const Text('Cancelar'),
         ),
         FilledButton(
+          style: primaryActionStyle(dialogContext),
           key: const ValueKey<String>('transfer-confirm-ok'),
           onPressed: () {
             if (isAnswered()) return;

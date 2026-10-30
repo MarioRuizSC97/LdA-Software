@@ -28,7 +28,6 @@ Future<void> _pumpLookup(WidgetTester tester, FakeCorrections backend) async {
         body: CorrectionLookupView(
           corrections: backend.corrections,
           productNames: _names,
-          onClose: () {},
         ),
       ),
     ),

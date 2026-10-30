@@ -56,6 +56,12 @@ Widget _page(
 
 Finder _key(String value) => find.byKey(ValueKey<String>(value));
 
+// Wide rails repeat summary data; these checks target the original body.
+Finder _primaryText(String text) => find.descendant(
+  of: find.byType(SingleChildScrollView).first,
+  matching: find.text(text),
+);
+
 Future<void> _tap(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
@@ -101,7 +107,10 @@ void main() {
     expect(_key('sale-add-DEMO-PIN'), findsOneWidget);
     expect(find.text('Agregar'), findsNWidgets(2));
     expect(_key('sale-cart-button'), findsOneWidget);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(
       find.bySemanticsLabel(RegExp('^Agregar Ribbon al carrito')),
       findsOneWidget,
@@ -187,11 +196,11 @@ void main() {
         <String, Object?>{'productId': 'DEMO-RIBBON', 'quantity': '2.5'},
       ],
     });
-    expect(find.textContaining('1 producto · 25.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2.50 meter · 25.00 MXN'), findsOneWidget);
 
     await _openCart(tester);
     expect(_key('sale-line-DEMO-RIBBON'), findsOneWidget);
-    expect(find.text('Ribbon'), findsOneWidget);
+    expect(_primaryText('Ribbon'), findsOneWidget);
     expect(find.text('2.50 meter'), findsOneWidget);
     expect(find.text('25.00 MXN'), findsWidgets);
     expect(_enabled(tester, _key('sale-charge')), isTrue);
@@ -261,7 +270,7 @@ void main() {
     expect(sales.quotedCarts, hasLength(3));
     expect(sales.quotedCarts.last.lineCount, 1);
     expect(sales.quotedCarts.last.lines.single.quantity, '4');
-    expect(find.textContaining('1 producto · 10.00 MXN'), findsOneWidget);
+    expect(find.textContaining('4 piece · 10.00 MXN'), findsOneWidget);
   });
 
   testWidgets('the panel edits and removes lines, re-quoting each time', (
@@ -379,7 +388,7 @@ void main() {
     expect(sales.quotedCarts, hasLength(3));
     expect(sales.quotedCarts.last.invoiceRequested, isTrue);
     expect(find.textContaining('29.00 MXN'), findsWidgets);
-    expect(find.text('IVA adicional'), findsOneWidget);
+    expect(_primaryText('IVA adicional'), findsOneWidget);
 
     await _tap(tester, _key('sale-invoice-switch'));
     expect(sales.quotedCarts, hasLength(4));
@@ -412,7 +421,8 @@ void main() {
       ),
     );
     await _tap(tester, _key('sale-invoice-switch'));
-    expect(find.textContaining('product has no price'), findsOneWidget);
+    expect(find.text(saleMissingPriceMessage), findsOneWidget);
+    expect(find.textContaining('product has no price'), findsNothing);
     expect(_enabled(tester, _key('sale-charge')), isFalse);
   });
 
@@ -445,8 +455,8 @@ void main() {
       tester.widget<Text>(_key('sale-receipt-folio')).data,
       'NTE-3F2A-9C1B',
     );
-    expect(find.text('36.50 MXN'), findsOneWidget);
-    expect(find.text('Tarjeta'), findsOneWidget);
+    expect(_primaryText('36.50 MXN'), findsOneWidget);
+    expect(_primaryText('Tarjeta'), findsOneWidget);
     expect(find.text('Con factura'), findsOneWidget);
     expect(_key('sale-cart-button'), findsNothing);
     expect(_key('sale-add-DEMO-RIBBON'), findsNothing);
@@ -455,7 +465,10 @@ void main() {
 
     await _tap(tester, _key('sale-receipt-new'));
     expect(_key('sale-receipt-folio'), findsNothing);
-    expect(find.textContaining('Carrito vacío'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+      findsOneWidget,
+    );
     expect(_key('sale-add-DEMO-RIBBON'), findsOneWidget);
     expect(completed, hasLength(1));
   });
@@ -531,10 +544,7 @@ void main() {
     sales.holdQuotes = true;
     await _tap(tester, _key('sale-charge'));
 
-    expect(
-      find.text('La venta fue rechazada: product does not exist'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
     expect(sales.quotedCarts, hasLength(3));
     expect(_enabled(tester, _key('sale-charge')), isFalse);
     expect(_enabled(tester, _key('sale-line-remove-DEMO-PIN')), isTrue);
@@ -542,10 +552,7 @@ void main() {
     sales.heldQuotes.single.complete(sales.quoteNow(sales.quotedCarts.last));
     await tester.pumpAndSettle();
     expect(_enabled(tester, _key('sale-charge')), isTrue);
-    expect(
-      find.text('La venta fue rechazada: product does not exist'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
   });
 
   testWidgets('the English mismatch text without a reason is a plain '
@@ -567,10 +574,7 @@ void main() {
       find.text('El total cambió. Revisa el nuevo total y vuelve a cobrar.'),
       findsNothing,
     );
-    expect(
-      find.text('La venta fue rechazada: $paymentMismatchMessage'),
-      findsOneWidget,
-    );
+    expect(find.text(saleRejectedMessage), findsOneWidget);
     expect(sales.quotedCarts, hasLength(3));
   });
 
@@ -635,7 +639,7 @@ void main() {
 
     await tester.pumpWidget(_page(sales));
     await tester.pumpAndSettle();
-    expect(find.textContaining('1 producto · 5.00 MXN'), findsOneWidget);
+    expect(find.textContaining('2 piece · 5.00 MXN'), findsOneWidget);
     // T11/S11: the in-cart product shows the (locked) stepper, not 'Agregar'.
     expect(_key('sale-add-DEMO-PIN'), findsNothing);
     expect(_enabled(tester, _key('sale-line-increment-DEMO-PIN')), isFalse);
@@ -818,7 +822,10 @@ void main() {
       await _tap(tester, _key('sale-receipt-new'));
       expect(_key('sale-receipt-folio'), findsNothing);
       expect(sales.store.completedFor('seller-north', 'branch-north'), isNull);
-      expect(find.textContaining('Carrito vacío'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Abrir carrito. Carrito vacío'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('opening the cart or charging shows a receipt that landed '
