@@ -31,6 +31,56 @@ class EmulatorSessionConnectionException implements Exception {
   const EmulatorSessionConnectionException();
 }
 
+/// Why a sign-in attempt failed, when the cause has its own remedy.
+///
+/// A sealed type so the login screen explains the specific case instead of
+/// falling back to the generic connection message.
+sealed class LoginFailure implements Exception {
+  const LoginFailure();
+}
+
+/// The server password policy refuses this password until it is replaced.
+final class PasswordChangeRequiredFailure extends LoginFailure {
+  const PasswordChangeRequiredFailure();
+}
+
+/// Too many attempts in a short time; waiting is the remedy.
+final class TooManyAttemptsFailure extends LoginFailure {
+  const TooManyAttemptsFailure();
+}
+
+/// The proposed new password does not meet the server policy.
+final class WeakPasswordFailure extends LoginFailure {
+  const WeakPasswordFailure();
+}
+
+/// Anything else: network, misconfiguration or an unexpected SDK error.
+final class LoginConnectionFailure extends LoginFailure {
+  const LoginConnectionFailure();
+}
+
+/// Maps a Firebase Auth error code to the failure the UI can explain.
+LoginFailure classifyLoginFailure(String code) => switch (code) {
+  'password-login-requires-password-change' =>
+    const PasswordChangeRequiredFailure(),
+  'too-many-requests' => const TooManyAttemptsFailure(),
+  'weak-password' => const WeakPasswordFailure(),
+  _ => const LoginConnectionFailure(),
+};
+
+/// The Spanish explanation for [failure].
+String loginFailureText(LoginFailure failure) => switch (failure) {
+  PasswordChangeRequiredFailure() =>
+    'Tu contraseña debe actualizarse. Usa «¿Olvidaste tu contraseña?» '
+        'para crear una nueva.',
+  TooManyAttemptsFailure() =>
+    'Demasiados intentos. Espera unos minutos y vuelve a intentar.',
+  WeakPasswordFailure() =>
+    'La contraseña no cumple la política: usa al menos 10 caracteres.',
+  LoginConnectionFailure() =>
+    'No se pudo iniciar sesión. Revisa los datos y vuelve a intentar.',
+};
+
 abstract interface class EmulatorSessionGateway {
   Future<EmulatorSession?> restoreSession();
 
@@ -144,6 +194,13 @@ class FirebaseEmulatorSessionGateway implements EmulatorSessionGateway {
       final User? user = credential.user;
       if (user == null) throw const UntrustedSessionException();
       return await _validatedSession(user);
+    } on FirebaseAuthException catch (error) {
+      await _safeSignOut();
+      // These three codes have their own remedy, so the screen explains them
+      // instead of showing the generic connection message.
+      final LoginFailure failure = classifyLoginFailure(error.code);
+      if (failure is! LoginConnectionFailure) throw failure;
+      rethrow;
     } catch (_) {
       await _safeSignOut();
       rethrow;

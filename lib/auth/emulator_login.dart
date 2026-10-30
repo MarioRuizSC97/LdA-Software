@@ -1449,12 +1449,14 @@ class _LoginViewState extends State<_LoginView> {
         password: password,
       );
       if (mounted) widget.onAuthenticated(generation, session);
-    } catch (_) {
+    } catch (error) {
       if (!mounted || !widget.mayShowLoginFailure(generation)) return;
       setState(() {
         _submitting = false;
         _errorAttempt = generation;
-        _error = widget.environment.loginFailure;
+        _error = error is LoginFailure
+            ? loginFailureText(error)
+            : widget.environment.loginFailure;
       });
     }
   }
