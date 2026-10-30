@@ -35,6 +35,7 @@ change a password has no path except asking an administrator.
 - P3 · S3, D4 · reset action on the login screen · done («¿Olvidaste tu contraseña?»)
 - P4 · S5 · tests for P1-P3 · done (37 tests)
 - P5 · verification (analyze, suite), PR · suite 1986 passed + 1 skipped, analyze clean · PR pending
+- P6 · S2 · reachable from the wide bar, not only the side panel · 9795b33 · done (user report)
 
 ## Log
 
@@ -49,3 +50,10 @@ change a password has no path except asking an administrator.
   `AccountPasswordGateway`; the real Firebase gateway does, fakes do not, so existing tests are untouched. The reset
   action answers the same notice for success, unknown address and failure (anti-enumeration).
   Suite 1986 passed + 1 skipped (was 1957 + 1); analyze clean.
+- L4 (2026-10-30, user report): "el cambio de contraseña en web solo funciona mediante el menu ☰ pero no
+  debería aparecerme tambien de alguna forma en el header". Cause: the wide web/desktop bar has no side menu
+  (`menuActions = mobilePlatform || compactBar`), so a panel-only entry is unreachable there. Fix: the bar shows a
+  password icon beside the theme control; the panel keeps its entry. Test covers the wide bar, the compact panel and
+  the absence of both without a gateway. Native tests report Android by default, so the wide case sets
+  `debugDefaultTargetPlatformOverride` and resets it inside the test body (the framework checks it before tear-downs).
+  Suite 1989 passed + 1 skipped, analyze clean.
