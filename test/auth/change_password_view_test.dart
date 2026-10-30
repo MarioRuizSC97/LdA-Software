@@ -81,6 +81,45 @@ void main() {
     expect(gateway.changes, isEmpty);
   });
 
+  testWidgets(
+    'refuses two different new passwords without calling the gateway',
+    (WidgetTester tester) async {
+      final _RecordingGateway gateway = _RecordingGateway();
+      await tester.pumpWidget(_app(gateway));
+
+      await _fill(tester, repeat: 'otraClaveLarga1');
+      await tester.tap(find.text('Guardar contraseña'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Las dos contraseñas no coinciden.'), findsOneWidget);
+      expect(find.text('Contraseña actualizada.'), findsNothing);
+      expect(gateway.changes, isEmpty);
+    },
+  );
+
+  testWidgets('on a wide screen the form keeps the app column width', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(_RecordingGateway()));
+    await tester.pumpAndSettle();
+
+    final Finder column = find
+        .descendant(
+          of: find.byType(SingleChildScrollView),
+          matching: find.byType(ConstrainedBox),
+        )
+        .first;
+    final BoxConstraints constraints = tester
+        .widget<ConstrainedBox>(column)
+        .constraints;
+    expect(constraints.maxWidth, 560);
+    expect(find.text('Cambiar contraseña'), findsOneWidget);
+  });
+
   testWidgets('sends the change and confirms it', (WidgetTester tester) async {
     final _RecordingGateway gateway = _RecordingGateway();
     await tester.pumpWidget(_app(gateway));
