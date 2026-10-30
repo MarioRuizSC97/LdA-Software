@@ -34,6 +34,10 @@ Web camera scanning is evaluated only after the Hosting URL works.
 - D7. Blocking screen copy (Spanish): title «Actualización necesaria», body «Hay una versión nueva de LDA Inventory.
   Actualiza la app para continuar.» Web action «Recargar» reloads the page; mobile action «Abrir la tienda» opens the
   platform URL when present. The screen also shows the installed and the required version.
+- D9. Hosting step: serve `index.html`, `flutter_bootstrap.js`, `main.dart.js` and the other app files with
+  `Cache-Control: no-cache`, so «Recargar» always revalidates against the published build instead of a browser copy
+  (Firebase Hosting otherwise lets browsers cache up to an hour). The generated `flutter_service_worker.js` only
+  unregisters itself, so it caches nothing.
 - D8. The gate sits in front of the session gate in the connected modes (production and emulator), so both a restored
   session and the login screen are blocked; demo and offline modes are untouched.
 
@@ -73,3 +77,9 @@ Web camera scanning is evaluated only after the Hosting URL works.
   git status clean. Its only flag was the emulator's debug logs (firestore/firebase/storage-debug.log); they are
   gitignored, so no defect. url_launcher 6.3.3 points to the official flutter/packages repository (cached manifest).
   Native assess: medium, reviewDue false (under budget), so no native review.
+- L6 (2026-10-30, manual check on the local emulator `demo-lda-inventory`, production untouched): with
+  `appConfig/client` = minimumVersion 9.0.0 + androidUpdateUrl, a debug APK on the Huawei HBP-LX9 showed the block
+  (screenshot: title, 1.0.0 → 9.0.0, «Abrir la tienda») and the web build in Brave showed «Recargar». User, verbatim:
+  "Si papurri hace exactamente lo que mencionas en ambos casos". Cleanup: test document deleted (anonymous get 404),
+  adb reverse removed, test web stopped, production APK (main a2842c7, sha256 74d2d171…) reinstalled and opened.
+  User asked how «Recargar» reaches the newest build → D9.
