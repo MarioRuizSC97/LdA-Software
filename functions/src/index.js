@@ -68,13 +68,22 @@ export const LOCAL_WEB_ORIGINS = [
   /^https?:\/\/127\.0\.0\.1(?::\d{1,5})?$/,
 ];
 
+/** The published web app on Firebase Hosting; exact origins, https only. */
+export const HOSTING_WEB_ORIGINS = [
+  'https://lda-inventory-dev-mx.web.app',
+  'https://lda-inventory-dev-mx.firebaseapp.com',
+];
+
+/** Origins every callable accepts: local development plus the Hosting site. */
+export const WEB_ORIGINS = [...LOCAL_WEB_ORIGINS, ...HOSTING_WEB_ORIGINS];
+
 /**
  * Trusted-runtime callable: the demo emulator or the deployed production
  * project only (see runtime-project.js). The guard runs before Admin SDK
  * initialization, so a function copied to any other project never connects.
  */
 export const createProduct = onCall(
-  callableRuntimeOptions('createProduct', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('createProduct', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalCatalogEmulator();
@@ -106,7 +115,7 @@ export const createProduct = onCall(
  * preserved because only `products/{id}.name` is updated.
  */
 export const renameProduct = onCall(
-  callableRuntimeOptions('renameProduct', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('renameProduct', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalCatalogEmulator();
@@ -131,7 +140,7 @@ export const renameProduct = onCall(
 );
 
 export const setProductPrice = onCall(
-  callableRuntimeOptions('setProductPrice', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('setProductPrice', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalPricingEmulator();
@@ -156,7 +165,7 @@ export const setProductPrice = onCall(
 );
 
 export const submitSale = onCall(
-  callableRuntimeOptions('submitSale', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('submitSale', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalSalesEmulator();
@@ -198,7 +207,7 @@ export const quoteSale = localSaleCallable(
 );
 
 export const stockIntake = onCall(
-  callableRuntimeOptions('stockIntake', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('stockIntake', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -229,7 +238,7 @@ export const stockIntake = onCall(
  * other error is masked as an internal fault.
  */
 export const transferInventory = onCall(
-  callableRuntimeOptions('transferInventory', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('transferInventory', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -262,7 +271,7 @@ export const transferInventory = onCall(
  * transfer audit server-side before writing the per-seller marker.
  */
 export const markTransferNoticeRead = onCall(
-  callableRuntimeOptions('markTransferNoticeRead', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('markTransferNoticeRead', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalInventoryEmulator();
@@ -303,7 +312,7 @@ function saleCorrectionCallable(functionName, createOperation, unavailableMessag
 
 function localSaleCallable(functionName, guardMessage, createOperation, unavailableMessage) {
   return onCall(
-    callableRuntimeOptions(functionName, LOCAL_WEB_ORIGINS),
+    callableRuntimeOptions(functionName, WEB_ORIGINS),
     async (request) => {
       try {
         assertLocalSalesEmulator();
@@ -377,7 +386,7 @@ export const previewSaleExchange = saleCorrectionCallable(
  * The branch always comes from the target's trusted Auth claims.
  */
 export const setSellerProfile = onCall(
-  callableRuntimeOptions('setSellerProfile', LOCAL_WEB_ORIGINS),
+  callableRuntimeOptions('setSellerProfile', WEB_ORIGINS),
   async (request) => {
     try {
       assertLocalSellerProfilesEmulator();

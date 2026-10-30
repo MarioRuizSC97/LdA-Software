@@ -573,15 +573,54 @@ function rejectsCallable(promise, code, message) {
   });
 }
 
-test('the markTransferNoticeRead registration pins region and local-only origins', () => {
+test('the markTransferNoticeRead registration pins region and the shared web origins', () => {
   assert.ok(entry.markTransferNoticeRead, 'markTransferNoticeRead must be registered');
   assert.equal(entry.markTransferNoticeRead.options.region, 'us-south1');
-  assert.equal(entry.markTransferNoticeRead.options.cors, entry.LOCAL_WEB_ORIGINS);
+  assert.equal(entry.markTransferNoticeRead.options.cors, entry.WEB_ORIGINS);
   for (const origin of ['http://localhost', 'http://localhost:5000', 'https://127.0.0.1:7357']) {
     assert.ok(entry.LOCAL_WEB_ORIGINS.some((pattern) => pattern.test(origin)), `must allow ${origin}`);
   }
   for (const origin of ['https://example.com', 'http://localhost.example.com', 'http://127.0.0.2:5000']) {
     assert.ok(!entry.LOCAL_WEB_ORIGINS.some((pattern) => pattern.test(origin)), `must deny ${origin}`);
+  }
+});
+
+// Mirrors how the callable CORS middleware matches: strings are exact, RegExps
+// are tested.
+const corsAllows = (allowed, origin) => allowed.some(
+  (entry) => (typeof entry === 'string' ? entry === origin : entry.test(origin)),
+);
+
+test('every callable allows exactly the Hosting origins plus localhost', () => {
+  assert.deepEqual(entry.HOSTING_WEB_ORIGINS, [
+    'https://lda-inventory-dev-mx.web.app',
+    'https://lda-inventory-dev-mx.firebaseapp.com',
+  ]);
+  const registered = Object.entries(entry).filter(([, value]) => value?.options);
+  assert.equal(registered.length, 16);
+  for (const [name, callable] of registered) {
+    const { cors } = callable.options;
+    assert.equal(cors, entry.WEB_ORIGINS, `${name} must use the shared web origins`);
+    for (const origin of [
+      'https://lda-inventory-dev-mx.web.app',
+      'https://lda-inventory-dev-mx.firebaseapp.com',
+      'http://localhost:7358',
+      'http://127.0.0.1:7358',
+    ]) {
+      assert.equal(corsAllows(cors, origin), true, `${name} must allow ${origin}`);
+    }
+    for (const origin of [
+      'http://lda-inventory-dev-mx.web.app',
+      'https://lda-inventory-dev-mx.web.app.evil.com',
+      'https://evil-lda-inventory-dev-mx.web.app',
+      'https://lda-inventory-dev-mx.web.app:8443',
+      'https://lda-inventory-dev-mx.web.app/',
+      'https://preview--lda-inventory-dev-mx.web.app',
+      'https://other-project.web.app',
+      'https://example.com',
+    ]) {
+      assert.equal(corsAllows(cors, origin), false, `${name} must deny ${origin}`);
+    }
   }
 });
 
@@ -698,6 +737,6 @@ test('the callable harness itself proves test isolation through mocks', async ()
   // must never have let a real firebase-admin module through, and every
   // Firestore touch must have landed in the injected in-memory double.
   assert.deepEqual(unauthorizedSdkImports, [], 'a real Admin SDK module was resolved');
-  assert.equal(entry.markTransferNoticeRead.options.cors, entry.LOCAL_WEB_ORIGINS);
+  assert.equal(entry.markTransferNoticeRead.options.cors, entry.WEB_ORIGINS);
   assert.ok(seamApps.every((app) => String(app.name).startsWith('stubbed-admin-')));
 });

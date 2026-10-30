@@ -126,7 +126,7 @@ test('correction registrations use the existing region and local-only origins', 
   for (const { name } of CALLABLES) {
     assert.ok(entry[name], `${name} must be registered`);
     assert.equal(entry[name].options.region, 'us-south1');
-    assert.equal(entry[name].options.cors, entry.LOCAL_WEB_ORIGINS);
+    assert.equal(entry[name].options.cors, entry.WEB_ORIGINS);
   }
 });
 

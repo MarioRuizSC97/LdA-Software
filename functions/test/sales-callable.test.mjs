@@ -112,7 +112,7 @@ const rejects = (promise, code, message) => assert.rejects(promise, (error) => {
 test('sale registration uses the existing region and local-only origins', () => {
   assert.ok(entry.submitSale, 'submitSale must be registered');
   assert.equal(entry.submitSale.options.region, 'us-south1');
-  assert.equal(entry.submitSale.options.cors, entry.LOCAL_WEB_ORIGINS);
+  assert.equal(entry.submitSale.options.cors, entry.WEB_ORIGINS);
   for (const origin of ['http://localhost:5173', 'https://127.0.0.1:443']) {
     assert.ok(entry.submitSale.options.cors.some((pattern) => pattern.test(origin)));
   }
@@ -267,7 +267,7 @@ function invokeQuote(request = {}) {
 
 test('quote registration uses the existing region and local-only origins', () => {
   assert.equal(entry.quoteSale.options.region, 'us-south1');
-  assert.equal(entry.quoteSale.options.cors, entry.LOCAL_WEB_ORIGINS);
+  assert.equal(entry.quoteSale.options.cors, entry.WEB_ORIGINS);
 });
 
 test('every quote guard failure is the fixed sales precondition before SDK or service access', async () => {
