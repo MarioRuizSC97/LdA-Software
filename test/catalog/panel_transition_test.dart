@@ -129,6 +129,11 @@ bool _hittable(WidgetTester tester, Finder finder) {
 
 void main() {
   setUp(() => actions.clear());
+  final platforms = TargetPlatformVariant(<TargetPlatform>{
+    TargetPlatform.android,
+    TargetPlatform.iOS,
+    TargetPlatform.macOS,
+  });
 
   testWidgets('a panel swap cross-fades with a short settle, then rests', (
     WidgetTester tester,
@@ -321,7 +326,7 @@ void main() {
     expect(find.text('Carrito'), findsNothing);
     expect(find.text('Catálogo'), findsOneWidget);
     expect(tester.binding.transientCallbackCount, 0);
-  });
+  }, variant: platforms);
 
   testWidgets('the first catalog body never animates', (
     WidgetTester tester,
@@ -350,7 +355,7 @@ void main() {
     expect(find.text('Catálogo'), findsNothing);
     await tester.pumpAndSettle();
     expect(find.text('Método de pago'), findsOneWidget);
-  });
+  }, variant: platforms);
 }
 
 /// Probe panel: counts how many times its element was created, so a
