@@ -40,7 +40,10 @@ dependencies:
   flutter_web_plugins:
     sdk: flutter
   # Product QR codes are scanned with the device camera on Android and iOS
-  # only (T7/S2). Bundled ML Kit on Android: works offline and without Play Services.
+  # (T7/S2) and, on the web, in a phone browser only. Bundled ML Kit on
+  # Android: works offline and without Play Services. On the web the browser
+  # decodes natively when it can, otherwise mobile_scanner loads a WASM
+  # decoder from a CDN, so web scanning is browser-dependent and not offline.
   mobile_scanner: ^7.4.2
   qr_flutter: ^4.1.0
   firebase_auth: ^6.7.0

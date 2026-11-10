@@ -13,9 +13,17 @@ import '../app/primary_action_style.dart';
 /// the catalog search already matches by code, so a scan simply types that
 /// payload into the search field. No second lookup path is introduced.
 ///
-/// Camera entry points exist on Android and iOS only, one reading closes the
-/// scanner, and Android ships the bundled ML Kit barcode model so it also
-/// works offline and on devices without Google Play Services.
+/// Camera entry points exist on Android, on iOS and in a phone web browser,
+/// never in a desktop one. One reading closes the scanner, and Android ships
+/// the bundled ML Kit barcode model so it also works offline and on devices
+/// without Google Play Services.
+///
+/// The web scanner is the same sheet on different terms: it needs a secure
+/// context (HTTPS or localhost) and the site's camera permission, and it
+/// decodes with whatever the browser offers — the native `BarcodeDetector`
+/// where one exists, otherwise a WASM decoder that `mobile_scanner` fetches
+/// from a CDN. Web support is therefore browser-dependent and not guaranteed
+/// offline.
 
 /// What the camera can report to the scanner sheet.
 class ProductQrReading {
@@ -76,11 +84,20 @@ ProductQrCameraAccess productQrCameraAccessFor(MobileScannerState state) {
 }
 
 /// Whether the camera entry point is offered on this platform.
+///
+/// The phone target is the whole rule. Natively it names the two platforms
+/// with a camera implementation; on the web, [target] is the platform the
+/// browser reports, so a phone browser is offered the camera and a desktop
+/// browser (macOS, Windows or Linux) keeps the typed search.
+///
+/// [isWeb] is part of the signature because callers state the build they are
+/// in, and it stays useful as the seam a web-only restriction would go
+/// through; the mobile/desktop split above already needs no separate web
+/// branch, since a desktop browser is excluded by its reported target.
 bool productQrScanAvailable({
   required bool isWeb,
   required TargetPlatform target,
 }) {
-  if (isWeb) return false;
   return target == TargetPlatform.android || target == TargetPlatform.iOS;
 }
 
@@ -89,7 +106,8 @@ bool get productQrScanSupported =>
     productQrScanAvailable(isWeb: kIsWeb, target: defaultTargetPlatform);
 
 /// The camera the sheet needs. The production implementation is backed by
-/// `mobile_scanner`; tests drive a fake one, so no test opens a real camera.
+/// `mobile_scanner`, which ships Android, iOS and web implementations; tests
+/// drive a fake one, so no test opens a real camera.
 ///
 /// Both streams are broadcast and are subscribed as soon as the sheet is
 /// built, because the sheet keeps the preview mounted from the first frame.
@@ -312,11 +330,15 @@ class _CameraNotice extends StatelessWidget {
 /// It is a function so a test can pin the decision that keeps H2 closed: no
 /// `formats` filter, so every symbology the device can read reaches the sheet
 /// and a shelf barcode is reported instead of silently ignored.
+///
+/// The plugin defaults are kept as they are, including the rear-facing camera,
+/// which a phone browser honours through `facingMode` and a desktop browser
+/// ignores (the scanner is not offered there).
 MobileScannerController createProductQrCameraController() =>
     MobileScannerController();
 
-/// The `mobile_scanner` adapter. It is only constructed on Android and iOS,
-/// where [productQrScanSupported] is true.
+/// The `mobile_scanner` adapter. It is only constructed where
+/// [productQrScanSupported] is true: on Android, on iOS and in a phone browser.
 ///
 /// Every barcode symbology is decoded on purpose: a store shelf carries 1D
 /// barcodes too, and the sheet tells the seller that what was read is not a

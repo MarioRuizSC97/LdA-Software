@@ -90,17 +90,24 @@ covers the rounded outline and hint semantics in light and dark themes.
 
 ## Scanning the product QR with the camera
 
-On Android and iOS the search field offers a camera entry point
-(`catalog-search-scan`). One scan is enough: the camera closes, the payload is
-typed into the search field and the existing matcher filters the list, so a
-scanned code and a typed code behave identically. Web and desktop show the
-typed search only.
+The search field offers a camera entry point (`catalog-search-scan`) on
+Android, on iOS and in a **phone** web browser (Android or iOS). One scan is
+enough: the camera closes, the payload is typed into the search field and the
+existing matcher filters the list, so a scanned code and a typed code behave
+identically. A desktop browser and a desktop app show the typed search only.
+
+One pure function decides this, `productQrScanAvailable` in
+`lib/catalog/product_qr_scan.dart`, and it reads the platform the build
+reports — on the web that is the platform the browser announces, which is how
+a phone browser and a desktop browser are told apart. `main.dart`,
+`emulator_login.dart` and the catalog page all go through that one rule.
 
 A product QR carries the internal code (`lib/catalog/product_qr.dart`,
-`ProductQr.payloadFor`), which is exactly what the search matches. The scanner
-decodes QR codes only (`BarcodeFormat.qrCode`), so a barcode printed on
-packaging is reported as "El código leído no es un QR de producto" and the
-camera stays open instead of silently filtering the list.
+`ProductQr.payloadFor`), which is exactly what the search matches. The camera
+decodes every symbology the device offers, and only a QR becomes a query: a
+barcode printed on packaging is reported as
+`Lo que leyó la cámara no es un código QR de producto.` and the camera stays
+open instead of silently filtering the list.
 
 Permission and hardware problems are explained in Spanish and always leave a
 way out:
@@ -109,8 +116,9 @@ way out:
 | --- | --- |
 | Camera starting | `Encendiendo la cámara…` |
 | Permission denied | `No se permitió el acceso a la cámara. Actívalo en Ajustes para poder escanear códigos QR.` |
-| No camera on the device | `Este dispositivo no tiene una cámara disponible.` |
-| Code read is not a QR | `El código leído no es un QR de producto.` (the camera stays open) |
+| No camera, or the browser could not open one | `Este dispositivo no tiene una cámara disponible.` |
+| Code read is not a QR | `Lo que leyó la cámara no es un código QR de producto.` (the camera stays open) |
+| QR with no payload | `El código QR no contiene un código de producto.` (the camera stays open) |
 
 Platform setup:
 
@@ -121,11 +129,33 @@ Platform setup:
   is used (no `dev.steenbakker.mobile_scanner.useUnbundled` flag), so scanning
   works offline and on devices without Google Play Services, at the cost of a
   larger APK.
+- **Web (phone browsers only)**: nothing was added to Hosting, to the headers
+  or to the app. The requirements come from the browser:
+
+  | Need | Why |
+  | --- | --- |
+  | HTTPS (or `localhost`) | `getUserMedia` only runs in a secure context |
+  | The site's camera permission | granted per site by the browser prompt, not in the system settings — the denied message keeps its app wording |
+  | A browser that can decode | `mobile_scanner` uses the native `BarcodeDetector` when the browser has one (Chrome, Edge, Safari 17+) |
+  | Network, as a fallback | without `BarcodeDetector` it loads a `zxing-wasm` decoder from a CDN, so decoding is not guaranteed offline |
+  | A rear camera it will use | the scanner asks for the back camera, which a phone browser honours through `facingMode` |
+
+  Support stays browser-dependent: a browser that reports a desktop platform
+  gets no scan button at all, and one that reports mobile but cannot open a
+  camera lands on the "no camera available" notice with its Close action.
 - Cancelling, or a scan that yields nothing, leaves the search untouched.
+
+`test/catalog/product_qr_scan_test.dart` pins the rule in two halves: the pure
+matrix (native, phone browser, desktop browser) and the widgets. The widget
+half runs under `flutter test --platform chrome`, where `kIsWeb` is true for
+real, and drives a **fake** opener, so no browser is asked for a camera by a
+test. `integration_test/qr_scan_device_test.dart` stays native-hardware only.
 
 ## Out of scope
 
 Advanced filters (price, stock, branch) are a future release. Scanning from a
-photo in the gallery is not offered. Real camera behaviour on a device is
-verified manually; the automated tests drive the sheet through a fake camera so
-no test needs a lens.
+photo in the gallery is not offered. Desktop web scanning is not offered: a
+desktop browser keeps the typed search. Real camera behaviour — on a device and
+in a phone browser — is verified by hand; the automated tests drive the sheet
+through a fake camera so no test needs a lens. The phone-browser camera has not
+yet been proven on physical hardware.
