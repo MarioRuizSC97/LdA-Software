@@ -220,15 +220,30 @@ void main() {
       );
     });
 
-    test('is never offered on the web, even on a phone browser', () {
-      for (final TargetPlatform target in <TargetPlatform>[
+    test('a phone browser is offered the camera, a desktop browser is not', () {
+      // On the web the target is the platform the browser reports, so this
+      // is the whole mobile/desktop split: a phone browser asks for the
+      // camera, a desktop browser keeps the typed search.
+      for (final TargetPlatform phone in <TargetPlatform>[
         TargetPlatform.android,
         TargetPlatform.iOS,
       ]) {
         expect(
-          productQrScanAvailable(isWeb: true, target: target),
+          productQrScanAvailable(isWeb: true, target: phone),
+          isTrue,
+          reason: '$phone browser has a camera route',
+        );
+      }
+
+      for (final TargetPlatform desktop in <TargetPlatform>[
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+        TargetPlatform.linux,
+      ]) {
+        expect(
+          productQrScanAvailable(isWeb: true, target: desktop),
           isFalse,
-          reason: 'web keeps the typed search only (spec S2)',
+          reason: '$desktop browser keeps the typed search only',
         );
       }
     });
@@ -750,14 +765,79 @@ void main() {
       }, skip: kIsWeb);
     }
   });
-  group('scan entry point on the web', () {
+  group('scan entry point in a phone browser', () {
     // Only runs under `flutter test --platform chrome`, where kIsWeb is true
-    // for real. This is the runtime half of the web gate: the pure function
-    // alone cannot prove the button stays out of a browser.
-    testWidgets('the camera entry point is never offered on the web', (
+    // for real. This is the runtime half of the mobile-web gate: the pure
+    // function alone cannot prove the button reaches a browser. The opener is
+    // a fake, so no test asks a browser for camera permission.
+    testWidgets('an Android browser offers the camera and types the code', (
       WidgetTester tester,
     ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      int opened = 0;
+
+      await tester.pumpWidget(
+        _catalogApp(
+          qrScan: (BuildContext context) async {
+            opened++;
+            return 'PRD-WATER-002';
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_scanButton(), findsOneWidget);
+
+      await tester.tap(_scanButton());
+      await tester.pumpAndSettle();
+
+      expect(opened, 1);
+      expect(_searchFieldValue(tester), 'PRD-WATER-002');
+      expect(find.text('Agua Mineral 1 L'), findsOneWidget);
+      expect(find.text('Café Grano Selecto'), findsNothing);
+
+      debugDefaultTargetPlatformOverride = null;
+    }, skip: !kIsWeb);
+
+    testWidgets('an iOS browser offers it too, store screen included', (
+      WidgetTester tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      int opened = 0;
+
+      await tester.pumpWidget(
+        _catalogApp(
+          qrScan: (BuildContext context) async {
+            opened++;
+            return 'AUT-BRSM-777';
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_scanButton(), findsOneWidget);
+
+      await tester.tap(_scanButton());
+      await tester.pumpAndSettle();
+
+      expect(opened, 1);
+      expect(_searchFieldValue(tester), 'AUT-BRSM-777');
+      expect(find.text('Té Verde'), findsOneWidget);
+
+      // The store screen runs the same rule on the same browser.
+      await tester.pumpWidget(
+        _authenticatedApp(qrScan: (BuildContext context) async => null),
+      );
+      await tester.pumpAndSettle();
+      expect(_scanButton(), findsOneWidget);
+
+      debugDefaultTargetPlatformOverride = null;
+    }, skip: !kIsWeb);
+
+    testWidgets('a desktop browser keeps the typed search only', (
+      WidgetTester tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
 
       await tester.pumpWidget(
         _catalogApp(qrScan: (BuildContext context) async => 'PRD-WATER-002'),
@@ -767,7 +847,7 @@ void main() {
       expect(
         _scanButton(),
         findsNothing,
-        reason: 'web keeps the typed search only (spec S2)',
+        reason: 'a desktop browser has no camera route',
       );
       expect(find.text('Café Grano Selecto'), findsOneWidget);
 
@@ -779,13 +859,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Café Grano Selecto'), findsOneWidget);
       expect(find.text('Agua Mineral 1 L'), findsNothing);
-
-      // The store screen honours the same gate.
-      await tester.pumpWidget(
-        _authenticatedApp(qrScan: (BuildContext context) async => null),
-      );
-      await tester.pumpAndSettle();
-      expect(_scanButton(), findsNothing);
 
       debugDefaultTargetPlatformOverride = null;
     }, skip: !kIsWeb);

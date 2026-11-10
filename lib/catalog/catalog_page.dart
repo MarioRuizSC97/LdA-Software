@@ -722,23 +722,22 @@ class _AuthenticatedCatalogPageState extends State<AuthenticatedCatalogPage> {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop) _systemBack(searchActive: searchActive);
         },
-        child:
-            !kIsWeb &&
-                defaultTargetPlatform == TargetPlatform.iOS &&
-                panelOpen &&
-                !searchActive
+        child: !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
             ? Stack(
                 children: [
+                  // Keep the scaffold at the same tree position when panels
+                  // open or close, preserving their transition state on iOS.
                   child,
                   // Only this edge strip enters the gesture arena; horizontal
                   // controls and selection away from it keep their own drags.
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: 24,
-                    child: _CatalogBackEdge(onBack: _goBack),
-                  ),
+                  if (panelOpen && !searchActive)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 24,
+                      child: _CatalogBackEdge(onBack: _goBack),
+                    ),
                 ],
               )
             : child,

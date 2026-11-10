@@ -18,7 +18,8 @@ Web camera scanning is evaluated only after the Hosting URL works.
 - S5. Web URL (user, verbatim): "Dale papurri empecemos con la URL :)" — publish the web app on Firebase Hosting
   (`https://lda-inventory-dev-mx.web.app`) so it works outside the developer's Mac.
 - S4. Web camera: "y ya una vez teniendo la URL en funcionamiento vemos si se puede habilitar el uso de camara desde la
-  web obvio usando un celular" — evaluate after Hosting works; not part of this batch.
+  web obvio usando un celular" — started once Hosting worked (L10): the camera fills the catalog QR search in a phone
+  browser; desktop browsers keep the typed search.
 
 ## Decisions
 
@@ -52,9 +53,10 @@ Web camera scanning is evaluated only after the Hosting URL works.
 
 - V1 · S1, S2, D4–D8 · version gate (client + rules + tests + docs) · branch `feat/v1-0-version-gate` · commits c578fee (rules), 54175fe (client), 6a400ae (docs) · DONE
 - V2 · S3 · privacy notice draft (Markdown + web page) · pending — waits for the owner's data
-- V3 · S4 · web camera evaluation · deferred until the Hosting URL works
+- V3 · S4 · web camera QR search in phone browsers · branch `feat/v1-0-mobile-web-qr` · commit c989746 · deployed,
+  user check done
 - V4 · S5, D9, D10 · web publish: callable CORS for the Hosting origins, `hosting` in firebase.json, deploy callables
-  then Hosting, verify the URL · branch `feat/v1-0-web-hosting` · commits a2573c5 (CORS), a8450a2 (hosting) · deployed, user check pending
+  then Hosting, verify the URL · branch `feat/v1-0-web-hosting` · commits a2573c5 (CORS), a8450a2 (hosting) · DONE
 
 ## Log
 
@@ -103,3 +105,16 @@ Web camera scanning is evaluated only after the Hosting URL works.
   `main.dart.js`, `flutter_bootstrap.js` and any path send `Cache-Control: no-cache`; the app boots to «Conectando con
   el servidor»). A conditional request with the ETag still returned 200 in curl, so the 304 saving is unobserved;
   correctness (always the published build) holds. Hosted build = production build of main caaa0cb (no lib/ change).
+- L10 (2026-11-10, user, verbatim): "Empecemos con lo de escanear QR en la web desde el movil por fa papurri :)" → V3.
+  The URL already works; Hosting and Android implementation were confirmed done by the user, so V4 is closed.
+- L11 (2026-11-10, parent): the only web block was `productQrScanAvailable` returning false for `isWeb`;
+  mobile_scanner 7.4.2 already ships the web implementation (native `BarcodeDetector`, otherwise a zxing-wasm decoder
+  loaded from a CDN). The gate now follows the reported target, so Android/iOS browsers get the existing camera entry
+  point and desktop browsers keep the typed search. RED observed on the phone-browser gate; GREEN: focused 34 + 3
+  skipped, Brave 30 + 7 skipped, full suite 1998 + 3 skipped, `flutter analyze` clean. No Hosting header, rule or
+  dependency change.
+- L12 (2026-11-10, native review): lineage `review-8517d6954b74f7a4` (QR web + the iOS panel-transition fix 6b38c7f)
+  approved and acknowledged with non-blocking advisories only: R1-web-cdn-wasm-decoder, R3-web-offline-scan, R4-001,
+  R3-chrome-skipped, R3-ios-stack, R3-web-param-dead. Hosting-only deploy of that exact build; live `main.dart.js`
+  md5 matches the reviewed build and the headers are unchanged. User confirmed on the phone: "Ya lo encontré, no sé
+  por qué la primera vez no me aparecio como tal pero ya quedó listo". Web scanning is not guaranteed offline.

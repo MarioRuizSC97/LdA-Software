@@ -185,8 +185,11 @@ firebase deploy --only hosting --project lda-inventory-dev-mx
 ```
 
 Build with the production define every time: a build without it opens the
-offline screen. The web build cannot scan QR codes; search by name or code
-works.
+offline screen. The web build scans product QR codes with the camera only in a
+phone browser (Android or iOS), over HTTPS and with that site's camera
+permission; a desktop browser searches by name or code. See
+`docs/catalog-search.md` for what a phone browser needs and what stays
+browser-dependent.
 
 ### Minimum-version gate
 
