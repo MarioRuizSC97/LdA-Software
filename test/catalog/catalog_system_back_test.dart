@@ -163,4 +163,37 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets('iOS back-edge strip exists only while a body panel is open', (
+    tester,
+  ) async {
+    // The page keeps one Stack on iOS so panel transitions keep their state
+    // (R3-ios-stack); only the 24 px edge strip comes and goes with it.
+    final Finder edge = find.byWidgetPredicate(
+      (Widget widget) => widget.runtimeType.toString() == '_CatalogBackEdge',
+    );
+    await _mount(tester);
+    expect(edge, findsNothing, reason: 'no panel open on the catalog');
+
+    await tester.tap(find.byKey(const ValueKey('transfer-open')));
+    await tester.pumpAndSettle();
+    expect(edge, findsOneWidget, reason: 'a panel is open');
+
+    await tester.dragFrom(const Offset(8, 300), const Offset(180, 0));
+    await tester.pumpAndSettle();
+    expect(find.byType(AdministratorTransferForm), findsNothing);
+    expect(edge, findsNothing, reason: 'the panel closed with the strip');
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('no back-edge strip outside iOS', (tester) async {
+    await _mount(tester);
+    await tester.tap(find.byKey(const ValueKey('transfer-open')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (Widget widget) => widget.runtimeType.toString() == '_CatalogBackEdge',
+      ),
+      findsNothing,
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 }
