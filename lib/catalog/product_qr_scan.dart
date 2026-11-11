@@ -88,22 +88,43 @@ ProductQrCameraAccess productQrCameraAccessFor(MobileScannerState state) {
 /// The phone target is the whole rule. Natively it names the two platforms
 /// with a camera implementation; on the web, [target] is the platform the
 /// browser reports, so a phone browser is offered the camera and a desktop
-/// browser (macOS, Windows or Linux) keeps the typed search.
-///
-/// [isWeb] is part of the signature because callers state the build they are
-/// in, and it stays useful as the seam a web-only restriction would go
-/// through; the mobile/desktop split above already needs no separate web
-/// branch, since a desktop browser is excluded by its reported target.
-bool productQrScanAvailable({
-  required bool isWeb,
-  required TargetPlatform target,
-}) {
-  return target == TargetPlatform.android || target == TargetPlatform.iOS;
-}
+/// browser (macOS, Windows or Linux) keeps the typed search. No separate web
+/// branch is needed: a desktop browser is excluded by its reported target.
+bool productQrScanAvailable(TargetPlatform target) =>
+    target == TargetPlatform.android || target == TargetPlatform.iOS;
 
 /// The same rule for the running platform.
 bool get productQrScanSupported =>
-    productQrScanAvailable(isWeb: kIsWeb, target: defaultTargetPlatform);
+    productQrScanAvailable(defaultTargetPlatform);
+
+/// The sentence the scanner sheet shows for [access], or null while the
+/// camera is running.
+///
+/// The same failure has a different cause per runtime: natively it is the
+/// device or its settings, while in a browser it is the browser itself — no
+/// secure context, a denied site permission, or a decoder that could not be
+/// loaded without a connection. A browser seller is never told that the
+/// device has no camera or sent to the system settings.
+String? productQrCameraNoticeText(
+  ProductQrCameraAccess access, {
+  required bool isWeb,
+}) {
+  return switch (access) {
+    ProductQrCameraAccess.starting => 'Encendiendo la cámara…',
+    ProductQrCameraAccess.ready => null,
+    ProductQrCameraAccess.denied =>
+      isWeb
+          ? 'No se permitió el acceso a la cámara. Permite la cámara para '
+                'este sitio en tu navegador para poder escanear códigos QR.'
+          : 'No se permitió el acceso a la cámara. Actívalo en '
+                'Ajustes para poder escanear códigos QR.',
+    ProductQrCameraAccess.unavailable =>
+      isWeb
+          ? 'Este navegador no pudo abrir la cámara o leer códigos QR. '
+                'Revisa tu conexión o busca el producto por nombre o código.'
+          : 'Este dispositivo no tiene una cámara disponible.',
+  };
+}
 
 /// The camera the sheet needs. The production implementation is backed by
 /// `mobile_scanner`, which ships Android, iOS and web implementations; tests
@@ -240,24 +261,23 @@ class _ProductQrScanSheetState extends State<ProductQrScanSheet> {
   }
 
   Widget _accessNotice() {
+    final String? message = productQrCameraNoticeText(_access, isWeb: kIsWeb);
     return switch (_access) {
-      ProductQrCameraAccess.starting => const _CameraNotice(
-        key: ValueKey<String>('qr-scan-starting'),
+      ProductQrCameraAccess.starting => _CameraNotice(
+        key: const ValueKey<String>('qr-scan-starting'),
         icon: Icons.camera_alt_outlined,
-        message: 'Encendiendo la cámara…',
+        message: message!,
       ),
       ProductQrCameraAccess.denied => _CameraNotice(
         key: const ValueKey<String>('qr-scan-denied'),
         icon: Icons.no_photography_outlined,
-        message:
-            'No se permitió el acceso a la cámara. Actívalo en '
-            'Ajustes para poder escanear códigos QR.',
+        message: message!,
         action: _closeButton(),
       ),
       ProductQrCameraAccess.unavailable => _CameraNotice(
         key: const ValueKey<String>('qr-scan-unavailable'),
         icon: Icons.videocam_off_outlined,
-        message: 'Este dispositivo no tiene una cámara disponible.',
+        message: message!,
         action: _closeButton(),
       ),
       ProductQrCameraAccess.ready => const SizedBox.shrink(),

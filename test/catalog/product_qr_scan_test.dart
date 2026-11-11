@@ -182,6 +182,21 @@ CatalogSnapshot _sellerSnapshot() => CatalogSnapshot(<CatalogItem>[
     ),
 ]);
 
+/// The four sentences the sheet can show for a failed camera, written out here
+/// instead of read back from `productQrCameraNoticeText` so a widget test that
+/// ran with the wrong runtime still fails.
+const String _deviceUnavailable =
+    'Este dispositivo no tiene una cámara disponible.';
+const String _deviceDenied =
+    'No se permitió el acceso a la cámara. Actívalo en '
+    'Ajustes para poder escanear códigos QR.';
+const String _browserUnavailable =
+    'Este navegador no pudo abrir la cámara o leer códigos QR. Revisa tu '
+    'conexión o busca el producto por nombre o código.';
+const String _browserDenied =
+    'No se permitió el acceso a la cámara. Permite la cámara para este '
+    'sitio en tu navegador para poder escanear códigos QR.';
+
 Finder _scanButton() =>
     find.byKey(const ValueKey<String>('catalog-search-scan'));
 
@@ -209,58 +224,129 @@ Widget _authenticatedApp({ProductQrScanOpener? qrScan}) => MaterialApp(
 
 void main() {
   group('camera scanning availability', () {
-    test('is offered on Android and iOS only', () {
+    // The phone target is the whole gate, on a device and in a browser alike:
+    // in a browser `defaultTargetPlatform` is the platform the browser
+    // announces. These are plain VM tests on purpose (R3-chrome-skipped): the
+    // phone-browser rule must be pinned by `flutter test` alone, and the
+    // chrome-only widget group below only adds that a real browser reaches the
+    // same button.
+    const List<(TargetPlatform, bool)> gate = <(TargetPlatform, bool)>[
+      (TargetPlatform.android, true),
+      (TargetPlatform.iOS, true),
+      (TargetPlatform.macOS, false),
+      (TargetPlatform.windows, false),
+      (TargetPlatform.linux, false),
+    ];
+
+    test('is offered on the phone targets and on nothing else', () {
+      for (final (TargetPlatform target, bool offered) in gate) {
+        expect(
+          productQrScanAvailable(target),
+          offered,
+          reason:
+              '$target ${offered ? 'has a camera route' : 'keeps the typed search only'}',
+        );
+      }
+    });
+
+    test('the running build reads the same gate as the pure one', () {
+      // This is the path `main.dart`, `emulator_login.dart` and the search
+      // field take, and in a browser it is the browser's own platform report.
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      for (final (TargetPlatform target, bool offered) in gate) {
+        debugDefaultTargetPlatformOverride = target;
+        expect(
+          productQrScanSupported,
+          offered,
+          reason:
+              '$target ${offered ? 'offers' : 'hides'} the scan entry point',
+        );
+      }
+      debugDefaultTargetPlatformOverride = null;
+    });
+  });
+
+  group('camera notice copy', () {
+    // The sheet is one widget on both runtimes, but why the camera failed is
+    // not one problem: natively it is the device or its settings, while in a
+    // browser it is the browser — no secure context, a denied site permission,
+    // or the WASM decoder it fetches never arrived. Telling a phone-browser
+    // seller that the *device* has no camera sends them looking for a setting
+    // that does not exist, so the words are one pure function of (access,
+    // isWeb) and are pinned here, where no browser is needed.
+    test('a browser that cannot use a camera names the browser', () {
       expect(
-        productQrScanAvailable(isWeb: false, target: TargetPlatform.android),
-        isTrue,
+        productQrCameraNoticeText(
+          ProductQrCameraAccess.unavailable,
+          isWeb: true,
+        ),
+        'Este navegador no pudo abrir la cámara o leer códigos QR. Revisa tu '
+        'conexión o busca el producto por nombre o código.',
       );
       expect(
-        productQrScanAvailable(isWeb: false, target: TargetPlatform.iOS),
-        isTrue,
+        productQrCameraNoticeText(ProductQrCameraAccess.denied, isWeb: true),
+        'No se permitió el acceso a la cámara. Permite la cámara para este '
+        'sitio en tu navegador para poder escanear códigos QR.',
       );
     });
 
-    test('a phone browser is offered the camera, a desktop browser is not', () {
-      // On the web the target is the platform the browser reports, so this
-      // is the whole mobile/desktop split: a phone browser asks for the
-      // camera, a desktop browser keeps the typed search.
-      for (final TargetPlatform phone in <TargetPlatform>[
-        TargetPlatform.android,
-        TargetPlatform.iOS,
-      ]) {
+    test(
+      'the web copy never sends the seller to device hardware or settings',
+      () {
+        // The two sentences this copy replaces, and the reason R1 and
+        // R3-web-offline-scan were filed.
         expect(
-          productQrScanAvailable(isWeb: true, target: phone),
-          isTrue,
-          reason: '$phone browser has a camera route',
+          productQrCameraNoticeText(
+            ProductQrCameraAccess.unavailable,
+            isWeb: true,
+          ),
+          isNot(contains('dispositivo')),
         );
-      }
+        expect(
+          productQrCameraNoticeText(ProductQrCameraAccess.denied, isWeb: true),
+          isNot(contains('Ajustes')),
+        );
+      },
+    );
 
-      for (final TargetPlatform desktop in <TargetPlatform>[
-        TargetPlatform.macOS,
-        TargetPlatform.windows,
-        TargetPlatform.linux,
-      ]) {
-        expect(
-          productQrScanAvailable(isWeb: true, target: desktop),
-          isFalse,
-          reason: '$desktop browser keeps the typed search only',
-        );
-      }
+    test('the native copy keeps its exact words', () {
+      expect(
+        productQrCameraNoticeText(
+          ProductQrCameraAccess.unavailable,
+          isWeb: false,
+        ),
+        'Este dispositivo no tiene una cámara disponible.',
+      );
+      expect(
+        productQrCameraNoticeText(ProductQrCameraAccess.denied, isWeb: false),
+        'No se permitió el acceso a la cámara. Actívalo en '
+        'Ajustes para poder escanear códigos QR.',
+      );
     });
 
-    test('is not offered on desktop platforms', () {
-      for (final TargetPlatform target in <TargetPlatform>[
-        TargetPlatform.macOS,
-        TargetPlatform.windows,
-        TargetPlatform.linux,
-      ]) {
-        expect(
-          productQrScanAvailable(isWeb: false, target: target),
-          isFalse,
-          reason: '$target has no product QR camera route in v1.0',
-        );
-      }
-    });
+    test(
+      'only the failures change, and a running camera has nothing to say',
+      () {
+        for (final bool isWeb in <bool>[false, true]) {
+          expect(
+            productQrCameraNoticeText(
+              ProductQrCameraAccess.starting,
+              isWeb: isWeb,
+            ),
+            'Encendiendo la cámara…',
+            reason: 'starting is not a failure on either runtime',
+          );
+          expect(
+            productQrCameraNoticeText(
+              ProductQrCameraAccess.ready,
+              isWeb: isWeb,
+            ),
+            isNull,
+            reason: 'no notice while the camera works, on either runtime',
+          );
+        }
+      },
+    );
   });
 
   group('scanned payload becomes a search query', () {
@@ -561,8 +647,13 @@ void main() {
       );
 
       expect(
-        find.textContaining('No se permitió el acceso a la cámara'),
+        find.text(kIsWeb ? _browserDenied : _deviceDenied),
         findsOneWidget,
+      );
+      expect(
+        find.text(kIsWeb ? _deviceDenied : _browserDenied),
+        findsNothing,
+        reason: 'the other runtime\'s words would send the seller elsewhere',
       );
       expect(
         find.byKey(const ValueKey<String>('qr-scan-denied')),
@@ -577,7 +668,7 @@ void main() {
       expect(opened.camera.disposeCount, 1);
     });
 
-    testWidgets('says so when the device has no camera, and lets you out', (
+    testWidgets('says so when the camera cannot be used, and lets you out', (
       WidgetTester tester,
     ) async {
       final _Opened opened = await _openSheet(
@@ -587,8 +678,13 @@ void main() {
       );
 
       expect(
-        find.text('Este dispositivo no tiene una cámara disponible.'),
+        find.text(kIsWeb ? _browserUnavailable : _deviceUnavailable),
         findsOneWidget,
+      );
+      expect(
+        find.text(kIsWeb ? _deviceUnavailable : _browserUnavailable),
+        findsNothing,
+        reason: 'a phone browser must not be told the device has no camera',
       );
       expect(
         find.byKey(const ValueKey<String>('qr-scan-unavailable')),

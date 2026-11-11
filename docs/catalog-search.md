@@ -110,13 +110,18 @@ barcode printed on packaging is reported as
 open instead of silently filtering the list.
 
 Permission and hardware problems are explained in Spanish and always leave a
-way out:
+way out. The words come from one pure function, `productQrCameraNoticeText`,
+because the same failure has a different cause per runtime: a browser seller is
+never told that the device has no camera or sent to the system settings.
+
 
 | Situation | Message |
 | --- | --- |
 | Camera starting | `Encendiendo la cámara…` |
-| Permission denied | `No se permitió el acceso a la cámara. Actívalo en Ajustes para poder escanear códigos QR.` |
-| No camera, or the browser could not open one | `Este dispositivo no tiene una cámara disponible.` |
+| Permission denied (Android, iOS) | `No se permitió el acceso a la cámara. Actívalo en Ajustes para poder escanear códigos QR.` |
+| Permission denied (phone browser) | `No se permitió el acceso a la cámara. Permite la cámara para este sitio en tu navegador para poder escanear códigos QR.` |
+| No camera (Android, iOS) | `Este dispositivo no tiene una cámara disponible.` |
+| The browser could not open the camera or load its decoder | `Este navegador no pudo abrir la cámara o leer códigos QR. Revisa tu conexión o busca el producto por nombre o código.` |
 | Code read is not a QR | `Lo que leyó la cámara no es un código QR de producto.` (the camera stays open) |
 | QR with no payload | `El código QR no contiene un código de producto.` (the camera stays open) |
 
@@ -135,14 +140,15 @@ Platform setup:
   | Need | Why |
   | --- | --- |
   | HTTPS (or `localhost`) | `getUserMedia` only runs in a secure context |
-  | The site's camera permission | granted per site by the browser prompt, not in the system settings — the denied message keeps its app wording |
+  | The site's camera permission | granted per site by the browser prompt, not in the system settings — the denied message says so |
   | A browser that can decode | `mobile_scanner` uses the native `BarcodeDetector` when the browser has one (Chrome, Edge, Safari 17+) |
   | Network, as a fallback | without `BarcodeDetector` it loads a `zxing-wasm` decoder from a CDN, so decoding is not guaranteed offline |
   | A rear camera it will use | the scanner asks for the back camera, which a phone browser honours through `facingMode` |
 
   Support stays browser-dependent: a browser that reports a desktop platform
   gets no scan button at all, and one that reports mobile but cannot open a
-  camera lands on the "no camera available" notice with its Close action.
+  camera, or cannot load the decoder offline, lands on the browser notice with
+  its Close action, which leads back to the typed search.
 - Cancelling, or a scan that yields nothing, leaves the search untouched.
 
 `test/catalog/product_qr_scan_test.dart` pins the rule in two halves: the pure
